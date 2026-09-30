@@ -1,0 +1,1647 @@
+"""Port of the AM3 user-interface class (AM3.cc)."""
+
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
+from am3_mojo.utils.buffers import *
+from am3_mojo.simulation.manager import SimulationManager
+from am3_mojo.solver.ids import *
+from am3_mojo.model.particles import *
+from am3_mojo.simulation.coeffs import *
+from am3_mojo.physics.expansion import Expansion
+from am3_mojo.api.convert import (
+    scaled,
+    summed,
+    timescales,
+    constant_timescales,
+    emission_timescales,
+    set_rates_from_timescales,
+    assign_divided,
+)
+
+
+struct AM3(Defaultable, Movable, Writable):
+    var sim: SimulationManager
+    var mec2_erg: Float64
+    var erg2eV: Float64
+
+    def __init__(out self):
+        self.sim = SimulationManager()
+        self.mec2_erg = 8.187111168006826e-07
+        self.erg2eV = 624149596175.2113
+
+    def _pair_solver(self) -> Int:
+        """Solver of the e+/- array the pair getters report on."""
+        return (
+            SA_ep if self.sim.process_merge_positrons_into_electrons else SA_e
+        )
+
+    def write_to(self, mut writer: Some[Writer]):
+        writer.write("<am3_mojo.AM3>")
+
+    def write_repr_to(self, mut writer: Some[Writer]):
+        writer.write("<am3_mojo.AM3>")
+
+    # ------------------------------------------------------------------
+    # general functions
+    # ------------------------------------------------------------------
+    def init_kernels(mut self) raises:
+        self.sim.init_kernels()
+
+    def clear_particle_densities(mut self):
+        self.sim.clear_particle_densities()
+
+    def clear_am3(mut self):
+        self.sim.clear_am3()
+
+    def evolve_step(mut self) raises:
+        self.sim.evolve_step()
+
+    def get_verbosity_level(mut self) -> Bool:
+        return self.sim.verbose
+
+    def set_verbosity_level(mut self, v: Bool):
+        self.sim.update_verbosity(v)
+
+    def print_process_switches(mut self):
+        self.sim.print_process_switches()
+
+    def set_lep_optimizer_on(mut self):
+        print("turned on lep_optimzer switches ")
+        self.set_process_compton_photon_energy_loss(False)
+        self.set_optimize_compton_emission_emin(1e-3)
+        self.set_optimize_compton_emission_grid(True)
+        self.set_optimize_compton_target_emax(1e6)
+        self.set_optimize_compton_target_grid(True)
+        self.set_optimize_annihilation_pair_emission(True)
+
+    def set_had_optimizer_on(mut self):
+        print("turned on had_optimzer switches")
+        self.set_optimize_bethe_heitler_outgoing_pairs_grid(True)
+        self.set_optimize_bethe_heitler_incoming_protons_min(1e12)
+        self.set_optimize_bethe_heitler_target_photon_max(1e6)
+        self.set_process_bethe_heitler_cooling(False)
+        self.set_optimize_photopion_target_photon_grid(True)
+        self.set_optimize_photopion_target_photon_max(1e6)
+        self.set_process_photopion_photon_loss(False)
+
+    # ------------------------------------------------------------------
+    # optimisation parameters (stored as grid indices)
+    # ------------------------------------------------------------------
+    def get_optimize_compton_emission_emin(mut self) -> Float64:
+        return self.sim.dat.egrid_pho[self.sim.optimize_compton_emission_emin]
+
+    def get_optimize_compton_target_emax(mut self) -> Float64:
+        return self.sim.dat.egrid_pho[self.sim.optimize_compton_target_emax]
+
+    def get_annihilation_pair_emission_max_com_energy(mut self) -> Float64:
+        return self.sim.dat.egrid_pho[
+            self.sim.annihilation_pair_emission_max_com_energy
+        ]
+
+    def get_optimize_bethe_heitler_incoming_protons_min(mut self) -> Float64:
+        return self.sim.dat.egrid_had[
+            self.sim.optimize_bethe_heitler_incoming_protons_min
+        ]
+
+    def get_optimize_bethe_heitler_target_photon_max(mut self) -> Float64:
+        return self.sim.dat.egrid_pho[
+            self.sim.optimize_bethe_heitler_target_photon_max
+        ]
+
+    def get_optimize_photopion_target_photon_max(mut self) -> Float64:
+        return self.sim.dat.egrid_pho[
+            self.sim.optimize_photopion_target_photon_max
+        ]
+
+    def get_pp_transition_energy_to_delta_approx(mut self) -> Float64:
+        return self.sim.pp_transition_energy_to_delta_approx * 1e9
+
+    def _photon_index_even(mut self, value: Float64) -> Int:
+        var mec2_eV = 0.51099895e6
+        var E_max_eV = (
+            self.sim.dat.egrid_pho[self.sim.dat.nbins_pho - 1] * mec2_eV
+        )
+        var Egamma_min_eV = self.sim.dat.egrid_pho[0] * mec2_eV
+        var v = max(min(value, E_max_eV), Egamma_min_eV)
+        var index = self.sim.dat.eV_to_photon_grid_index(v)
+        if c_mod(index, 2) != 0:
+            index += 1
+        return index
+
+    def set_optimize_compton_emission_emin(mut self, new_value: Float64):
+        self.sim.optimize_compton_emission_emin = self._photon_index_even(
+            new_value
+        )
+
+    def set_optimize_compton_target_emax(mut self, new_value: Float64):
+        self.sim.optimize_compton_target_emax = self._photon_index_even(
+            new_value
+        )
+
+    def set_optimize_compton_emission_grid(mut self, new_value: Bool):
+        self.sim.optimize_compton_emission_grid = (
+            True  # bool = int(new_value) + 1
+        )
+
+    def set_optimize_compton_target_grid(mut self, new_value: Bool):
+        self.sim.optimize_compton_target_grid = True
+
+    def set_annihilation_pair_emission_max_com_energy(
+        mut self, new_value: Float64
+    ):
+        self.sim.annihilation_pair_emission_max_com_energy = to_int(
+            c_log(new_value) / self.sim.dat.dlnE
+        )
+
+    def set_optimize_bethe_heitler_outgoing_pairs_grid(
+        mut self, new_value: Bool
+    ):
+        self.sim.optimize_bethe_heitler_outgoing_pairs_grid = True
+
+    def set_optimize_bethe_heitler_incoming_protons_min(
+        mut self, new_value: Float64
+    ):
+        var E_max_eV = self.sim.dat.egrid_had[self.sim.dat.nbins_had - 1] * 1e9
+        var E_min_eV = 1e9
+        var v = max(min(new_value, E_max_eV), E_min_eV)
+        var index = self.sim.dat.eV_to_had_grid_index(v)
+        if c_mod(index, 2) != 0:
+            index += 1
+        self.sim.optimize_bethe_heitler_incoming_protons_min = index
+
+    def set_optimize_bethe_heitler_target_photon_max(
+        mut self, new_value: Float64
+    ):
+        self.sim.optimize_bethe_heitler_target_photon_max = (
+            self._photon_index_even(new_value)
+        )
+
+    def set_optimize_photopion_target_photon_grid(mut self, new_value: Bool):
+        self.sim.optimize_photopion_target_photon_grid = True
+
+    def set_optimize_photopion_target_photon_max(mut self, new_value: Float64):
+        self.sim.optimize_photopion_target_photon_max = self._photon_index_even(
+            new_value
+        )
+
+    def set_pp_transition_energy_to_delta_approx(mut self, new_value: Float64):
+        self.sim.pp_transition_energy_to_delta_approx = 1e-9 * new_value
+
+    # ------------------------------------------------------------------
+    # physical parameters needing extra work
+    # ------------------------------------------------------------------
+    def get_powerlaw_injection_parameters_electrons(
+        mut self,
+    ) -> Array[Float64, 8]:
+        var rp = self.sim.rp.copy()
+        var _r: Array[Float64, 8] = [
+            rp.powerlaw_injection_electrons_volume,
+            rp.powerlaw_injection_electrons_luminosity,
+            rp.powerlaw_injection_electrons_emin,
+            rp.powerlaw_injection_electrons_ebreak,
+            rp.powerlaw_injection_electrons_emax,
+            rp.powerlaw_injection_electrons_index,
+            rp.powerlaw_injection_electrons_index_above_break,
+            rp.powerlaw_injection_electrons_cutoff_steepness,
+        ]
+        return _r^
+
+    def get_powerlaw_injection_parameters_protons(
+        mut self,
+    ) -> Array[Float64, 8]:
+        var rp = self.sim.rp.copy()
+        var _r: Array[Float64, 8] = [
+            rp.powerlaw_injection_protons_volume,
+            rp.powerlaw_injection_protons_luminosity,
+            rp.powerlaw_injection_protons_emin,
+            rp.powerlaw_injection_protons_ebreak,
+            rp.powerlaw_injection_protons_emax,
+            rp.powerlaw_injection_protons_index,
+            rp.powerlaw_injection_protons_index_above_break,
+            rp.powerlaw_injection_protons_cutoff_steepness,
+        ]
+        return _r^
+
+    def set_powerlaw_injection_parameters_electrons(
+        mut self,
+        volume: Float64,
+        luminosity: Float64,
+        emin: Float64,
+        ebreak: Float64,
+        emax: Float64,
+        index: Float64,
+        index_above_break: Float64,
+        cutoff_steepness: Float64,
+    ):
+        self.sim.rp.powerlaw_injection_electrons_volume = volume
+        self.sim.rp.powerlaw_injection_electrons_luminosity = luminosity
+        self.sim.rp.powerlaw_injection_electrons_emin = emin
+        self.sim.rp.powerlaw_injection_electrons_ebreak = ebreak
+        self.sim.rp.powerlaw_injection_electrons_emax = emax
+        self.sim.rp.powerlaw_injection_electrons_index = index
+        self.sim.rp.powerlaw_injection_electrons_index_above_break = (
+            index_above_break
+        )
+        self.sim.rp.powerlaw_injection_electrons_cutoff_steepness = (
+            cutoff_steepness
+        )
+        self.sim.oInj.Calc_IN_Electron_powerlaw(self.sim.rp, self.sim.dat)
+
+    def set_powerlaw_injection_parameters_protons(
+        mut self,
+        volume: Float64,
+        luminosity: Float64,
+        emin: Float64,
+        ebreak: Float64,
+        emax: Float64,
+        index: Float64,
+        index_above_break: Float64,
+        cutoff_steepness: Float64,
+    ):
+        self.sim.rp.powerlaw_injection_protons_volume = volume
+        self.sim.rp.powerlaw_injection_protons_luminosity = luminosity
+        self.sim.rp.powerlaw_injection_protons_emin = emin
+        self.sim.rp.powerlaw_injection_protons_ebreak = ebreak
+        self.sim.rp.powerlaw_injection_protons_emax = emax
+        self.sim.rp.powerlaw_injection_protons_index = index
+        self.sim.rp.powerlaw_injection_protons_index_above_break = (
+            index_above_break
+        )
+        self.sim.rp.powerlaw_injection_protons_cutoff_steepness = (
+            cutoff_steepness
+        )
+        self.sim.oInj.Calc_IN_Proton_powerlaw(self.sim.rp, self.sim.dat)
+
+    def set_mag_field(mut self, b: Float64):
+        self.sim.Update_Mag_Field(b)
+
+    def set_solver_time_step(mut self, t: Float64):
+        self.sim.rp.dt = t
+
+    def update_energy_grid(
+        mut self, Egamma_min_eV: Float64, Enu_min_eV: Float64, E_max_eV: Float64
+    ):
+        var mec2_eV = 0.51099895e6
+        var d = self.sim.dat.egrid_pho.copy()
+        var h = self.sim.dat.egrid_had.copy()
+        var opt_E_ic_ph_in_max = max(
+            min(d[self.sim.optimize_compton_target_emax] * mec2_eV, E_max_eV),
+            Egamma_min_eV,
+        )
+        var opt_E_ic_ph_out_min = max(
+            min(d[self.sim.optimize_compton_emission_emin] * mec2_eV, E_max_eV),
+            Egamma_min_eV,
+        )
+        var opt_E_bh_pr_in_min = max(
+            min(
+                h[self.sim.optimize_bethe_heitler_incoming_protons_min] * 1e9,
+                E_max_eV,
+            ),
+            2e9,
+        )
+        var opt_E_bh_ph_in_max = max(
+            min(
+                d[self.sim.optimize_bethe_heitler_target_photon_max] * mec2_eV,
+                E_max_eV,
+            ),
+            Egamma_min_eV,
+        )
+        var opt_E_pg_ph_in_max = max(
+            min(
+                d[self.sim.optimize_photopion_target_photon_max] * mec2_eV,
+                E_max_eV,
+            ),
+            Egamma_min_eV,
+        )
+        self.sim.dat.update_energy_grid_parameters(
+            Egamma_min_eV, Enu_min_eV, E_max_eV
+        )
+        self.sim.dat.update_energy_grids()
+        self.sim.clear_particle_densities()
+        self.set_optimize_compton_target_emax(opt_E_ic_ph_in_max)
+        self.set_optimize_compton_emission_emin(opt_E_ic_ph_out_min)
+        self.set_optimize_bethe_heitler_incoming_protons_min(opt_E_bh_pr_in_min)
+        self.set_optimize_bethe_heitler_target_photon_max(opt_E_bh_ph_in_max)
+        self.set_optimize_photopion_target_photon_max(opt_E_pg_ph_in_max)
+
+    # ------------------------------------------------------------------
+    # photon emission timescales (bool products as in the C++ code)
+    # ------------------------------------------------------------------
+    def get_t_photon_emission_from_syn(mut self) -> Vec:
+        var s = (
+            self.sim.process_electron_syn
+            and self.sim.process_electron_syn_emission
+        )
+        var p = (
+            self.sim.process_proton_syn and self.sim.process_proton_syn_emission
+        )
+        var pi_ = (
+            self.sim.process_pion_syn and self.sim.process_pion_syn_emission
+        )
+        var mu = (
+            self.sim.process_muon_syn and self.sim.process_muon_syn_emission
+        )
+        var res = zeros(self.sim.dat.nbins_pho)
+        for i in range(self.sim.dat.nbins_pho):
+            res[i] = (
+                T_SSC_CGS
+                * (self.sim.dat.n[P_photons][i])
+                / (
+                    fbool(s) * self.sim.c[C_qgma_sy][i]
+                    + fbool(p) * self.sim.c[C_qgma_psy][i]
+                    + fbool(pi_) * self.sim.c[C_qgma_pisy][i]
+                    + fbool(mu) * self.sim.c[C_qgma_musy][i]
+                    + 1e-200
+                )
+            )
+        return res^
+
+    def get_t_photon_emission_from_ic(mut self) -> Vec:
+        var s = (
+            self.sim.process_electron_compton
+            and self.sim.process_electron_compton_emission
+        )
+        var p = (
+            self.sim.process_proton_compton
+            and self.sim.process_proton_compton_emission
+        )
+        var pi_ = (
+            self.sim.process_pion_compton
+            and self.sim.process_pion_compton_emission
+        )
+        var mu = (
+            self.sim.process_muon_compton
+            and self.sim.process_muon_compton_emission
+        )
+        var res = zeros(self.sim.dat.nbins_pho)
+        for i in range(self.sim.dat.nbins_pho):
+            res[i] = (
+                T_SSC_CGS
+                * (self.sim.dat.n[P_photons][i])
+                / (
+                    fbool(s) * self.sim.c[C_qgma_ic][i]
+                    + fbool(p) * self.sim.c[C_qgma_pic][i]
+                    + fbool(pi_) * self.sim.c[C_qgma_piic][i]
+                    + fbool(mu) * self.sim.c[C_qgma_muic][i]
+                    + 1e-200
+                )
+            )
+        return res^
+
+    def get_t_photon_emission_from_pi0(mut self) -> Vec:
+        var res = zeros(self.sim.dat.nbins_pho)
+        for i in range(self.sim.dat.nbins_pho):
+            res[i] = (
+                T_SSC_CGS
+                * (self.sim.dat.n[P_photons][i])
+                / (
+                    fbool(self.sim.process_pion_decay)
+                    * (
+                        self.sim.c[C_qgma_pi0_pg][i]
+                        + self.sim.c[C_qgma_pi0_pp][i]
+                    )
+                    + 1e-200
+                )
+            )
+        return res^
+
+    def estimate_max_electron_energy(mut self):
+        self.sim.estimate_maximum_lepton_energy()
+
+    def estimate_max_proton_energy(mut self):
+        self.sim.estimate_maximum_proton_energy()
+
+    # ------------------------------------------------------------------
+    # profiling
+    # ------------------------------------------------------------------
+    def get_profile_timing(mut self) -> Bool:
+        return self.sim.profile_timing
+
+    def set_profile_timing(mut self, new_value: Bool):
+        self.sim.profile_timing = new_value
+
+    def get_profiled_times(mut self) -> Vec:
+        return self.sim.timing.copy()
+
+    def get_profiled_time_labels(mut self) -> List[String]:
+        var labels = List[String]()
+        for s in [
+            "photons -> had. grid",
+            "calc. coeff. proton/neutron",
+            "pass coeff. proton",
+            "evolve proton",
+            "pass coeff. neutron",
+            "evolve neutron",
+            "calc. coeff. pion",
+            "pass coeff. pion",
+            "evolve pion",
+            "calc. coeff. muon",
+            "pass coeff. muon",
+            "evolve muon",
+            "calc. coeff. neutrino",
+            "pass coeff. neutrino",
+            "evolve neutrino",
+            "calc. coeff. pairs",
+            "pass coeff. pairs",
+            "evolve pairs",
+            "calc. coeff. photon",
+            "pass coeff. photon",
+            "evolve photon",
+            "photon coeff: injection",
+            "photon coeff: pair syn. em.",
+            "photon coeff: pair syn. abs.",
+            "photon coeff: pair compton em.",
+            "photon coeff: pair compton abs.",
+            "photon coeff: pair annihil.",
+            "photon coeff: photo-pion loss",
+            "photon coeff: proton syn. em.",
+            "photon coeff: proton compton em.",
+            "photon coeff: pion syn. em.",
+            "photon coeff: pion compton em.",
+            "photon coeff: muon syn. em.",
+            "photon coeff: muon compton em.",
+            "photon coeff: pi0 decay",
+            "photon coeff: escape",
+        ]:
+            labels.append(String(s))
+        return labels^
+
+    # ------------------------------------------------------------------
+    # mechanically translated accessors (tools/gen_am3class.py)
+    # ------------------------------------------------------------------
+    def get_estimate_max_energies(mut self) -> Bool:
+        return self.sim.estimate_max_energies
+
+    def get_process_parse_sed(mut self) -> Bool:
+        return self.sim.process_parse_sed
+
+    def get_process_hadronic(mut self) -> Bool:
+        return self.sim.process_hadronic
+
+    def get_process_merge_positrons_into_electrons(mut self) -> Bool:
+        return self.sim.process_merge_positrons_into_electrons
+
+    def get_process_escape(mut self) -> Bool:
+        return self.sim.process_escape
+
+    def get_process_adiabatic_cooling(mut self) -> Bool:
+        return self.sim.process_adiabatic_cooling
+
+    def get_process_expansion(mut self) -> Bool:
+        return self.sim.process_expansion
+
+    def get_process_electron_syn(mut self) -> Bool:
+        return self.sim.process_electron_syn
+
+    def get_process_electron_syn_emission(mut self) -> Bool:
+        return self.sim.process_electron_syn_emission
+
+    def get_process_electron_syn_cooling(mut self) -> Bool:
+        return self.sim.process_electron_syn_cooling
+
+    def get_process_quantum_syn(mut self) -> Bool:
+        return self.sim.process_quantum_syn
+
+    def get_process_quantum_syn_cooling(mut self) -> Bool:
+        return self.sim.process_quantum_syn_cooling
+
+    def get_process_ssa(mut self) -> Bool:
+        return self.sim.process_ssa
+
+    def get_process_proton_syn(mut self) -> Bool:
+        return self.sim.process_proton_syn
+
+    def get_process_proton_syn_emission(mut self) -> Bool:
+        return self.sim.process_proton_syn_emission
+
+    def get_process_proton_syn_cooling(mut self) -> Bool:
+        return self.sim.process_proton_syn_cooling
+
+    def get_process_pion_syn(mut self) -> Bool:
+        return self.sim.process_pion_syn
+
+    def get_process_pion_syn_emission(mut self) -> Bool:
+        return self.sim.process_pion_syn_emission
+
+    def get_process_pion_syn_cooling(mut self) -> Bool:
+        return self.sim.process_pion_syn_cooling
+
+    def get_process_muon_syn(mut self) -> Bool:
+        return self.sim.process_muon_syn
+
+    def get_process_muon_syn_emission(mut self) -> Bool:
+        return self.sim.process_muon_syn_emission
+
+    def get_process_muon_syn_cooling(mut self) -> Bool:
+        return self.sim.process_muon_syn_cooling
+
+    def get_process_electron_compton(mut self) -> Bool:
+        return self.sim.process_electron_compton
+
+    def get_process_electron_compton_emission(mut self) -> Bool:
+        return self.sim.process_electron_compton_emission
+
+    def get_process_electron_compton_cooling(mut self) -> Bool:
+        return self.sim.process_electron_compton_cooling
+
+    def get_process_compton_photon_energy_loss(mut self) -> Bool:
+        return self.sim.process_compton_photon_energy_loss
+
+    def get_process_proton_compton(mut self) -> Bool:
+        return self.sim.process_proton_compton
+
+    def get_process_proton_compton_emission(mut self) -> Bool:
+        return self.sim.process_proton_compton_emission
+
+    def get_process_proton_compton_cooling(mut self) -> Bool:
+        return self.sim.process_proton_compton_cooling
+
+    def get_process_pion_compton(mut self) -> Bool:
+        return self.sim.process_pion_compton
+
+    def get_process_pion_compton_emission(mut self) -> Bool:
+        return self.sim.process_pion_compton_emission
+
+    def get_process_pion_compton_cooling(mut self) -> Bool:
+        return self.sim.process_pion_compton_cooling
+
+    def get_process_muon_compton(mut self) -> Bool:
+        return self.sim.process_muon_compton
+
+    def get_process_muon_compton_emission(mut self) -> Bool:
+        return self.sim.process_muon_compton_emission
+
+    def get_process_muon_compton_cooling(mut self) -> Bool:
+        return self.sim.process_muon_compton_cooling
+
+    def get_process_pion_decay(mut self) -> Bool:
+        return self.sim.process_pion_decay
+
+    def get_process_muon_decay(mut self) -> Bool:
+        return self.sim.process_muon_decay
+
+    def get_process_annihilation(mut self) -> Bool:
+        return self.sim.process_annihilation
+
+    def get_process_annihilation_cooling(mut self) -> Bool:
+        return self.sim.process_annihilation_cooling
+
+    def get_process_annihilation_pair_emission(mut self) -> Bool:
+        return self.sim.process_annihilation_emission
+
+    def get_process_bethe_heitler(mut self) -> Bool:
+        return self.sim.process_bethe_heitler
+
+    def get_process_bethe_heitler_emission(mut self) -> Bool:
+        return self.sim.process_bethe_heitler_emission
+
+    def get_process_bethe_heitler_cooling(mut self) -> Bool:
+        return self.sim.process_bethe_heitler_cooling
+
+    def get_process_photopion(mut self) -> Bool:
+        return self.sim.process_photopion
+
+    def get_process_photopion_emission(mut self) -> Bool:
+        return self.sim.process_photopion_emission
+
+    def get_process_photopion_cooling(mut self) -> Bool:
+        return self.sim.process_photopion_cooling
+
+    def get_process_photopion_photon_loss(mut self) -> Bool:
+        return self.sim.process_photopion_photon_loss
+
+    def get_process_pp(mut self) -> Bool:
+        return self.sim.process_pp
+
+    def get_process_pp_emission(mut self) -> Bool:
+        return self.sim.process_pp_emission
+
+    def get_process_pp_emission_pi0_into_cascade(mut self) -> Bool:
+        return self.sim.process_pp_emission_pi0_into_cascade
+
+    def get_process_pp_cooling(mut self) -> Bool:
+        return self.sim.process_pp_cooling
+
+    def get_optimize_compton_emission_grid(mut self) -> Bool:
+        return self.sim.optimize_compton_emission_grid
+
+    def get_optimize_compton_target_grid(mut self) -> Bool:
+        return self.sim.optimize_compton_target_grid
+
+    def get_optimize_annihilation_pair_emission(mut self) -> Bool:
+        return self.sim.optimize_annihilation_pair_emission
+
+    def get_optimize_bethe_heitler_outgoing_pairs_grid(mut self) -> Bool:
+        return self.sim.optimize_bethe_heitler_outgoing_pairs_grid
+
+    def get_optimize_photopion_target_photon_grid(mut self) -> Bool:
+        return self.sim.optimize_photopion_target_photon_grid
+
+    def get_pp_model_charged_pions(mut self) -> Int:
+        return self.sim.pp_model_charged_pions
+
+    def get_pp_model_neutral_pions(mut self) -> Int:
+        return self.sim.pp_model_neutral_pions
+
+    def get_solver_simpleqintegration(mut self) -> Bool:
+        return self.sim.solver_simpleqintegration
+
+    def get_solver_threshold_cool_dom(mut self) -> Float64:
+        return self.sim.solver_threshold_cool_dom
+
+    def get_solver_threshold_esc_dom(mut self) -> Float64:
+        return self.sim.solver_threshold_esc_dom
+
+    def get_solver_threshold_matrix(mut self) -> Float64:
+        return self.sim.solver_threshold_matrix
+
+    def set_estimate_max_energies(mut self, new_value: Bool):
+        self.sim.estimate_max_energies = new_value
+
+    def set_process_parse_sed(mut self, new_value: Bool):
+        self.sim.process_parse_sed = new_value
+
+    def set_process_hadronic(mut self, new_value: Bool):
+        self.sim.process_hadronic = new_value
+
+    def set_process_merge_positrons_into_electrons(mut self, new_value: Bool):
+        self.sim.process_merge_positrons_into_electrons = new_value
+
+    def set_process_escape(mut self, new_value: Bool):
+        self.sim.process_escape = new_value
+
+    def set_process_adiabatic_cooling(mut self, new_value: Bool):
+        self.sim.process_adiabatic_cooling = new_value
+
+    def set_process_expansion(mut self, new_value: Bool):
+        self.sim.process_expansion = new_value
+
+    def set_process_electron_syn(mut self, new_value: Bool):
+        self.sim.process_electron_syn = new_value
+
+    def set_process_electron_syn_emission(mut self, new_value: Bool):
+        self.sim.process_electron_syn_emission = new_value
+
+    def set_process_electron_syn_cooling(mut self, new_value: Bool):
+        self.sim.process_electron_syn_cooling = new_value
+
+    def set_process_quantum_syn(mut self, new_value: Bool):
+        self.sim.process_quantum_syn = new_value
+
+    def set_process_quantum_syn_cooling(mut self, new_value: Bool):
+        self.sim.process_quantum_syn_cooling = new_value
+
+    def set_process_ssa(mut self, new_value: Bool):
+        self.sim.process_ssa = new_value
+
+    def set_process_proton_syn(mut self, new_value: Bool):
+        self.sim.process_proton_syn = new_value
+
+    def set_process_proton_syn_emission(mut self, new_value: Bool):
+        self.sim.process_proton_syn_emission = new_value
+
+    def set_process_proton_syn_cooling(mut self, new_value: Bool):
+        self.sim.process_proton_syn_cooling = new_value
+
+    def set_process_pion_syn(mut self, new_value: Bool):
+        self.sim.process_pion_syn = new_value
+
+    def set_process_pion_syn_emission(mut self, new_value: Bool):
+        self.sim.process_pion_syn_emission = new_value
+
+    def set_process_pion_syn_cooling(mut self, new_value: Bool):
+        self.sim.process_pion_syn_cooling = new_value
+
+    def set_process_muon_syn(mut self, new_value: Bool):
+        self.sim.process_muon_syn = new_value
+
+    def set_process_muon_syn_emission(mut self, new_value: Bool):
+        self.sim.process_muon_syn_emission = new_value
+
+    def set_process_muon_syn_cooling(mut self, new_value: Bool):
+        self.sim.process_muon_syn_cooling = new_value
+
+    def set_process_electron_compton(mut self, new_value: Bool):
+        self.sim.process_electron_compton = new_value
+
+    def set_process_electron_compton_emission(mut self, new_value: Bool):
+        self.sim.process_electron_compton_emission = new_value
+
+    def set_process_electron_compton_cooling(mut self, new_value: Bool):
+        self.sim.process_electron_compton_cooling = new_value
+
+    def set_process_compton_photon_energy_loss(mut self, new_value: Bool):
+        self.sim.process_compton_photon_energy_loss = new_value
+
+    def set_process_proton_compton(mut self, new_value: Bool):
+        self.sim.process_proton_compton = new_value
+
+    def set_process_proton_compton_emission(mut self, new_value: Bool):
+        self.sim.process_proton_compton_emission = new_value
+
+    def set_process_proton_compton_cooling(mut self, new_value: Bool):
+        self.sim.process_proton_compton_cooling = new_value
+
+    def set_process_pion_compton(mut self, new_value: Bool):
+        self.sim.process_pion_compton = new_value
+
+    def set_process_pion_compton_emission(mut self, new_value: Bool):
+        self.sim.process_pion_compton_emission = new_value
+
+    def set_process_pion_compton_cooling(mut self, new_value: Bool):
+        self.sim.process_pion_compton_cooling = new_value
+
+    def set_process_muon_compton(mut self, new_value: Bool):
+        self.sim.process_muon_compton = new_value
+
+    def set_process_muon_compton_emission(mut self, new_value: Bool):
+        self.sim.process_muon_compton_emission = new_value
+
+    def set_process_muon_compton_cooling(mut self, new_value: Bool):
+        self.sim.process_muon_compton_cooling = new_value
+
+    def set_process_pion_decay(mut self, new_value: Bool):
+        self.sim.process_pion_decay = new_value
+
+    def set_process_muon_decay(mut self, new_value: Bool):
+        self.sim.process_muon_decay = new_value
+
+    def set_process_annihilation(mut self, new_value: Bool):
+        self.sim.process_annihilation = new_value
+
+    def set_process_annihilation_cooling(mut self, new_value: Bool):
+        self.sim.process_annihilation_cooling = new_value
+
+    def set_process_annihilation_pair_emission(mut self, new_value: Bool):
+        self.sim.process_annihilation_emission = new_value
+
+    def set_process_bethe_heitler(mut self, new_value: Bool):
+        self.sim.process_bethe_heitler = new_value
+
+    def set_process_bethe_heitler_emission(mut self, new_value: Bool):
+        self.sim.process_bethe_heitler_emission = new_value
+
+    def set_process_bethe_heitler_cooling(mut self, new_value: Bool):
+        self.sim.process_bethe_heitler_cooling = new_value
+
+    def set_process_photopion(mut self, new_value: Bool):
+        self.sim.process_photopion = new_value
+
+    def set_process_photopion_emission(mut self, new_value: Bool):
+        self.sim.process_photopion_emission = new_value
+
+    def set_process_photopion_cooling(mut self, new_value: Bool):
+        self.sim.process_photopion_cooling = new_value
+
+    def set_process_photopion_photon_loss(mut self, new_value: Bool):
+        self.sim.process_photopion_photon_loss = new_value
+
+    def set_process_pp(mut self, new_value: Bool):
+        self.sim.process_pp = new_value
+
+    def set_process_pp_emission(mut self, new_value: Bool):
+        self.sim.process_pp_emission = new_value
+
+    def set_process_pp_emission_pi0_into_cascade(mut self, new_value: Bool):
+        self.sim.process_pp_emission_pi0_into_cascade = new_value
+
+    def set_process_pp_cooling(mut self, new_value: Bool):
+        self.sim.process_pp_cooling = new_value
+
+    def set_optimize_annihilation_pair_emission(mut self, new_value: Bool):
+        self.sim.optimize_annihilation_pair_emission = new_value
+
+    def set_pp_model_charged_pions(mut self, new_value: Int):
+        self.sim.pp_model_charged_pions = new_value
+
+    def set_pp_model_neutral_pions(mut self, new_value: Int):
+        self.sim.pp_model_neutral_pions = new_value
+
+    def set_solver_simpleqintegration(mut self, new_value: Bool):
+        self.sim.solver_simpleqintegration = new_value
+
+    def set_solver_threshold_cool_dom(mut self, new_value: Float64):
+        self.sim.solver_threshold_cool_dom = new_value
+
+    def set_solver_threshold_esc_dom(mut self, new_value: Float64):
+        self.sim.solver_threshold_esc_dom = new_value
+
+    def set_solver_threshold_matrix(mut self, new_value: Float64):
+        self.sim.solver_threshold_matrix = new_value
+
+    def get_mag_field(mut self) -> Float64:
+        return self.sim.rp.mag_field
+
+    def get_escape_timescale(mut self) -> Float64:
+        return self.sim.rp.escape_timescale
+
+    def get_expansion_timescale(mut self) -> Float64:
+        return self.sim.rp.expansion_timescale
+
+    def get_pp_target_proton_density(mut self) -> Float64:
+        return self.sim.rp.pp_target_proton_density
+
+    def get_escape_fraction_pairs(mut self) -> Float64:
+        return self.sim.rp.escape_fraction_pairs
+
+    def get_escape_fraction_photons(mut self) -> Float64:
+        return self.sim.rp.escape_fraction_photons
+
+    def get_escape_fraction_protons(mut self) -> Float64:
+        return self.sim.rp.escape_fraction_protons
+
+    def get_escape_fraction_neutrons(mut self) -> Float64:
+        return self.sim.rp.escape_fraction_neutrons
+
+    def get_escape_fraction_pions(mut self) -> Float64:
+        return self.sim.rp.escape_fraction_pions
+
+    def get_escape_fraction_muons(mut self) -> Float64:
+        return self.sim.rp.escape_fraction_muons
+
+    def get_escape_fraction_neutrinos(mut self) -> Float64:
+        return self.sim.rp.escape_fraction_neutrinos
+
+    def get_solver_time_step(mut self) -> Float64:
+        return self.sim.rp.dt
+
+    def get_electron_accel_factor(mut self) -> Float64:
+        return self.sim.rp.electron_accel_factor_for_emax_estimate
+
+    def get_proton_accel_factor(mut self) -> Float64:
+        return self.sim.rp.proton_accel_factor_for_emax_estimate
+
+    def set_expansion_timescale(mut self, t: Float64):
+        self.sim.rp.expansion_timescale = t
+
+    def set_pp_target_proton_density(mut self, rho: Float64):
+        self.sim.rp.pp_target_proton_density = rho
+
+    def set_escape_timescale(mut self, t: Float64):
+        self.sim.rp.escape_timescale = t
+        self.sim.oEscape.Calc_Escape_Proton(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Neutron(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Pipm(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Mu(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Nu(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Lep(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Phot(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_pairs(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_pairs = frac
+        self.sim.oEscape.Calc_Escape_Lep(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_photons(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_photons = frac
+        self.sim.oEscape.Calc_Escape_Phot(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_protons(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_protons = frac
+        self.sim.oEscape.Calc_Escape_Proton(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_neutrons(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_neutrons = frac
+        self.sim.oEscape.Calc_Escape_Neutron(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_pions(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_pions = frac
+        self.sim.oEscape.Calc_Escape_Pipm(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_muons(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_muons = frac
+        self.sim.oEscape.Calc_Escape_Mu(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_neutrinos(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_neutrinos = frac
+        self.sim.oEscape.Calc_Escape_Nu(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_charged_particles(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_pairs = frac
+        self.sim.rp.escape_fraction_protons = frac
+        self.sim.rp.escape_fraction_pions = frac
+        self.sim.rp.escape_fraction_muons = frac
+        self.sim.oEscape.Calc_Escape_Proton(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Pipm(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Mu(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Lep(self.sim.rp, self.sim.dat)
+
+    def set_escape_fraction_neutral_particles(mut self, frac: Float64):
+        self.sim.rp.escape_fraction_photons = frac
+        self.sim.rp.escape_fraction_neutrons = frac
+        self.sim.rp.escape_fraction_neutrinos = frac
+        self.sim.oEscape.Calc_Escape_Neutron(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Nu(self.sim.rp, self.sim.dat)
+        self.sim.oEscape.Calc_Escape_Phot(self.sim.rp, self.sim.dat)
+
+    def set_electron_accel_factor(mut self, eta: Float64):
+        self.sim.rp.electron_accel_factor_for_emax_estimate = eta
+
+    def set_proton_accel_factor(mut self, eta: Float64):
+        self.sim.rp.proton_accel_factor_for_emax_estimate = eta
+
+    def get_egrid_lep(mut self) -> Vec:
+        return scaled(self.sim.dat.egrid_lep, self.mec2_erg * self.erg2eV)
+
+    def get_egrid_photons(mut self) -> Vec:
+        return scaled(self.sim.dat.egrid_pho, self.mec2_erg * self.erg2eV)
+
+    def get_egrid_had(mut self) -> Vec:
+        return scaled(self.sim.dat.egrid_had, 1e9)
+
+    def get_egrid_neutrinos(mut self) -> Vec:
+        return scaled(self.sim.dat.egrid_nu, 1e9)
+
+    def get_grid_size_lep(mut self) -> Int:
+        return self.sim.dat.nbins_lep
+
+    def get_grid_size_photons(mut self) -> Int:
+        return self.sim.dat.nbins_pho
+
+    def get_grid_size_had(mut self) -> Int:
+        return self.sim.dat.nbins_had
+
+    def get_grid_size_neutrinos(mut self) -> Int:
+        return self.sim.dat.nbins_nu
+
+    def eV_to_lep_grid_index(mut self, E_eV: Float64) -> Int:
+        return self.sim.dat.eV_to_lep_grid_index(E_eV)
+
+    def eV_to_photon_grid_index(mut self, E_eV: Float64) -> Int:
+        return self.sim.dat.eV_to_photon_grid_index(E_eV)
+
+    def eV_to_had_grid_index(mut self, E_eV: Float64) -> Int:
+        return self.sim.dat.eV_to_had_grid_index(E_eV)
+
+    def eV_to_neutrino_grid_index(mut self, E_eV: Float64) -> Int:
+        return self.sim.dat.eV_to_neutrino_grid_index(E_eV)
+
+    def get_log_energy_spacing(mut self) -> Float64:
+        return self.sim.dat.dlnE
+
+    def get_protons(mut self) -> Vec:
+        return self.sim.dat.n[P_protons].copy()
+
+    def get_neutrons(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrons].copy()
+
+    def get_pions(mut self) -> Vec:
+        return summed(
+            1.0, self.sim.dat.n[P_pion_plus], self.sim.dat.n[P_pion_minus]
+        )
+
+    def get_pion_plus(mut self) -> Vec:
+        return self.sim.dat.n[P_pion_plus].copy()
+
+    def get_pion_minus(mut self) -> Vec:
+        return self.sim.dat.n[P_pion_minus].copy()
+
+    def get_pions_photopion(mut self) -> Vec:
+        return summed(
+            1.0, self.sim.dat.n[P_pion_plus_pg], self.sim.dat.n[P_pion_minus_pg]
+        )
+
+    def get_pion_plus_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_pion_plus_pg].copy()
+
+    def get_pion_minus_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_pion_minus_pg].copy()
+
+    def get_pions_proton_proton(mut self) -> Vec:
+        return summed(
+            1.0, self.sim.dat.n[P_pion_plus_pp], self.sim.dat.n[P_pion_minus_pp]
+        )
+
+    def get_pion_plus_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_pion_plus_pp].copy()
+
+    def get_pion_minus_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_pion_minus_pp].copy()
+
+    def get_mu_minus_left(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_minus_left].copy()
+
+    def get_mu_minus_right(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_minus_right].copy()
+
+    def get_mu_plus_left(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_plus_left].copy()
+
+    def get_mu_plus_right(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_plus_right].copy()
+
+    def get_muons(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_muon_minus_left],
+            self.sim.dat.n[P_muon_minus_right],
+            self.sim.dat.n[P_muon_plus_left],
+            self.sim.dat.n[P_muon_plus_right],
+        )
+
+    def get_mu_minus_left_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_minus_left_pg].copy()
+
+    def get_mu_minus_right_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_minus_right_pg].copy()
+
+    def get_mu_plus_left_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_plus_left_pg].copy()
+
+    def get_mu_plus_right_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_plus_right_pg].copy()
+
+    def get_muons_photopion(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_muon_minus_left_pg],
+            self.sim.dat.n[P_muon_minus_right_pg],
+            self.sim.dat.n[P_muon_plus_left_pg],
+            self.sim.dat.n[P_muon_plus_right_pg],
+        )
+
+    def get_mu_minus_left_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_minus_left_pp].copy()
+
+    def get_mu_minus_right_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_minus_right_pp].copy()
+
+    def get_mu_plus_left_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_plus_left_pp].copy()
+
+    def get_mu_plus_right_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_muon_plus_right_pp].copy()
+
+    def get_muons_proton_proton(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_muon_minus_left_pp],
+            self.sim.dat.n[P_muon_minus_right_pp],
+            self.sim.dat.n[P_muon_plus_left_pp],
+            self.sim.dat.n[P_muon_plus_right_pp],
+        )
+
+    def get_electron_neutrinos(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el].copy()
+
+    def get_electron_anti_neutrinos(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_anti].copy()
+
+    def get_muon_neutrinos(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu].copy()
+
+    def get_muon_anti_neutrinos(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_anti].copy()
+
+    def get_neutrinos(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_el],
+            self.sim.dat.n[P_neutrino_el_anti],
+            self.sim.dat.n[P_neutrino_mu],
+            self.sim.dat.n[P_neutrino_mu_anti],
+        )
+
+    def get_electron_neutrinos_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_pg].copy()
+
+    def get_electron_anti_neutrinos_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_anti_pg].copy()
+
+    def get_muon_neutrinos_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pg].copy()
+
+    def get_muon_anti_neutrinos_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_anti_pg].copy()
+
+    def get_neutrinos_photopion(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_el_pg],
+            self.sim.dat.n[P_neutrino_el_anti_pg],
+            self.sim.dat.n[P_neutrino_mu_pg],
+            self.sim.dat.n[P_neutrino_mu_anti_pg],
+        )
+
+    def get_electron_neutrinos_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_pp].copy()
+
+    def get_electron_anti_neutrinos_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_anti_pp].copy()
+
+    def get_muon_neutrinos_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pp].copy()
+
+    def get_muon_anti_neutrinos_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_anti_pp].copy()
+
+    def get_neutrinos_proton_proton(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_el_pp],
+            self.sim.dat.n[P_neutrino_el_anti_pp],
+            self.sim.dat.n[P_neutrino_mu_pp],
+            self.sim.dat.n[P_neutrino_mu_anti_pp],
+        )
+
+    def get_electrons(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_electrons], n_SSC_CGS)
+
+    def get_positrons(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_positrons], n_SSC_CGS)
+
+    def get_pairs(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_pairs], n_SSC_CGS)
+
+    def get_pairs_injected(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_pairs_in], n_SSC_CGS)
+
+    def get_pairs_annihilation(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_pairs_pair], n_SSC_CGS)
+
+    def get_pairs_bethe_heitler(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_pairs_bh], n_SSC_CGS)
+
+    def get_pairs_photopion(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_pairs_pg], n_SSC_CGS)
+
+    def get_pairs_proton_proton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_pairs_pp], n_SSC_CGS)
+
+    def get_photons(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons], n_SSC_CGS)
+
+    def get_photons_except_injected(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_except_injected], n_SSC_CGS)
+
+    def get_photons_injected_electrons_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_insy], n_SSC_CGS)
+
+    def get_photons_injected_electrons_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_inic], n_SSC_CGS)
+
+    def get_photons_injected_electrons_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_insy],
+            self.sim.dat.n[P_photons_inic],
+        )
+
+    def get_photons_annihilation_pairs_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pairsy], n_SSC_CGS)
+
+    def get_photons_annihilation_pairs_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pairic], n_SSC_CGS)
+
+    def get_photons_annihilation_pairs_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_pairsy],
+            self.sim.dat.n[P_photons_pairic],
+        )
+
+    def get_photons_bethe_heitler_pairs_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_bhsy], n_SSC_CGS)
+
+    def get_photons_bethe_heitler_pairs_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_bhic], n_SSC_CGS)
+
+    def get_photons_bethe_heitler_pairs_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_bhsy],
+            self.sim.dat.n[P_photons_bhic],
+        )
+
+    def get_photons_photo_pion_pairs_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pgsy], n_SSC_CGS)
+
+    def get_photons_photo_pion_pairs_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pgic], n_SSC_CGS)
+
+    def get_photons_photo_pion_pairs_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_pgsy],
+            self.sim.dat.n[P_photons_pgic],
+        )
+
+    def get_photons_proton_proton_pairs_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_ppsy], n_SSC_CGS)
+
+    def get_photons_proton_proton_pairs_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_ppic], n_SSC_CGS)
+
+    def get_photons_proton_proton_pairs_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_ppsy],
+            self.sim.dat.n[P_photons_ppic],
+        )
+
+    def get_photons_protons_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_psy], n_SSC_CGS)
+
+    def get_photons_protons_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pic], n_SSC_CGS)
+
+    def get_photons_protons_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_psy],
+            self.sim.dat.n[P_photons_pic],
+        )
+
+    def get_photons_pions_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pisy], n_SSC_CGS)
+
+    def get_photons_pions_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_piic], n_SSC_CGS)
+
+    def get_photons_pions_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_pisy],
+            self.sim.dat.n[P_photons_piic],
+        )
+
+    def get_photons_muons_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_musy], n_SSC_CGS)
+
+    def get_photons_muons_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_muic], n_SSC_CGS)
+
+    def get_photons_muons_syn_compton(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_musy],
+            self.sim.dat.n[P_photons_muic],
+        )
+
+    def get_photons_pi0_decay(mut self) -> Vec:
+        return summed(
+            n_SSC_CGS,
+            self.sim.dat.n[P_photons_pi0_pg],
+            self.sim.dat.n[P_photons_pi0_pp],
+        )
+
+    def get_photons_pi0_decay_photopion(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pi0_pg], n_SSC_CGS)
+
+    def get_photons_pi0_decay_proton_proton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_pi0_pp], n_SSC_CGS)
+
+    def set_current_densities_protons(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_protons], InputArray, 1.0)
+
+    def set_current_densities_neutrons(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_neutrons], InputArray, 1.0)
+
+    def set_current_densities_pion_plus(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_pion_plus], InputArray, 1.0)
+
+    def set_current_densities_pion_minus(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_pion_minus], InputArray, 1.0)
+
+    def set_current_densities_mu_minus_left(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_muon_minus_left], InputArray, 1.0)
+
+    def set_current_densities_mu_plus_left(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_muon_plus_left], InputArray, 1.0)
+
+    def set_current_densities_mu_minus_right(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_muon_minus_right], InputArray, 1.0)
+
+    def set_current_densities_mu_plus_right(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_muon_plus_right], InputArray, 1.0)
+
+    def set_current_densities_electron_neutrinos(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_neutrino_el], InputArray, 1.0)
+
+    def set_current_densities_electron_anti_neutrinos(
+        mut self, InputArray: Vec
+    ):
+        assign_divided(self.sim.dat.n[P_neutrino_el_anti], InputArray, 1.0)
+
+    def set_current_densities_muon_neutrinos(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_neutrino_mu], InputArray, 1.0)
+
+    def set_current_densities_muon_anti_neutrinos(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_neutrino_mu_anti], InputArray, 1.0)
+
+    def set_current_densities_electrons(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_electrons], InputArray, n_SSC_CGS)
+
+    def set_current_densities_positrons(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_positrons], InputArray, n_SSC_CGS)
+
+    def set_current_densities_pairs(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_pairs], InputArray, n_SSC_CGS)
+
+    def set_current_densities_photons(mut self, InputArray: Vec):
+        assign_divided(self.sim.dat.n[P_photons], InputArray, n_SSC_CGS)
+
+    def get_injection_rate_protons(mut self) -> Vec:
+        return self.sim.oInj.inj_proton.copy()
+
+    def get_injection_rate_neutrons(mut self) -> Vec:
+        return self.sim.oInj.inj_neutron.copy()
+
+    def get_injection_rate_pion_plus(mut self) -> Vec:
+        return self.sim.oInj.inj_piplus.copy()
+
+    def get_injection_rate_pion_minus(mut self) -> Vec:
+        return self.sim.oInj.inj_piminus.copy()
+
+    def get_injection_rate_pi0(mut self) -> Vec:
+        return self.sim.oInj.inj_pi0.copy()
+
+    def get_injection_rate_mu_minus_left(mut self) -> Vec:
+        return self.sim.oInj.inj_muminusleft.copy()
+
+    def get_injection_rate_mu_plus_left(mut self) -> Vec:
+        return self.sim.oInj.inj_muplusleft.copy()
+
+    def get_injection_rate_mu_minus_right(mut self) -> Vec:
+        return self.sim.oInj.inj_muminusright.copy()
+
+    def get_injection_rate_mu_plus_right(mut self) -> Vec:
+        return self.sim.oInj.inj_muplusright.copy()
+
+    def get_injection_rate_electron_neutrinos(mut self) -> Vec:
+        return self.sim.oInj.inj_nue.copy()
+
+    def get_injection_rate_electron_anti_neutrinos(mut self) -> Vec:
+        return self.sim.oInj.inj_antinue.copy()
+
+    def get_injection_rate_muon_neutrinos(mut self) -> Vec:
+        return self.sim.oInj.inj_numu.copy()
+
+    def get_injection_rate_muon_anti_neutrinos(mut self) -> Vec:
+        return self.sim.oInj.inj_antinumu.copy()
+
+    def get_injection_rate_electrons(mut self) -> Vec:
+        return scaled(self.sim.oInj.inj_electron, Rate_SSC_CGS)
+
+    def get_injection_rate_positrons(mut self) -> Vec:
+        return scaled(self.sim.oInj.inj_positron, Rate_SSC_CGS)
+
+    def get_injection_rate_photons(mut self) -> Vec:
+        return scaled(self.sim.oInj.inj_photon, Rate_SSC_CGS)
+
+    def set_injection_rate_protons(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_proton, InputArray, 1.0)
+
+    def set_injection_rate_neutrons(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_neutron, InputArray, 1.0)
+
+    def set_injection_rate_pion_plus(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_piplus, InputArray, 1.0)
+
+    def set_injection_rate_pion_minus(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_piminus, InputArray, 1.0)
+
+    def set_injection_rate_pi0(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_pi0, InputArray, 1.0)
+
+    def set_injection_rate_mu_minus_left(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_muminusleft, InputArray, 1.0)
+
+    def set_injection_rate_mu_plus_left(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_muplusleft, InputArray, 1.0)
+
+    def set_injection_rate_mu_minus_right(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_muminusright, InputArray, 1.0)
+
+    def set_injection_rate_mu_plus_right(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_muplusright, InputArray, 1.0)
+
+    def set_injection_rate_electron_neutrinos(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_nue, InputArray, 1.0)
+
+    def set_injection_rate_electron_anti_neutrinos(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_antinue, InputArray, 1.0)
+
+    def set_injection_rate_muon_neutrinos(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_numu, InputArray, 1.0)
+
+    def set_injection_rate_muon_anti_neutrinos(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_antinumu, InputArray, 1.0)
+
+    def set_injection_rate_electrons(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_electron, InputArray, Rate_SSC_CGS)
+
+    def set_injection_rate_positrons(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_positron, InputArray, Rate_SSC_CGS)
+
+    def set_injection_rate_photons(mut self, InputArray: Vec):
+        assign_divided(self.sim.oInj.inj_photon, InputArray, Rate_SSC_CGS)
+
+    def set_t_proton_escape(mut self, InputArray: Vec):
+        set_rates_from_timescales(self.sim.oEscape.afescPRO, InputArray, 1.0)
+
+    def set_t_neutron_escape(mut self, InputArray: Vec):
+        set_rates_from_timescales(self.sim.oEscape.afescNTR, InputArray, 1.0)
+
+    def set_t_pion_escape(mut self, InputArray: Vec):
+        set_rates_from_timescales(self.sim.oEscape.afescPipm, InputArray, 1.0)
+
+    def set_t_muon_escape(mut self, InputArray: Vec):
+        set_rates_from_timescales(self.sim.oEscape.afescMu, InputArray, 1.0)
+
+    def set_t_neutrino_escape(mut self, InputArray: Vec):
+        set_rates_from_timescales(self.sim.oEscape.afescNU, InputArray, 1.0)
+
+    def set_t_pair_escape(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oEscape.afescE, InputArray, T_SSC_CGS
+        )
+
+    def set_t_photon_escape(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oEscape.afescG, InputArray, T_SSC_CGS
+        )
+
+    def set_t_proton_extra_cooling(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolPRO, InputArray, -1.0
+        )
+
+    def set_t_neutron_extra_cooling(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolNTR, InputArray, -1.0
+        )
+
+    def set_t_pion_extra_cooling(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolPipm, InputArray, -1.0
+        )
+
+    def set_t_muon_extra_cooling(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolMu, InputArray, -1.0
+        )
+
+    def set_t_neutrino_extra_cooling(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolNU, InputArray, -1.0
+        )
+
+    def set_t_pair_extra_cooling(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolE, InputArray, -T_SSC_CGS
+        )
+
+    def set_t_photon_extra_cooling(mut self, InputArray: Vec):
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolG, InputArray, -T_SSC_CGS
+        )
+
+    def get_t_proton_syn(mut self) -> Vec:
+        return timescales(self.sim.S[SA_proton].Asy, 1.0, -1.0)
+
+    def get_t_proton_compton(mut self) -> Vec:
+        return timescales(self.sim.S[SA_proton].Aic, 1.0, -1.0)
+
+    def get_t_proton_acceleration(mut self) -> Vec:
+        var res = zeros(self.sim.dat.nbins_had)
+        for i in range(self.sim.dat.nbins_had):
+            res[i] = 1.0 / (
+                self.sim.oAcc.AAChadBohm(self.sim.rp, self.sim.dat, i) + 1e-200
+            )
+        return res^
+
+    def get_t_proton_adiabatic(mut self) -> Vec:
+        return constant_timescales(
+            self.sim.dat.nbins_had, 1.0, -Expansion.AAdiHad(self.sim.rp)
+        )
+
+    def get_t_proton_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescPRO, 1.0, 1.0)
+
+    def get_t_proton_bethe_heitler(mut self) -> Vec:
+        return timescales(self.sim.oBH.ABHHadP, 1.0, -1.0)
+
+    def get_t_proton_photopion(mut self) -> Vec:
+        return timescales(self.sim.oPhotoPion.afPG_PRO, 1.0, 1.0)
+
+    def get_t_proton_proton_proton(mut self) -> Vec:
+        return timescales(self.sim.oProtonProton.APP_PRO, 1.0, -1.0)
+
+    def get_t_proton_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolPRO, 1.0, -1.0)
+
+    def get_t_neutron_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescNTR, 1.0, 1.0)
+
+    def get_t_neutron_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolNTR, 1.0, -1.0)
+
+    def get_t_pion_syn(mut self) -> Vec:
+        return timescales(self.sim.S[SA_Pip].Asy, 1.0, -1.0)
+
+    def get_t_pion_compton(mut self) -> Vec:
+        return timescales(self.sim.S[SA_Pip].Aic, 1.0, -1.0)
+
+    def get_t_pion_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescPipm, 1.0, 1.0)
+
+    def get_t_pion_decay(mut self) -> Vec:
+        return timescales(self.sim.S[SA_Pip].alpha_decay, 1.0, 1.0)
+
+    def get_t_pion_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolPipm, 1.0, -1.0)
+
+    def get_t_muon_syn(mut self) -> Vec:
+        return timescales(self.sim.S[SA_MmL].Asy, 1.0, -1.0)
+
+    def get_t_muon_compton(mut self) -> Vec:
+        return timescales(self.sim.S[SA_MmL].Aic, 1.0, -1.0)
+
+    def get_t_muon_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescMu, 1.0, 1.0)
+
+    def get_t_muon_decay(mut self) -> Vec:
+        return timescales(self.sim.S[SA_MmL].alpha_decay, 1.0, 1.0)
+
+    def get_t_muon_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolMu, 1.0, -1.0)
+
+    def get_t_neutrino_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescNU, 1.0, 1.0)
+
+    def get_t_neutrino_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolNU, 1.0, -1.0)
+
+    def get_t_pair_syn(mut self) -> Vec:
+        return timescales(self.sim.S[self._pair_solver()].Asy, T_SSC_CGS, -1.0)
+
+    def get_t_pair_compton(mut self) -> Vec:
+        return timescales(self.sim.S[self._pair_solver()].Aic, T_SSC_CGS, -1.0)
+
+    def get_t_pair_acceleration(mut self) -> Vec:
+        var res = zeros(self.sim.dat.nbins_lep)
+        for i in range(self.sim.dat.nbins_lep):
+            res[i] = T_SSC_CGS / (
+                self.sim.oAcc.AAClepBohm(self.sim.rp, self.sim.dat, i) + 1e-200
+            )
+        return res^
+
+    def get_t_pair_adiabatic(mut self) -> Vec:
+        return constant_timescales(
+            self.sim.dat.nbins_lep, T_SSC_CGS, -Expansion.AAdiLep(self.sim.rp)
+        )
+
+    def get_t_pair_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescE, T_SSC_CGS, 1.0)
+
+    def get_t_pair_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolE, T_SSC_CGS, -1.0)
+
+    def get_t_pair_emission_from_annihilation(mut self) -> Vec:
+        return emission_timescales(
+            self.sim.dat.n[P_electrons], self.sim.c[C_qepair], T_SSC_CGS
+        )
+
+    def get_t_pair_emission_from_injection(mut self) -> Vec:
+        return emission_timescales(
+            self.sim.dat.n[P_electrons], self.sim.c[C_qein], T_SSC_CGS
+        )
+
+    def get_t_pair_emission_from_bethe_heitler(mut self) -> Vec:
+        return emission_timescales(
+            self.sim.dat.n[P_electrons], self.sim.c[C_qebh], T_SSC_CGS
+        )
+
+    def get_t_pair_emission_from_photopion(mut self) -> Vec:
+        return emission_timescales(
+            self.sim.dat.n[P_electrons], self.sim.c[C_qepg], T_SSC_CGS
+        )
+
+    def get_t_pair_emission_from_proton_proton(mut self) -> Vec:
+        return emission_timescales(
+            self.sim.dat.n[P_electrons], self.sim.c[C_qepp], T_SSC_CGS
+        )
+
+    def get_t_photon_ssa(mut self) -> Vec:
+        return timescales(self.sim.oSyn.afsyG, T_SSC_CGS, 1.0)
+
+    def get_t_photon_compton(mut self) -> Vec:
+        return timescales(self.sim.oComp.aficG, T_SSC_CGS, 1.0)
+
+    def get_t_photon_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescG, T_SSC_CGS, 1.0)
+
+    def get_t_photon_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolG, T_SSC_CGS, -1.0)
+
+    def get_t_photon_annihilation(mut self) -> Vec:
+        return timescales(self.sim.oPair.afpairG, T_SSC_CGS, 1.0)
+
+    def get_t_photon_photopion(mut self) -> Vec:
+        return timescales(self.sim.oPhotoPion.afPG_Rad, 1.0, 1.0)
+
+    def get_estimated_electron_emax(mut self) -> Float64:
+        return self.sim.rp.estimated_electron_emax
+
+    def get_estimated_proton_emax(mut self) -> Float64:
+        return self.sim.rp.estimated_proton_emax

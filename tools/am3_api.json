@@ -1,0 +1,1534 @@
+[
+[
+"clear_am3",
+"clear_am3(self: am3.AM3) -> None\n\nSet all current particle densities and injection rates to zero.\n"
+],
+[
+"clear_particle_densities",
+"clear_particle_densities(self: am3.AM3) -> None\n\nSet all current particle densities to zero.\n"
+],
+[
+"eV_to_had_grid_index",
+"eV_to_had_grid_index(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> int\n\nConvert energy [eV] to hadronic energy grid array index\n"
+],
+[
+"eV_to_lep_grid_index",
+"eV_to_lep_grid_index(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> int\n\nConvert energy [eV] to electron energy grid array index\n"
+],
+[
+"eV_to_neutrino_grid_index",
+"eV_to_neutrino_grid_index(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> int\n\nConvert energy [eV] to neutrino energy grid array index\n"
+],
+[
+"eV_to_photon_grid_index",
+"eV_to_photon_grid_index(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> int\n\nConvert energy [eV] to photon energy grid array index\n"
+],
+[
+"estimate_max_electron_energy",
+"estimate_max_electron_energy(self: am3.AM3) -> None\n\nSet maximum electron energy self-consistently by balancing losses and acceleration\n"
+],
+[
+"estimate_max_proton_energy",
+"estimate_max_proton_energy(self: am3.AM3) -> None\n\nSet maximum proton energy self-consistently by balancing losses and acceleration\n"
+],
+[
+"evolve_step",
+"evolve_step(self: am3.AM3) -> None\n\nevolve one step\n"
+],
+[
+"get_egrid_had",
+"get_egrid_had(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with energy grid for protons, pions, and muons [eV].\n"
+],
+[
+"get_egrid_lep",
+"get_egrid_lep(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with electron and positron energy grid [eV].\n"
+],
+[
+"get_egrid_neutrinos",
+"get_egrid_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with neutrino energy grid [eV].\n"
+],
+[
+"get_egrid_photons",
+"get_egrid_photons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with photon energy grid [eV].\n"
+],
+[
+"get_electron_accel_factor",
+"get_electron_accel_factor(self: am3.AM3) -> float\n\nFraction of Larmor radius for electron acc. timescale, 1/acceleration efficiency\n"
+],
+[
+"get_electron_anti_neutrinos",
+"get_electron_anti_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of electron-flavored anti neutrinos\n"
+],
+[
+"get_electron_anti_neutrinos_photopion",
+"get_electron_anti_neutrinos_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced electron-flavored anti neutrinos\n"
+],
+[
+"get_electron_anti_neutrinos_proton_proton",
+"get_electron_anti_neutrinos_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced electron-flavored anti neutrinos\n"
+],
+[
+"get_electron_neutrinos",
+"get_electron_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of electron-flavored neutrinos\n"
+],
+[
+"get_electron_neutrinos_photopion",
+"get_electron_neutrinos_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced electron-flavored neutrinos\n"
+],
+[
+"get_electron_neutrinos_proton_proton",
+"get_electron_neutrinos_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced electron-flavored neutrinos\n"
+],
+[
+"get_electrons",
+"get_electrons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for electrons.\nIf `get_process_merge_positrons_into_electrons() == 1`, this array will not be updated; the densities of electrons and positrons can only be checked via get_pairs().\n"
+],
+[
+"get_escape_fraction_muons",
+"get_escape_fraction_muons(self: am3.AM3) -> float\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nGet current escape fraction of muons. The muon escape timescale will then be escape_timescale / escape_fraction_muons.\n"
+],
+[
+"get_escape_fraction_neutrinos",
+"get_escape_fraction_neutrinos(self: am3.AM3) -> float\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nGet current escape fraction of neutrinos. The neutrino escape timescale will then be escape_timescale / escape_fraction_neutrinos.\n"
+],
+[
+"get_escape_fraction_neutrons",
+"get_escape_fraction_neutrons(self: am3.AM3) -> float\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nGet current escape fraction of neutrons. The neutron escape timescale will then be escape_timescale / escape_fraction_neutrons.\n"
+],
+[
+"get_escape_fraction_pairs",
+"get_escape_fraction_pairs(self: am3.AM3) -> float\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nGet current escape fraction of electrons and positrons. The positron escape timescale will then be escape_timescale / escape_fraction_pairs.\n"
+],
+[
+"get_escape_fraction_photons",
+"get_escape_fraction_photons(self: am3.AM3) -> float\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nGet current escape fraction of photons. The photon escape timescale will then be escape_timescale / escape_fraction_photons.\n"
+],
+[
+"get_escape_fraction_pions",
+"get_escape_fraction_pions(self: am3.AM3) -> float\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nGet current escape fraction of charged pions. The pion escape timescale will then be escape_timescale / escape_fraction_pions.\n"
+],
+[
+"get_escape_fraction_protons",
+"get_escape_fraction_protons(self: am3.AM3) -> float\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nGet current escape fraction of protons. The proton escape timescale will then be escape_timescale / escape_fraction_protons.\n"
+],
+[
+"get_escape_timescale",
+"get_escape_timescale(self: am3.AM3) -> float\n\nGet current timescale for escape [s]. The actual escape timescape of each particle species will be set to this timescale divided by an individual escape factor.\n"
+],
+[
+"get_estimate_max_energies",
+"get_estimate_max_energies(self: am3.AM3) -> bool\n\nSelf-consistently calculate the maximum energies of electrons and protons based on interaction vs. acceleration timescales.\nThis action resets injection of electrons and protons and therefore overrides previously defined injection.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"get_estimated_electron_emax",
+"get_estimated_electron_emax(self: am3.AM3) -> float\n\nGet maximum electron energy self-consistently by balancing losses and acceleration [eV]\n"
+],
+[
+"get_estimated_proton_emax",
+"get_estimated_proton_emax(self: am3.AM3) -> float\n\nGet maximum proton energy self-consistently by balancing losses and acceleration [eV]\n"
+],
+[
+"get_expansion_timescale",
+"get_expansion_timescale(self: am3.AM3) -> float\n\nGet current expansion timescale of the region, V/(dV/dt) [s]. This leads to an energy-independent energy loss term for all charged particles with the same timescale.\n"
+],
+[
+"get_grid_size_had",
+"get_grid_size_had(self: am3.AM3) -> int\n\nGet grid size (number of bins) of proton, pion, and muon energy grid\n"
+],
+[
+"get_grid_size_lep",
+"get_grid_size_lep(self: am3.AM3) -> int\n\nGet grid size (number of bins) of electron/positron energy grid\n"
+],
+[
+"get_grid_size_neutrinos",
+"get_grid_size_neutrinos(self: am3.AM3) -> int\n\nGet Grid size (number of bins) of neutrino energy grid\n"
+],
+[
+"get_grid_size_photons",
+"get_grid_size_photons(self: am3.AM3) -> int\n\nGet grid size (number of bins) of photon energy grid\n"
+],
+[
+"get_injection_rate_electron_anti_neutrinos",
+"get_injection_rate_electron_anti_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of anti-nu_e [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_electron_neutrinos",
+"get_injection_rate_electron_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of nu_e [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_electrons",
+"get_injection_rate_electrons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of electrons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_mu_minus_left",
+"get_injection_rate_mu_minus_left(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of left-handed negative muons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_mu_minus_right",
+"get_injection_rate_mu_minus_right(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of right-handed negative muons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_mu_plus_left",
+"get_injection_rate_mu_plus_left(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of left-handed poisitive muons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_mu_plus_right",
+"get_injection_rate_mu_plus_right(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of right-handed poisitive muons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_muon_anti_neutrinos",
+"get_injection_rate_muon_anti_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of antu-mu_nu [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_muon_neutrinos",
+"get_injection_rate_muon_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of nu_m [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_neutrons",
+"get_injection_rate_neutrons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of neutrons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_photons",
+"get_injection_rate_photons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of photons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_pi0",
+"get_injection_rate_pi0(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of neutral pions [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_pion_minus",
+"get_injection_rate_pion_minus(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of negative pions [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_pion_plus",
+"get_injection_rate_pion_plus(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of positive pions [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_positrons",
+"get_injection_rate_positrons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of positrons [1/(cm\u00b3s)]\n"
+],
+[
+"get_injection_rate_protons",
+"get_injection_rate_protons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet injection rates (EdN_dEdtdV) of protons [1/(cm\u00b3s)]\n"
+],
+[
+"get_log_energy_spacing",
+"get_log_energy_spacing(self: am3.AM3) -> float\n\nGet the energy grid spacing (base e)\n"
+],
+[
+"get_mag_field",
+"get_mag_field(self: am3.AM3) -> float\n\nGet current value of magnetic field strength [gauss].\n"
+],
+[
+"get_mu_minus_left",
+"get_mu_minus_left(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of left-handed negative muons\n"
+],
+[
+"get_mu_minus_left_photopion",
+"get_mu_minus_left_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced left-handed negative muons\n"
+],
+[
+"get_mu_minus_left_proton_proton",
+"get_mu_minus_left_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced left-handed negative muons\n"
+],
+[
+"get_mu_minus_right",
+"get_mu_minus_right(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of right-handed negative muons\n"
+],
+[
+"get_mu_minus_right_photopion",
+"get_mu_minus_right_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced right-handed negative muons\n"
+],
+[
+"get_mu_minus_right_proton_proton",
+"get_mu_minus_right_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced right-handed negative muons\n"
+],
+[
+"get_mu_plus_left",
+"get_mu_plus_left(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of left-handed positive muons\n"
+],
+[
+"get_mu_plus_left_photopion",
+"get_mu_plus_left_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced left-handed positive muons\n"
+],
+[
+"get_mu_plus_left_proton_proton",
+"get_mu_plus_left_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced left-handed positive muons\n"
+],
+[
+"get_mu_plus_right",
+"get_mu_plus_right(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of right-handed positive muons\n"
+],
+[
+"get_mu_plus_right_photopion",
+"get_mu_plus_right_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced right-handed positive muons\n"
+],
+[
+"get_mu_plus_right_proton_proton",
+"get_mu_plus_right_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced right-handed positive muons\n"
+],
+[
+"get_muon_anti_neutrinos",
+"get_muon_anti_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of muon-flavored anti neutrinos\n"
+],
+[
+"get_muon_anti_neutrinos_photopion",
+"get_muon_anti_neutrinos_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced muon-flavored anti neutrinos\n"
+],
+[
+"get_muon_anti_neutrinos_proton_proton",
+"get_muon_anti_neutrinos_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced muon-flavored anti neutrinos\n"
+],
+[
+"get_muon_neutrinos",
+"get_muon_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of muon-flavored neutrinos\n"
+],
+[
+"get_muon_neutrinos_photopion",
+"get_muon_neutrinos_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced muon-flavored neutrinos\n"
+],
+[
+"get_muon_neutrinos_proton_proton",
+"get_muon_neutrinos_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced muon-flavored neutrinos\n"
+],
+[
+"get_muons",
+"get_muons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all muons\n"
+],
+[
+"get_muons_photopion",
+"get_muons_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all photopion produced muons\n"
+],
+[
+"get_muons_proton_proton",
+"get_muons_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all proton-proton produced muons\n"
+],
+[
+"get_neutrinos",
+"get_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of neutrinos and anti-neutrinos of all flavors\n"
+],
+[
+"get_neutrinos_photopion",
+"get_neutrinos_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photopion produced neutrinos and anti-neutrinos of all flavors\n"
+],
+[
+"get_neutrinos_proton_proton",
+"get_neutrinos_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of proton-proton produced neutrinos and anti-neutrinos of all flavors\n"
+],
+[
+"get_neutrons",
+"get_neutrons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for neutrons\n"
+],
+[
+"get_optimize_annihilation_pair_emission",
+"get_optimize_annihilation_pair_emission(self: am3.AM3) -> bool\n\nGet current value of optimization parameter set with `set_optimize_annihilation_pair_emission` (see function documentation)\n"
+],
+[
+"get_optimize_bethe_heitler_incoming_protons_min",
+"get_optimize_bethe_heitler_incoming_protons_min(self: am3.AM3) -> float\n\nGet current value of optimization parameter set with `set_optimize_bethe_heitler_incoming_protons_min` (see function documentation)\n"
+],
+[
+"get_optimize_bethe_heitler_outgoing_pairs_grid",
+"get_optimize_bethe_heitler_outgoing_pairs_grid(self: am3.AM3) -> bool\n\nGet current value of optimization parameter set with `set_optimize_bethe_heitler_outgoing_pairs_grid` (see function documentation)\n"
+],
+[
+"get_optimize_bethe_heitler_target_photon_max",
+"get_optimize_bethe_heitler_target_photon_max(*args, **kwargs)\nOverloaded function.\n\n1. get_optimize_bethe_heitler_target_photon_max(self: am3.AM3) -> float\n\nGet current value of optimization parameter set with `set_optimize_bethe_heitler_target_photon_max` (see function documentation)\n\n2. get_optimize_bethe_heitler_target_photon_max(self: am3.AM3) -> float\n\nGet current value of optimization parameter set with `set_optimize_bethe_heitler_target_photon_max` (see function documentation)\n"
+],
+[
+"get_optimize_compton_emission_emin",
+"get_optimize_compton_emission_emin(self: am3.AM3) -> float\n\nGet current value of the Compton radiation kernel optimisation parameter set with `set_optimize_compton_emission_emin` (see function documentation)\n"
+],
+[
+"get_optimize_compton_emission_grid",
+"get_optimize_compton_emission_grid(self: am3.AM3) -> bool\n\nGet current value of the Compton radiation kernel optimisation parameter set with `set_optimize_compton_emission_grid` (see function documentation)\n"
+],
+[
+"get_optimize_compton_target_emax",
+"get_optimize_compton_target_emax(self: am3.AM3) -> float\n\nGet current value of the Compton radiation kernel optimisation parameter set with `set_optimize_compton_target_emax` (see function documentation)\n"
+],
+[
+"get_optimize_compton_target_grid",
+"get_optimize_compton_target_grid(self: am3.AM3) -> bool\n\nGet current value of the Compton radiation kernel optimisation parameter set with `set_optimize_compton_target_grid` (see function documentation)\n"
+],
+[
+"get_optimize_photopion_target_photon_grid",
+"get_optimize_photopion_target_photon_grid(self: am3.AM3) -> bool\n\nGet current value of optimization parameter set with `set_optimize_photopion_target_photon_grid` (see function documentation)\n"
+],
+[
+"get_optimize_photopion_target_photon_max",
+"get_optimize_photopion_target_photon_max(self: am3.AM3) -> float\n\nGet current value of optimization parameter set with `set_optimize_photopion_target_photon_max` (see function documentation)\n"
+],
+[
+"get_pairs",
+"get_pairs(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for electrons and positrons.\n"
+],
+[
+"get_pairs_annihilation",
+"get_pairs_annihilation(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for pair produced electrons and positrons\n"
+],
+[
+"get_pairs_bethe_heitler",
+"get_pairs_bethe_heitler(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for Bethe-Heitler produced electrons and positrons\n"
+],
+[
+"get_pairs_injected",
+"get_pairs_injected(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for externally injected electrons and positrons\n"
+],
+[
+"get_pairs_photopion",
+"get_pairs_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for photopion produced electrons and positrons\n"
+],
+[
+"get_pairs_proton_proton",
+"get_pairs_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for proton-proton produced electrons and positrons\n"
+],
+[
+"get_photons",
+"get_photons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all photons\n"
+],
+[
+"get_photons_annihilation_pairs_compton",
+"get_photons_annihilation_pairs_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from pairs from photon annihilation\n"
+],
+[
+"get_photons_annihilation_pairs_syn",
+"get_photons_annihilation_pairs_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from pairs from photon annihilation\n"
+],
+[
+"get_photons_annihilation_pairs_syn_compton",
+"get_photons_annihilation_pairs_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from pairs from photon annihilation\n"
+],
+[
+"get_photons_bethe_heitler_pairs_compton",
+"get_photons_bethe_heitler_pairs_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from pairs from the Bethe-Heitler process\n"
+],
+[
+"get_photons_bethe_heitler_pairs_syn",
+"get_photons_bethe_heitler_pairs_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from pairs from the Bethe-Heitler process\n"
+],
+[
+"get_photons_bethe_heitler_pairs_syn_compton",
+"get_photons_bethe_heitler_pairs_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from pairs from the Bethe-Heitler process\n"
+],
+[
+"get_photons_except_injected",
+"get_photons_except_injected(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all photons except those externally injected. This correponds to all photons self-consistently emitted by other particles\n"
+],
+[
+"get_photons_injected_electrons_compton",
+"get_photons_injected_electrons_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from externally injected electrons\n"
+],
+[
+"get_photons_injected_electrons_syn",
+"get_photons_injected_electrons_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from externally injected electrons\n"
+],
+[
+"get_photons_injected_electrons_syn_compton",
+"get_photons_injected_electrons_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from externally injected electrons\n"
+],
+[
+"get_photons_muons_compton",
+"get_photons_muons_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from muons\n"
+],
+[
+"get_photons_muons_syn",
+"get_photons_muons_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from muons\n"
+],
+[
+"get_photons_muons_syn_compton",
+"get_photons_muons_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from muons\n"
+],
+[
+"get_photons_photo_pion_pairs_compton",
+"get_photons_photo_pion_pairs_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from pairs from photopion prduction\n"
+],
+[
+"get_photons_photo_pion_pairs_syn",
+"get_photons_photo_pion_pairs_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from pairs from photopion prduction\n"
+],
+[
+"get_photons_photo_pion_pairs_syn_compton",
+"get_photons_photo_pion_pairs_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from pairs from photopion prduction\n"
+],
+[
+"get_photons_pi0_decay",
+"get_photons_pi0_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photons from pi0 decays\n"
+],
+[
+"get_photons_pi0_decay_photopion",
+"get_photons_pi0_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photons from photopion-produced pi0 decays\n"
+],
+[
+"get_photons_pi0_decay_proton_proton",
+"get_photons_pi0_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of photons from pp-produced pi0 decays\n"
+],
+[
+"get_photons_pions_compton",
+"get_photons_pions_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from pions\n"
+],
+[
+"get_photons_pions_syn",
+"get_photons_pions_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from pions\n"
+],
+[
+"get_photons_pions_syn_compton",
+"get_photons_pions_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from pions\n"
+],
+[
+"get_photons_proton_proton_pairs_compton",
+"get_photons_proton_proton_pairs_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from pairs from photopion prduction\n"
+],
+[
+"get_photons_proton_proton_pairs_syn",
+"get_photons_proton_proton_pairs_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from pairs from photopion prduction\n"
+],
+[
+"get_photons_proton_proton_pairs_syn_compton",
+"get_photons_proton_proton_pairs_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from pairs from photopion prduction\n"
+],
+[
+"get_photons_protons_compton",
+"get_photons_protons_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of IC photons from protons\n"
+],
+[
+"get_photons_protons_syn",
+"get_photons_protons_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotron photons from protons\n"
+],
+[
+"get_photons_protons_syn_compton",
+"get_photons_protons_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of synchrotorn and inverse Compton photons from protons\n"
+],
+[
+"get_pion_minus",
+"get_pion_minus(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of negative pions\n"
+],
+[
+"get_pion_minus_photopion",
+"get_pion_minus_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of negative photo-pion pions\n"
+],
+[
+"get_pion_minus_proton_proton",
+"get_pion_minus_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of negative proton-proton pions\n"
+],
+[
+"get_pion_plus",
+"get_pion_plus(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of positive pions\n"
+],
+[
+"get_pion_plus_photopion",
+"get_pion_plus_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of positive photo-pion pions\n"
+],
+[
+"get_pion_plus_proton_proton",
+"get_pion_plus_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of positive proton-proton pions\n"
+],
+[
+"get_pions",
+"get_pions(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all charged pions, both positive and negative\n"
+],
+[
+"get_pions_photopion",
+"get_pions_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all charged photo-pion pions, both positive and negative\n"
+],
+[
+"get_pions_proton_proton",
+"get_pions_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of all charged proton-proton pions, both positive and negative\n"
+],
+[
+"get_positrons",
+"get_positrons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for positrons.\nIf `get_process_merge_positrons_into_electrons() == 1`, this array will not be updated; the densities of electrons and positrons can only be checked via get_pairs().\n"
+],
+[
+"get_powerlaw_injection_parameters_electrons",
+"get_powerlaw_injection_parameters_electrons(self: am3.AM3) -> tuple[float, float, float, float, float, float, float, float]\n\nGet tuple with current parameters of the template power-law injection of electrons: luminosity, minimum energy, break energy, maximum energy, spectral index below the break, and spectral index above the break.\n"
+],
+[
+"get_powerlaw_injection_parameters_protons",
+"get_powerlaw_injection_parameters_protons(self: am3.AM3) -> tuple[float, float, float, float, float, float, float, float]\n\nGet tuple with current parameters of the template power-law injection of protons: luminosity, minimum energy, break energy, maximum energy, spectral index below the break, and spectral index above the break.\n"
+],
+[
+"get_pp_model_charged_pions",
+"get_pp_model_charged_pions(self: am3.AM3) -> int\n\nGet current value of model parameter set with `set_pp_model_charged_pions` (see function documentation)\n"
+],
+[
+"get_pp_model_neutral_pions",
+"get_pp_model_neutral_pions(self: am3.AM3) -> int\n\nGet current value of model parameter set with `set_pp_model_neutral_pions` (see function documentation)\n"
+],
+[
+"get_pp_target_proton_density",
+"get_pp_target_proton_density(self: am3.AM3) -> float\n\nGet current density of target protons for pp interactions [cm-3].\n"
+],
+[
+"get_pp_transition_energy_to_delta_approx",
+"get_pp_transition_energy_to_delta_approx(self: am3.AM3) -> float\n\nGet current value of optimization parameter set with `set_pp_transition_energy_to_delta_approx` (see function documentation)\n"
+],
+[
+"get_process_adiabatic_cooling",
+"get_process_adiabatic_cooling(self: am3.AM3) -> bool\n\nCheck whether adiabatic cooling of charged particles due to expansion is currently included or excluded.\nSee `set_process_adiabatic_cooling`.\n"
+],
+[
+"get_process_annihilation",
+"get_process_annihilation(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for photon-photon annihilation and resulting pair production.\nSee `set_process_annihilation`.\nNote also the value of the individual switches 'get_process_annihilation_pair_emission()' and 'get_process_annihilation_cooling()', which control pair emission and photon annihilation individually.\n"
+],
+[
+"get_process_annihilation_cooling",
+"get_process_annihilation_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls the photon disappearance term due to photon-photon interactions.\nSee `set_process_annihilation_cooling`.\nNote also the value of the master switch `get_process_annihilation()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_annihilation_pair_emission",
+"get_process_annihilation_pair_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pair emission due to photon-photon interactions.\nSee `set_process_annihilation_pair_emission`.\nNote also the value of the master switch `get_process_annihilation()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_bethe_heitler",
+"get_process_bethe_heitler(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for pair production and proton cooling resulting from Bethe-Heitler interactions.\nSee `set_process_bethe_heitler`.\nNote also the value of the individual switches 'get_process_bethe_heitler_emission()' and 'get_process_bethe_heitler_cooling()', which control pair emission and photon annihilation individually.\n"
+],
+[
+"get_process_bethe_heitler_cooling",
+"get_process_bethe_heitler_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls proton cooling resulting from Bethe-Heitler interactions.\nSee `set_process_bethe_heitler_cooling`.\nNote also the value of the master switch `get_process_bethe_heitler()`, which controls both pair emission and proton cooling.\n"
+],
+[
+"get_process_bethe_heitler_emission",
+"get_process_bethe_heitler_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls the pair emission resulting from Bethe-Heitler interactions.\nSee `set_process_bethe_heitler_emission`.\nNote also the value of the master switch `get_process_bethe_heitler()`, which controls both pair emission and proton cooling.\n"
+],
+[
+"get_process_compton_photon_energy_loss",
+"get_process_compton_photon_energy_loss(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls photon energy losses from direct Compton.\nSee `set_process_compton_photon_energy_loss`.\n"
+],
+[
+"get_process_electron_compton",
+"get_process_electron_compton(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for electron/positron inverse Compton emission and cooling.\nSee `set_process_electron_compton`.\nNote also the value of the individual switches `get_process_electron_compton_emission()` and `get_process_electron_compton_cooling()`, which control emission and cooling individually.\n"
+],
+[
+"get_process_electron_compton_cooling",
+"get_process_electron_compton_cooling(self: am3.AM3) -> bool\n\nCheck whether electron/positron inverse Compton cooling is currently on or off.\nSee `set_process_electron_compton_cooling`.\n"
+],
+[
+"get_process_electron_compton_emission",
+"get_process_electron_compton_emission(self: am3.AM3) -> bool\n\nCheck whether electron/positron inverse Compton emission is currently on or off.\nSee `set_process_electron_compton_emission`.\n"
+],
+[
+"get_process_electron_syn",
+"get_process_electron_syn(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for electron/positron synchrotron emission and cooling.\nSee `set_process_electron_syn`.\nNote also the value of the individual switches `get_process_electron_syn_emission()` and `get_process_electron_syn_cooling()`, which control emission and cooling individually.\n"
+],
+[
+"get_process_electron_syn_cooling",
+"get_process_electron_syn_cooling(self: am3.AM3) -> bool\n\nCheck whether electron/positron synchrotron cooling is currently on or off.\nSee `set_process_electron_syn_cooling`.\n"
+],
+[
+"get_process_electron_syn_emission",
+"get_process_electron_syn_emission(self: am3.AM3) -> bool\n\nCheck whether electron/positron synchrotron emission is currently on or off.\nSee `set_process_electron_syn_emission`.\n"
+],
+[
+"get_process_escape",
+"get_process_escape(self: am3.AM3) -> bool\n\nCheck whether physical escape from the region is currently included or excluded.\nSee `set_process_escape`.\n"
+],
+[
+"get_process_expansion",
+"get_process_expansion(self: am3.AM3) -> bool\n\nCheck whether time-dependent dilution of the particle densities due to volume expansion is currently included or excluded.\nSee `set_process_expansion`.\n"
+],
+[
+"get_process_hadronic",
+"get_process_hadronic(self: am3.AM3) -> bool\n\nCheck the current value of the master switch that controls the inclusion of all hadronic processes.\nSee `set_process_hadronic`.\nNote also the values of each switch for the individual hadronic processes.\n"
+],
+[
+"get_process_merge_positrons_into_electrons",
+"get_process_merge_positrons_into_electrons(self: am3.AM3) -> bool\n\nCheck whether positron and electron densities are currently being added up in the same array.\nIf on, the added densities of eletrons and positrons can be checked with get_pairs().\nSee `set_process_merge_positrons_into_electrons`.\n"
+],
+[
+"get_process_muon_compton",
+"get_process_muon_compton(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for muon inverse Compton emission and cooling.\nSee `set_process_muon_compton`.\nNote also the value of the individual switches `get_process_muon_emission()` and `get_process_muon_cooling()`, which control emission and cooling individually.\n"
+],
+[
+"get_process_muon_compton_cooling",
+"get_process_muon_compton_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls muon inverse Compton cooling.\nSee `set_process_muon_compton_cooling`.\nNote also the value of the master switch `get_process_muon_compton()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_muon_compton_emission",
+"get_process_muon_compton_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls muon inverse Compton emission.\nSee `set_process_muon_compton_emission`.\nNote also the value of the master switch `get_process_muon_compton()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_muon_decay",
+"get_process_muon_decay(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls muon decay.\nSee `set_process_muon_decay`.\n"
+],
+[
+"get_process_muon_syn",
+"get_process_muon_syn(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for muon synchrotron emission and cooling.\nSee `set_process_muon_syn`.\nNote also the value of the individual switches `get_process_muon_emission()` and `get_process_muon_cooling()`, which control emission and cooling individually.\n"
+],
+[
+"get_process_muon_syn_cooling",
+"get_process_muon_syn_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls muon synchrotron cooling.\nSee `set_process_muon_syn_cooling`.\nNote also the value of the master switch `get_process_muon_syn()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_muon_syn_emission",
+"get_process_muon_syn_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls muon synchrotron emission.\nSee `set_process_muon_syn_emission`.\nNote also the value of the master switch `get_process_muon_syn()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_parse_sed",
+"get_process_parse_sed(self: am3.AM3) -> bool\n\nCheck whether photons from different processes are currently being tracked in separate arrays.\nSee `set_process_parse_sed`.\n"
+],
+[
+"get_process_photopion",
+"get_process_photopion(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for photo-pion production and resulting proton cooling.\nSee `set_process_photopion`.\nNote also the value of the individual switches 'get_process_photopion_emission()' and 'get_process_photopion_cooling()', which control pion emission and proton cooling individually.\n"
+],
+[
+"get_process_photopion_cooling",
+"get_process_photopion_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls the photon disappearance term due to photon-photon interactions.\nSee `set_process_photopion_cooling`.\nNote also the value of the master switch `get_process_photopion()`, which controls both pion emission and proton cooling.\n"
+],
+[
+"get_process_photopion_emission",
+"get_process_photopion_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pion emission due to photo-pion interactions.\nSee `set_process_photopion_emission`.\nNote also the value of the master switch `get_process_photopion()`, which controls both pion emission and proton cooling.\n"
+],
+[
+"get_process_photopion_photon_loss",
+"get_process_photopion_photon_loss(self: am3.AM3) -> bool\n\nCheck whether the photon loss term due to photopion interactions is currently included or excluded.\nSee `set_process_photopion_photon_loss`.\n"
+],
+[
+"get_process_pion_compton",
+"get_process_pion_compton(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for pion inverse Compton emission and cooling.\nSee `set_process_pion_compton`.\nNote also the value of the individual switches `get_process_pion_compton_emission()` and `get_process_pion_compton_cooling()`, which control emission and cooling individually.\n"
+],
+[
+"get_process_pion_compton_cooling",
+"get_process_pion_compton_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pion inverse Compton cooling.\nSee `set_process_pion_compton_cooling`.\nNote also the value of the master switch `get_process_pion_compton()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_pion_compton_emission",
+"get_process_pion_compton_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pion inverse Compton emission.\nSee `set_process_pion_compton_emission`.\nNote also the value of the master switch `get_process_pion_compton()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_pion_decay",
+"get_process_pion_decay(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pion decay.\nSee `set_process_pion_decay`.\n"
+],
+[
+"get_process_pion_syn",
+"get_process_pion_syn(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for pion synchrotron emission and cooling.\nSee `set_process_pion_syn`.\nNote also the value of the individual switches `get_process_pion_syn_emission()` and `get_process_pion_syn_cooling()`, which control emission and cooling individually.\n"
+],
+[
+"get_process_pion_syn_cooling",
+"get_process_pion_syn_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pion synchrotron cooling.\nSee `set_process_pion_syn_cooling`.\nNote also the value of the master switch `get_process_pion_syn()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_pion_syn_emission",
+"get_process_pion_syn_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pion synchrotron emission.\nSee `set_process_pion_syn_emission`.\nNote also the value of the master switch `get_process_pion_syn()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_pp",
+"get_process_pp(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for proton-proton interactions and resulting pion production.\nSee `set_process_pp`.\nNote also the value of the individual switches 'get_process_pp_emission()' and 'get_process_pp_cooling()', which control pion  emission and proton cooling individually.\n"
+],
+[
+"get_process_pp_cooling",
+"get_process_pp_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls proton cooling due to proton-proton interactions.\nSee `set_process_pp_cooling`.\nNote also the value of the master switch `get_process_pp()`, which controls both pion emission and proton cooling.\n"
+],
+[
+"get_process_pp_emission",
+"get_process_pp_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls pion emission resulting from proton-proton interactions.\nSee `set_process_pp_emission`.\nNote also the value of the master switch `get_process_pp()`, which controls both pion emission and proton cooling.\n"
+],
+[
+"get_process_pp_emission_pi0_into_cascade",
+"get_process_pp_emission_pi0_into_cascade(self: am3.AM3) -> bool\n\nCheck the current value of the switch set with the function set_process_pp_emission_pi0_into_cascade.\nSee `set_process_pp_emission_pi0_into_cascade`.\n"
+],
+[
+"get_process_proton_compton",
+"get_process_proton_compton(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for proton inverse Compton emission and cooling.\nSee `set_process_proton_compton`.\nNote also the value of the individual switches 'get_process_proton_compton_emission()' and 'get_process_proton_compton_cooling()', which control emission and cooling individually.\n"
+],
+[
+"get_process_proton_compton_cooling",
+"get_process_proton_compton_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls proton inverse Compton cooling.\nSee `set_process_proton_compton_cooling`.\nNote also the value of the master switch `get_process_proton_compton()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_proton_compton_emission",
+"get_process_proton_compton_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls proton inverse Compton emission.\nSee `set_process_proton_compton_emission`.\nNote also the value of the master switch `get_process_proton_compton()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_proton_syn",
+"get_process_proton_syn(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for proton synchrotron emission and cooling.\nSee `set_process_proton_syn`.\nNote also the value of the individual switches 'get_process_proton_syn_emission()' and 'get_process_proton_syn_cooling()', which control emission and cooling individually.\n"
+],
+[
+"get_process_proton_syn_cooling",
+"get_process_proton_syn_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls proton synchrotron cooling.\nSee `set_process_proton_syn_cooling`.\nNote also the value of the master switch `get_process_proton_syn()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_proton_syn_emission",
+"get_process_proton_syn_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls proton synchrotron emission.\nSee `set_process_proton_syn_emission`.\nNote also the value of the master switch `get_process_proton_syn()`, which controls both emission and cooling.\n"
+],
+[
+"get_process_quantum_syn",
+"get_process_quantum_syn(self: am3.AM3) -> bool\n\nCheck whether the quantum regime is currently included or excluded for the synchrotron emission from electrons and positrons.\nSee `set_process_quantum_syn`.\n"
+],
+[
+"get_process_quantum_syn_cooling",
+"get_process_quantum_syn_cooling(self: am3.AM3) -> bool\n\nCheck whether the quantum synchrotron regime is currently included or excluded for the cooling of all charged particles.\nSee `set_process_quantum_syn_cooling`.\n"
+],
+[
+"get_process_ssa",
+"get_process_ssa(self: am3.AM3) -> bool\n\nCheck whether synchrotron self-absorption by electrons and positrons is currently included or excluded.\nSee `set_process_ssa`.\n"
+],
+[
+"get_profile_timing",
+"get_profile_timing(self: am3.AM3) -> bool\n\nReturns value of switch if run-times are measured (1=yes, 0=no)\n"
+],
+[
+"get_profiled_time_labels",
+"get_profiled_time_labels(self: am3.AM3) -> list[str]\n\nReturns an array with the labels of 36 sub-steps profiled in the evolution of one step\n"
+],
+[
+"get_profiled_times",
+"get_profiled_times(self: am3.AM3) -> list[float]\n\nReturns an array with the run-times of 36 sub-steps profiled in the evolution of one step\n"
+],
+[
+"get_proton_accel_factor",
+"get_proton_accel_factor(self: am3.AM3) -> float\n\nFraction of Larmor radius for proton acc. timescale, 1/acceleration efficiency\n"
+],
+[
+"get_protons",
+"get_protons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with the current values of EdN_dEdV [1/cm\u00b3] for protons\n"
+],
+[
+"get_solver_simpleqintegration",
+"get_solver_simpleqintegration(self: am3.AM3) -> bool\n\nGet current value of switch set with `set_solver_simpleqintegration` (see function documentation).\nDefault: 0\n"
+],
+[
+"get_solver_threshold_cool_dom",
+"get_solver_threshold_cool_dom(self: am3.AM3) -> float\n\nGet current value of threshold parameter set with `set_solver_threshold_cool_dom` (see function documentation).\nDefault:  1e-2\n"
+],
+[
+"get_solver_threshold_esc_dom",
+"get_solver_threshold_esc_dom(self: am3.AM3) -> float\n\nGet current value of threshold parameter set with `set_solver_threshold_esc_dom` (see function documentation).\nDefault:  1e-2\n"
+],
+[
+"get_solver_threshold_matrix",
+"get_solver_threshold_matrix(self: am3.AM3) -> float\n\nGet current value of threshold parameter set with `set_solver_threshold_matrix` (see function documentation).\nDefault:  100\n"
+],
+[
+"get_solver_time_step",
+"get_solver_time_step(self: am3.AM3) -> float\n\nGet current time step size of the numerical solver [s].\n"
+],
+[
+"get_t_muon_compton",
+"get_t_muon_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of muon inverse Compton [s]\n"
+],
+[
+"get_t_muon_decay",
+"get_t_muon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of muon decay [s]\n"
+],
+[
+"get_t_muon_escape",
+"get_t_muon_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of muon escape [s]\n"
+],
+[
+"get_t_muon_extra_cooling",
+"get_t_muon_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of muon extra cooling term [s]\n"
+],
+[
+"get_t_muon_syn",
+"get_t_muon_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of muon synchrotron cooling [s]\n"
+],
+[
+"get_t_neutrino_escape",
+"get_t_neutrino_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of neutrino escape [s]\n"
+],
+[
+"get_t_neutrino_extra_cooling",
+"get_t_neutrino_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of neutrino extra cooling term [s]\n"
+],
+[
+"get_t_neutron_escape",
+"get_t_neutron_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of neutron escape [s]\n"
+],
+[
+"get_t_neutron_extra_cooling",
+"get_t_neutron_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of neutron extra cooling term [s]\n"
+],
+[
+"get_t_pair_acceleration",
+"get_t_pair_acceleration(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair acceleration [s]\n"
+],
+[
+"get_t_pair_adiabatic",
+"get_t_pair_adiabatic(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair adiabatic cooling [s]\n"
+],
+[
+"get_t_pair_compton",
+"get_t_pair_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair inverse Compton cooling [s]\n"
+],
+[
+"get_t_pair_emission_from_annihilation",
+"get_t_pair_emission_from_annihilation(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair injection from photon annihilation [s]\n"
+],
+[
+"get_t_pair_emission_from_bethe_heitler",
+"get_t_pair_emission_from_bethe_heitler(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair injection from Bethe-Heitler [s]\n"
+],
+[
+"get_t_pair_emission_from_injection",
+"get_t_pair_emission_from_injection(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair injection from primary injection [s]\n"
+],
+[
+"get_t_pair_emission_from_photopion",
+"get_t_pair_emission_from_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair injection from photopion muon decay [s]\n"
+],
+[
+"get_t_pair_emission_from_proton_proton",
+"get_t_pair_emission_from_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair injection from proton-proton muon decay [s]\n"
+],
+[
+"get_t_pair_escape",
+"get_t_pair_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair escape [s]\n"
+],
+[
+"get_t_pair_extra_cooling",
+"get_t_pair_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair extra cooling term [s]\n"
+],
+[
+"get_t_pair_syn",
+"get_t_pair_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of pair synchrotron cooling [s]\n"
+],
+[
+"get_t_photon_annihilation",
+"get_t_photon_annihilation(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon annihilation [s]\n"
+],
+[
+"get_t_photon_compton",
+"get_t_photon_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon inverse-Compton upscattering [s]\n"
+],
+[
+"get_t_photon_emission_from_ic",
+"get_t_photon_emission_from_ic(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon injection from all inverse Compton emission [s]\n"
+],
+[
+"get_t_photon_emission_from_pi0",
+"get_t_photon_emission_from_pi0(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon injection from neutral pion decay [s]\n"
+],
+[
+"get_t_photon_emission_from_syn",
+"get_t_photon_emission_from_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon injection from all synchrotron emission [s]\n"
+],
+[
+"get_t_photon_escape",
+"get_t_photon_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon escape [s]\n"
+],
+[
+"get_t_photon_extra_cooling",
+"get_t_photon_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon extra cooling term [s]\n"
+],
+[
+"get_t_photon_photopion",
+"get_t_photon_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon losses from photopion production [s].\n"
+],
+[
+"get_t_photon_ssa",
+"get_t_photon_ssa(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon attenuation from synchrotron self-absorption by electrons and positrons [s]\n"
+],
+[
+"get_t_pion_compton",
+"get_t_pion_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Charged pion inverse Compton [s]\n"
+],
+[
+"get_t_pion_decay",
+"get_t_pion_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Charged pion decay [s]\n"
+],
+[
+"get_t_pion_escape",
+"get_t_pion_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Charged pion escape [s]\n"
+],
+[
+"get_t_pion_extra_cooling",
+"get_t_pion_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Charged pion extra cooling term [s]\n"
+],
+[
+"get_t_pion_syn",
+"get_t_pion_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Charged pion synchrotron cooling [s]\n"
+],
+[
+"get_t_proton_acceleration",
+"get_t_proton_acceleration(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton acceleration [s]\n"
+],
+[
+"get_t_proton_adiabatic",
+"get_t_proton_adiabatic(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton adiabatic cooling [s]\n"
+],
+[
+"get_t_proton_bethe_heitler",
+"get_t_proton_bethe_heitler(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton Bethe-Heitler cooling [s]\n"
+],
+[
+"get_t_proton_compton",
+"get_t_proton_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton inverse Compton cooling [s]\n"
+],
+[
+"get_t_proton_escape",
+"get_t_proton_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton escape [s]\n"
+],
+[
+"get_t_proton_extra_cooling",
+"get_t_proton_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton extra cooling term [s]\n"
+],
+[
+"get_t_proton_photopion",
+"get_t_proton_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton photopion cooling [s]\n"
+],
+[
+"get_t_proton_proton_proton",
+"get_t_proton_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton-proton cooling [s]\n"
+],
+[
+"get_t_proton_syn",
+"get_t_proton_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of proton synchrotron cooling [s]\n"
+],
+[
+"get_verbosity_level",
+"get_verbosity_level(self: am3.AM3) -> float\n\nGet current verbosity level.\n\nSet to 0 (minimal output) / 1 (more detailed output on simulation steps).\nDefault:0\n\n\n"
+],
+[
+"init_kernels",
+"init_kernels(self: am3.AM3) -> None\n\nInitialize kernels.\nThis action may take a while, depending on which interaction channels are turned on and on the sizes of the energy grids.\n"
+],
+[
+"print_process_switches",
+"print_process_switches(self: am3.AM3) -> None\n\nPrint out the current switch values for all processes\n"
+],
+[
+"set_current_densities_electron_anti_neutrinos",
+"set_current_densities_electron_anti_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current anti-nu_e array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_electron_neutrinos",
+"set_current_densities_electron_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current nu_e array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_electrons",
+"set_current_densities_electrons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current electron array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_mu_minus_left",
+"set_current_densities_mu_minus_left(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current mu- left array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_mu_minus_right",
+"set_current_densities_mu_minus_right(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current mu- right array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_mu_plus_left",
+"set_current_densities_mu_plus_left(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current mu+ left array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_mu_plus_right",
+"set_current_densities_mu_plus_right(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current mu+ right array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_muon_anti_neutrinos",
+"set_current_densities_muon_anti_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current antu-nu_mu array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_muon_neutrinos",
+"set_current_densities_muon_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current nu_mu array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_neutrons",
+"set_current_densities_neutrons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current neutron array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_photons",
+"set_current_densities_photons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current photon array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_pion_minus",
+"set_current_densities_pion_minus(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current pi- array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_pion_plus",
+"set_current_densities_pion_plus(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current pi+ array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_positrons",
+"set_current_densities_positrons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current positron array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_current_densities_protons",
+"set_current_densities_protons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nManually set current proton array [1/cm\u00b3].\nThis changes the current densities and does not introduce any injection term.\n"
+],
+[
+"set_electron_accel_factor",
+"set_electron_accel_factor(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nInverse of acceleration efficiency used when calculating self-consistently the maximum electron energy [fraction of electron Larmor radius].\nThis is only used when set_estimate_max_energies has been tuned on.\n"
+],
+[
+"set_escape_fraction_charged_particles",
+"set_escape_fraction_charged_particles(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fractions of all charged particles to the same input value.\nThis action overwrites the escape fractions set before for individual species.\n"
+],
+[
+"set_escape_fraction_muons",
+"set_escape_fraction_muons(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fraction of muons. The final muon escape tiemscale will be escape_timescale / escape_fraction_muons.\nSet to 1.0 for free streaming of muons or <1 for partial muon confinement.\nDefault: 1.0\n"
+],
+[
+"set_escape_fraction_neutral_particles",
+"set_escape_fraction_neutral_particles(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fractions of all neutral particles to the same input value.\nThis action overwrites the escape fractions set before for individual species.\n"
+],
+[
+"set_escape_fraction_neutrinos",
+"set_escape_fraction_neutrinos(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fraction of neutrinos. The final neutrino escape tiemscale will be escape_timescale / escape_fraction_neutrinos.\nSet to 1.0 for free streaming of neutrinos or <1 for partial neutrino confinement.\nDefault: 1.0\n"
+],
+[
+"set_escape_fraction_neutrons",
+"set_escape_fraction_neutrons(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fraction of neutrons. The final neutron escape tiemscale will be escape_timescale / escape_fraction_neutrons.\nSet to 1.0 for free streaming of neutrons or <1 for partial neutron confinement.\nDefault: 1.0\n"
+],
+[
+"set_escape_fraction_pairs",
+"set_escape_fraction_pairs(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fraction of electrons and positrons. The final positron escape tiemscale will be escape_timescale / escape_fraction_pairs.\nDefault: 1.0 (free streaming).\nSet to a value <1 for partial electron confinement.\n"
+],
+[
+"set_escape_fraction_photons",
+"set_escape_fraction_photons(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fraction of photons. The final photon escape tiemscale will be escape_timescale / escape_fraction_photons.\nSet to 1.0 for free streaming of photons or <1 for partial photon confinement.\nDefault: 1.0\n"
+],
+[
+"set_escape_fraction_pions",
+"set_escape_fraction_pions(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fraction of charged pions. The final pion escape tiemscale will be escape_timescale / escape_fraction_pions.\nSet to 1.0 for free streaming of pions or <1 for partial pion confinement.\nDefault: 1.0\n"
+],
+[
+"set_escape_fraction_protons",
+"set_escape_fraction_protons(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\n[Deprecation warning: Since version 1.2, it is recommended to work directly with escape rates rather than escape fractions.]\nSet escape fraction of protons. The final proton escape tiemscale will be escape_timescale / escape_fraction_protons.\nSet to 1.0 for free streaming of protons or <1 for partial proton confinement.\nDefault: 1.0\n"
+],
+[
+"set_escape_timescale",
+"set_escape_timescale(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nSet timescale for escape, generally the light-crossing time of the region [s].\nThe actual escape timescape of each particle species will be set to this timescale divided by an individual escape factor.\nDefault: 1e6.\n"
+],
+[
+"set_estimate_max_energies",
+"set_estimate_max_energies(self: am3.AM3, arg0: bool) -> None\n\nSelf-consistently calculate the maximum energies of electrons and protons based on interaction vs. acceleration timescales.\nThis action resets injection of electrons and protons and therefore overrides previously defined injection.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_expansion_timescale",
+"set_expansion_timescale(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nSet expansion timescale of the region, V/(dV/dt) [s]. This leads to an energy-independent energy loss term for all charged particles with the same timescale.\nDefault: same value as `escape_timescale`.\nDefault:  1e6\n"
+],
+[
+"set_had_optimizer_on",
+"set_had_optimizer_on(self: am3.AM3) -> None\n\nInclude or exclude hadronic optimization routines. Setting to 1 turns on the necessary selection of switches for optimization of hadronic processes.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_injection_rate_electron_anti_neutrinos",
+"set_injection_rate_electron_anti_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of anti-electron neutrinos [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_electron_neutrinos",
+"set_injection_rate_electron_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of electron neutrinos [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_electrons",
+"set_injection_rate_electrons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of electrons. This also simulates the injection of pre-accelerated electrons [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_mu_minus_left",
+"set_injection_rate_mu_minus_left(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of left-handed negative muons [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_mu_minus_right",
+"set_injection_rate_mu_minus_right(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of right-handed negative muons [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_mu_plus_left",
+"set_injection_rate_mu_plus_left(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of left-handed positive muons [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_mu_plus_right",
+"set_injection_rate_mu_plus_right(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of right-handed positive muons [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_muon_anti_neutrinos",
+"set_injection_rate_muon_anti_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of antu-muon neutrinos [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_muon_neutrinos",
+"set_injection_rate_muon_neutrinos(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of muon neutrinos [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_neutrons",
+"set_injection_rate_neutrons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of neutrons [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_photons",
+"set_injection_rate_photons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of photons. This also simulates the injection of an external photon field [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_pi0",
+"set_injection_rate_pi0(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of neutral pions [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_pion_minus",
+"set_injection_rate_pion_minus(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of negative pions [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_pion_plus",
+"set_injection_rate_pion_plus(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of positive pions [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_positrons",
+"set_injection_rate_positrons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of positrons [1/(cm\u00b3s)]\n"
+],
+[
+"set_injection_rate_protons",
+"set_injection_rate_protons(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet external injection rates of protons. This also simulates the injection of pre-accelerated protons [1/(cm\u00b3s)]\n"
+],
+[
+"set_lep_optimizer_on",
+"set_lep_optimizer_on(self: am3.AM3) -> None\n\nInclude or exclude leptonic optimization routines.\nSetting to 1 turns on the necessary selection of switches for optimization of leptonic processes.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_mag_field",
+"set_mag_field(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nSet comoving magnetic field strength [gauss].\nDefault: 0.01\n"
+],
+[
+"set_optimize_annihilation_pair_emission",
+"set_optimize_annihilation_pair_emission(self: am3.AM3, arg0: bool) -> None\n\nSwitch to use 14-bin approx. for kernel of injection of lepton pairs due to gamma gamma pair annihilation: set to 0/1 (off/on)\n"
+],
+[
+"set_optimize_bethe_heitler_incoming_protons_min",
+"set_optimize_bethe_heitler_incoming_protons_min(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nFor fast version of Bethe-Heitler e-production: min. target proton energy\nThis parameter is only used when set_had_optimizer_on is tuned on.\nDefault: 1 TeV\n"
+],
+[
+"set_optimize_bethe_heitler_outgoing_pairs_grid",
+"set_optimize_bethe_heitler_outgoing_pairs_grid(self: am3.AM3, arg0: bool) -> None\n\nFor fast version of Bethe-Heitler e-production: 0=full electrons and positrons out grid, 1=every 2nd electrons and positrons grid point + interpolation\nThis parameter is only used when set_had_optimizer_on is tuned on.\n"
+],
+[
+"set_optimize_bethe_heitler_target_photon_max",
+"set_optimize_bethe_heitler_target_photon_max(*args, **kwargs)\nOverloaded function.\n\n1. set_optimize_bethe_heitler_target_photon_max(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\noptimisation of full kernel of injection of lepton pairs due to gamma gamma pair annihilation: factor above threshold energy where to stop kernel\nThis parameter is only used when set_had_optimizer_on is tuned on.\nDefault: 1e6\n\n2. set_optimize_bethe_heitler_target_photon_max(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nFor fast version of Bethe-Heitler e-production: max. target photon energy\nThis parameter is only used when set_had_optimizer_on is tuned on.\nDefault: 1 MeV (approx. m_e c^2)\n"
+],
+[
+"set_optimize_compton_emission_emin",
+"set_optimize_compton_emission_emin(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nFor optimization of electron/positron inverse Compton radiation kernel: min. out. photon energy to include in IC calculation.\nThis parameter is only used when set_lep_optimizer_on is turned on.\nDefault: 1e-3 eV\n"
+],
+[
+"set_optimize_compton_emission_grid",
+"set_optimize_compton_emission_grid(self: am3.AM3, arg0: bool) -> None\n\nFor optimization of electron/positron inverse Compton radiation kernel: 0=full photon out grid, 1=every 2nd photon grid point + interpolation.\nThis parameter is only used when set_lep_optimizer_on is turned on.\n"
+],
+[
+"set_optimize_compton_target_emax",
+"set_optimize_compton_target_emax(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nFor optimization of electron/positron inverse Compton radiation kernel: max. target photon energy.\nThis parameter is only used when set_lep_optimizer_on is turned on.\nDefault: 1MeV (approx. m_e c^2)\n"
+],
+[
+"set_optimize_compton_target_grid",
+"set_optimize_compton_target_grid(self: am3.AM3, arg0: bool) -> None\n\nFor optimization of electron/positron inverse Compton radiation kernel: 0=full target grid, 1=every 2nd target grid point.\nThis parameter is only used when set_lep_optimizer_on is turned on.\n"
+],
+[
+"set_optimize_photopion_target_photon_grid",
+"set_optimize_photopion_target_photon_grid(self: am3.AM3, arg0: bool) -> None\n\nFor fast version of p-gamma pion-production:  0=full target grid, 1=every 2nd target grid point\n"
+],
+[
+"set_optimize_photopion_target_photon_max",
+"set_optimize_photopion_target_photon_max(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nFor fast version of p-gamma pion-production:  max. target photon energy.\nDefault: 1 MeV (approx. m_e c^2)\n"
+],
+[
+"set_powerlaw_injection_parameters_electrons",
+"set_powerlaw_injection_parameters_electrons(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex, arg1: typing.SupportsFloat | typing.SupportsIndex, arg2: typing.SupportsFloat | typing.SupportsIndex, arg3: typing.SupportsFloat | typing.SupportsIndex, arg4: typing.SupportsFloat | typing.SupportsIndex, arg5: typing.SupportsFloat | typing.SupportsIndex, arg6: typing.SupportsFloat | typing.SupportsIndex, arg7: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nSet parameters of the power-law injection of electrons.\nParams: region volume [cm-3], injection luminosity [erg/s], minimum energy [eV], break energy [eV], maximum energy [eV], spectral index below the break, spectral index above the break, and exponential cutoff steepness.\nDefault: 1.13e50, 0.0, 1e7, 1e7, 1e13, 2.0, 2.0, 1.0\n"
+],
+[
+"set_powerlaw_injection_parameters_protons",
+"set_powerlaw_injection_parameters_protons(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex, arg1: typing.SupportsFloat | typing.SupportsIndex, arg2: typing.SupportsFloat | typing.SupportsIndex, arg3: typing.SupportsFloat | typing.SupportsIndex, arg4: typing.SupportsFloat | typing.SupportsIndex, arg5: typing.SupportsFloat | typing.SupportsIndex, arg6: typing.SupportsFloat | typing.SupportsIndex, arg7: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nSet parameters of the power-law injection of protons.\nParams: region volume [cm-3], injection luminosity [erg/s], minimum energy [eV], break energy [eV], maximum energy [eV], spectral index below the break, spectral index above the break, and exponential cutoff steepness.\nDefault: 1.13e50, 0.0, 1e10, 1e10, 1e15, 2.0, 2.0, 1.0\n"
+],
+[
+"set_pp_model_charged_pions",
+"set_pp_model_charged_pions(self: am3.AM3, arg0: typing.SupportsInt | typing.SupportsIndex) -> None\n\nModel used for the parameterization of charged pions from pp interactions.\nSet to 0 (SIBYLL) / 1 (QGSJET).\nDefault: 0\n"
+],
+[
+"set_pp_model_neutral_pions",
+"set_pp_model_neutral_pions(self: am3.AM3, arg0: typing.SupportsInt | typing.SupportsIndex) -> None\n\nModel used for the parameterization of neutral pions from pp interactions.\n\nSet to 0 (SIBYLL) / 1 (QGSJET) / 2 (Geant4) / 3 (Pythia8)\n\nDeafult: 0\n"
+],
+[
+"set_pp_target_proton_density",
+"set_pp_target_proton_density(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nSet density of target protons for pp interactions [cm-3].\\nDefault: 0.0\n"
+],
+[
+"set_pp_transition_energy_to_delta_approx",
+"set_pp_transition_energy_to_delta_approx(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nEnergy below which the delta approximation is used [eV].\nDefault: 1e11\n"
+],
+[
+"set_process_adiabatic_cooling",
+"set_process_adiabatic_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude adiabatic cooling of charged particles due to expansion.\nThe cooling rate depends on the value of am3.get_expansion_timescale().\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_annihilation",
+"set_process_annihilation(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for photon-photon annihilation and resulting pair production (gamma gamma-> e+ e-). \nSet to 0 (turn off pair emission and photon attenuation due to this process) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_annihilation_cooling",
+"set_process_annihilation_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude the photon disappearance term due to photon-photon interactions.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_annihilation_pair_emission",
+"set_process_annihilation_pair_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude injection of electron/positron pairs due to photon-photon interactions.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_bethe_heitler",
+"set_process_bethe_heitler(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for Bethe-Heitler pair production (p gamma-> p e+ e-).\nSet to 0 (turn off both pair emission and proton cooling due to this process) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_bethe_heitler_cooling",
+"set_process_bethe_heitler_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude Bethe-Heitler proton cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_bethe_heitler_emission",
+"set_process_bethe_heitler_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude Bethe-Heitler pair production.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_compton_photon_energy_loss",
+"set_process_compton_photon_energy_loss(self: am3.AM3, arg0: bool) -> None\n\nInclude photon energy losses due to electron/positron scattering. As opposed to inverse Compton, this is the 'regular' Compton scattering where the photons transfer energy to the electrons and positrons.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_electron_compton",
+"set_process_electron_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for electron/positron inverse Compton emission and cooling.\nSet to 0 (turn off electron/positron inverse Compton emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_electron_compton_cooling",
+"set_process_electron_compton_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude electron/positron inverse Compton cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_electron_compton_emission",
+"set_process_electron_compton_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude electron/positron inverse Compton emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_electron_syn",
+"set_process_electron_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for electron/positron synchrotron.\nSet to 0 (turn off electron/positron synchrotron emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_electron_syn_cooling",
+"set_process_electron_syn_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude or exclude electron/positron synchrotron cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_electron_syn_emission",
+"set_process_electron_syn_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude or exclude electron/positron synchrotron emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_escape",
+"set_process_escape(self: am3.AM3, arg0: bool) -> None\n\nInclude or exclude physical escape from the region.\nIf on, the escape timescale is determined either by the energy-independent escape timescale (see `set_escape_timescale`) or the energy-dependent escape timescale defined individually for each particle species (see `set_t_<particle>_escape`).\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_expansion",
+"set_process_expansion(self: am3.AM3, arg0: bool) -> None\n\nInclude or exclude time-dependent dilution of the particle densities due to volume expansion.\nThe expansion rate is given by 1/am3.get_expansion_timescale().\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_hadronic",
+"set_process_hadronic(self: am3.AM3, arg0: bool) -> None\n\nInclude or exclude hadronic processes.\nSetting to zero turns off all switches belonging to protons, pions and muons, while \nSet to 0 (turn off hadronics) / 1 (include hadronics)\n"
+],
+[
+"set_process_merge_positrons_into_electrons",
+"set_process_merge_positrons_into_electrons(self: am3.AM3, arg0: bool) -> None\n\nAdd up positron and electron densities in the same array, or keep track of them in separate arrays.\nTurning this on leads to a small improvement in performance.\nIf on, the added densities of eletrons and positrons can be checked with get_pairs().\nSet to 0 (calculate electrons and positrons separately) / 1 (combine both into electron array)\n"
+],
+[
+"set_process_muon_compton",
+"set_process_muon_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for muon inverse Compton.\nSet to 0 (turn off muon inverse Compton emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_muon_compton_cooling",
+"set_process_muon_compton_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude muon inverse Compton cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_muon_compton_emission",
+"set_process_muon_compton_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude muon inverse Compton emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_muon_decay",
+"set_process_muon_decay(self: am3.AM3, arg0: bool) -> None\n\nInclude muon decay.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_muon_syn",
+"set_process_muon_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for muon synchrotron.\nSet to 0 (turn off muon synchrotron emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_muon_syn_cooling",
+"set_process_muon_syn_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude muon synchrotron cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_muon_syn_emission",
+"set_process_muon_syn_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude muon synchrotron emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_parse_sed",
+"set_process_parse_sed(self: am3.AM3, arg0: bool) -> None\n\nKeep track of photons from different processes separately.\nThis can be used for debugging and plotting, while for efficiency it should be turned off.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_photopion",
+"set_process_photopion(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for photopion production.\nSet to 0 (turn off both pion emission and proton cooling due to this process) / 1 (turn both on; can be switched off individually with respective switches\n"
+],
+[
+"set_process_photopion_cooling",
+"set_process_photopion_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude photopion proton cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_photopion_emission",
+"set_process_photopion_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude photopion pion production.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_photopion_photon_loss",
+"set_process_photopion_photon_loss(self: am3.AM3, arg0: bool) -> None\n\nInclude photon loss term due to photopion interactions.\nThis is a high precision term, often negligible, and can often be switched off to improve performance.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pion_compton",
+"set_process_pion_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for pion inverse Compton.\nSet to 0 (turn off pion inverse Compton emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_pion_compton_cooling",
+"set_process_pion_compton_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude pion inverse Compton cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pion_compton_emission",
+"set_process_pion_compton_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude pion inverse Compton emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pion_decay",
+"set_process_pion_decay(self: am3.AM3, arg0: bool) -> None\n\nInclude pion decay.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pion_syn",
+"set_process_pion_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for pion synchrotron.\nSet to 0 (turn off pion synchrotron emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_pion_syn_cooling",
+"set_process_pion_syn_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude pion synchrotron cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pion_syn_emission",
+"set_process_pion_syn_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude pion synchrotron emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pp",
+"set_process_pp(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for proton-proton interactions.\nSet to 0 (turn off both pion production and proton cooling due to this process) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_pp_cooling",
+"set_process_pp_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude proton cooling from proton-proton interactions.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pp_emission",
+"set_process_pp_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude pion production from proton-proton interactions.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_pp_emission_pi0_into_cascade",
+"set_process_pp_emission_pi0_into_cascade(self: am3.AM3, arg0: bool) -> None\n\nInclude pp-> pi0-> gamma gamma.\nSet to 0 (use same treatment as for photopion) / 1 (use Kaafexhiu et al. 2014 treatment with direct kernel from protons)\n"
+],
+[
+"set_process_proton_compton",
+"set_process_proton_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for proton inverse Compton.\nSet to 0 (turn off proton inverse Compton emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_proton_compton_cooling",
+"set_process_proton_compton_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude proton inverse Compton cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_proton_compton_emission",
+"set_process_proton_compton_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude proton inverse Compton emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_proton_syn",
+"set_process_proton_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for proton synchrotron.\nSet to 0 (turn off proton synchrotron emission and cooling) / 1 (turn both on; can be switched off individually with respective switches)\n"
+],
+[
+"set_process_proton_syn_cooling",
+"set_process_proton_syn_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude proton synchrotron cooling.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_proton_syn_emission",
+"set_process_proton_syn_emission(self: am3.AM3, arg0: bool) -> None\n\nInclude proton synchrotron emission.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_quantum_syn",
+"set_process_quantum_syn(self: am3.AM3, arg0: bool) -> None\n\nInclude quantum regime for synchrotron emission from electrons and positrons.\nThis effect is relevant for strong enough magnetic fields, when the electron recoil becomes significant, parallel to the Klein-Nishina regime of inverse Compton. Turning it off leads to an improvement in performance.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_quantum_syn_cooling",
+"set_process_quantum_syn_cooling(self: am3.AM3, arg0: bool) -> None\n\nInclude quantum regime for synchrotron cooling of all charged particles.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_process_ssa",
+"set_process_ssa(self: am3.AM3, arg0: bool) -> None\n\nInclude or exclude synchrotron self-absorption by electrons and positrons.\nSet to 0 (off) / 1 (on)\n"
+],
+[
+"set_profile_timing",
+"set_profile_timing(self: am3.AM3, arg0: bool) -> None\n\nSets value of switch if run-times are measured (1=yes, 0=no)\n"
+],
+[
+"set_proton_accel_factor",
+"set_proton_accel_factor(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nInverse of acceleration efficiency used when calculating self-consistently the maximum proton energy [fraction of proton Larmor radius].\nThis is only used when set_estimate_max_energies has been tuned on.\n"
+],
+[
+"set_solver_simpleqintegration",
+"set_solver_simpleqintegration(self: am3.AM3, arg0: bool) -> None\n\nSwitch for a simpler and more robust version of the source term integral in the semianalytical solver.\nSet to 0 (off) / 1 (on).\nDefault:  0\n"
+],
+[
+"set_solver_threshold_cool_dom",
+"set_solver_threshold_cool_dom(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nThreshold level of the fraction between the escape and cooling terms below which cooling is ignored.\nDefault:  1e-2\n"
+],
+[
+"set_solver_threshold_esc_dom",
+"set_solver_threshold_esc_dom(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nThreshold level of the fraction between the cooling and cooling terms below which escape is ignored.\nDefault:  1e-2\n"
+],
+[
+"set_solver_threshold_matrix",
+"set_solver_threshold_matrix(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nThreshold level of the fraction between the threshold_matrix/A and dt/dx below which we switch to analytic step in the following time step.\nDefault:  100\n"
+],
+[
+"set_solver_time_step",
+"set_solver_time_step(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nSet timestep of the numerical solver [s]. For very optically thick environments where max rate >> 100 * escape rate, it is advised to test lower time step values to make sure there are no hardness-related imprecisions in the result.\nDefault: 0.01 * escape_timescale\n"
+],
+[
+"set_t_muon_escape",
+"set_t_muon_escape(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet escape timescale of muons as an array. [s]\n"
+],
+[
+"set_t_muon_extra_cooling",
+"set_t_muon_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of muons as an array. [s]\n"
+],
+[
+"set_t_neutrino_escape",
+"set_t_neutrino_escape(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet escape timescale of neutrinos as an array. [s]\n"
+],
+[
+"set_t_neutrino_extra_cooling",
+"set_t_neutrino_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of neutrinos as an array. [s]\n"
+],
+[
+"set_t_neutron_escape",
+"set_t_neutron_escape(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet escape timescale of neutrons as an array. [s]\n"
+],
+[
+"set_t_neutron_extra_cooling",
+"set_t_neutron_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of neutrons as an array. [s]\n"
+],
+[
+"set_t_pair_escape",
+"set_t_pair_escape(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet escape timescale of electrons/positrons as an array. [s]\n"
+],
+[
+"set_t_pair_extra_cooling",
+"set_t_pair_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of electrons/positrons as an array. [s]\n"
+],
+[
+"set_t_photon_escape",
+"set_t_photon_escape(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet escape timescale of photons as an array. [s]\n"
+],
+[
+"set_t_photon_extra_cooling",
+"set_t_photon_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of photons as an array. [s]\n"
+],
+[
+"set_t_pion_escape",
+"set_t_pion_escape(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet escape timescale of pions as an array. [s]\n"
+],
+[
+"set_t_pion_extra_cooling",
+"set_t_pion_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of pions as an array. [s]\n"
+],
+[
+"set_t_proton_escape",
+"set_t_proton_escape(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet escape timescale of protons as an array. [s]\n"
+],
+[
+"set_t_proton_extra_cooling",
+"set_t_proton_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of protons as an array. [s]\n"
+],
+[
+"set_verbosity_level",
+"set_verbosity_level(self: am3.AM3, arg0: bool) -> None\n\nSet verbosity level.\n\nSet to 0 (minimal output) / 1 (more detailed output on simulation steps).\nDefault:0\n\n\n"
+],
+[
+"update_energy_grid",
+"update_energy_grid(self: am3.AM3, arg0: typing.SupportsFloat | typing.SupportsIndex, arg1: typing.SupportsFloat | typing.SupportsIndex, arg2: typing.SupportsFloat | typing.SupportsIndex) -> None\n\nupdate energy grid. Requires Reinitialisation of kernels.\nParams: min. photon energy [eV], min. neutrino energy [eV], max. energy for all particles [eV]\n"
+]
+]

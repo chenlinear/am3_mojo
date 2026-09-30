@@ -1,0 +1,82 @@
+{
+ "blazar_simple": {
+  "C++ AM3 (serial)": {
+   "init_s": 6.964392667054199,
+   "ms_per_step": 11.521142626879737,
+   "steps": 800,
+   "max_rss_gb": 3.381444608
+  },
+  "am3_mojo, 4 threads": {
+   "init_s": 2.0284537500701845,
+   "ms_per_step": 1.9770013717061374,
+   "steps": 800,
+   "max_rss_gb": 0.344440832
+  },
+  "am3_mojo, 1 thread": {
+   "init_s": 6.933116249972954,
+   "ms_per_step": 2.894442111864919,
+   "steps": 800,
+   "max_rss_gb": 0.34430976
+  }
+ },
+ "leptohadronic_all": {
+  "C++ AM3 (serial)": {
+   "init_s": 11.107021874981001,
+   "ms_per_step": 16.71866529310743,
+   "steps": 300,
+   "max_rss_gb": 3.381264384
+  },
+  "am3_mojo, 4 threads": {
+   "init_s": 3.2438075829995796,
+   "ms_per_step": 3.1295545729032406,
+   "steps": 300,
+   "max_rss_gb": 0.347684864
+  },
+  "am3_mojo, 1 thread": {
+   "init_s": 11.72623916703742,
+   "ms_per_step": 4.350987944829588,
+   "steps": 300,
+   "max_rss_gb": 0.34766848
+  }
+ },
+ "ssc_external": {
+  "C++ AM3 (serial)": {
+   "init_s": 0.14373662509024143,
+   "ms_per_step": 3.062392599240411,
+   "steps": 400,
+   "max_rss_gb": 2.474098688
+  },
+  "am3_mojo, 4 threads": {
+   "init_s": 0.17079075006768107,
+   "ms_per_step": 0.6228879344416782,
+   "steps": 400,
+   "max_rss_gb": 0.08626176
+  },
+  "am3_mojo, 1 thread": {
+   "init_s": 0.17079137498512864,
+   "ms_per_step": 1.3771864541922696,
+   "steps": 400,
+   "max_rss_gb": 0.08609792
+  }
+ },
+ "exotic": {
+  "C++ AM3 (serial)": {
+   "init_s": 1.4888215420069173,
+   "ms_per_step": 11.544105629436672,
+   "steps": 200,
+   "max_rss_gb": 1.462534144
+  },
+  "am3_mojo, 4 threads": {
+   "init_s": 0.461822040961124,
+   "ms_per_step": 3.0688058404484764,
+   "steps": 200,
+   "max_rss_gb": 0.54550528
+  },
+  "am3_mojo, 1 thread": {
+   "init_s": 1.48617008398287,
+   "ms_per_step": 7.081043131183833,
+   "steps": 200,
+   "max_rss_gb": 0.547356672
+  }
+ }
+}

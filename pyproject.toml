@@ -1,0 +1,38 @@
+[build-system]
+# `pip install .` / `uv build`: tools/mojo_build_backend.py compiles the module
+# with the Mojo compiler from PyPI and builds a wheel (needs a C compiler for
+# linking; installing the resulting wheel does not).
+requires = ["mojo-compiler==1.1.0"]
+build-backend = "mojo_build_backend"
+backend-path = ["tools"]
+
+[project]
+name = "am3-mojo"
+version = "0.1.0"
+description = "am3_mojo: the AM3 lepto-hadronic radiation code written in Mojo, with the AM3 Python interface"
+readme = "README.md"
+license = { text = "BSD-3-Clause" }
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy>=2.0",
+    "mojo-compiler==1.1.0",   # provides the Mojo runtime libraries the module loads
+]
+
+[dependency-groups]
+dev = [
+    "mojo==1.1.0",   # full Mojo toolchain for development (compiler, formatter, debugger)
+    "pytest>=8",
+    "matplotlib>=3.8",
+    # building the original C++ AM3 as the reference (tests/reference)
+    "cmake>=3.24",
+    "ninja>=1.11",
+    "pybind11>=2.12",
+]
+
+[tool.uv]
+package = false   # `uv sync` sets up the development environment; the module is built
+                  # with `make build` (or installed with `pip install .`)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["reference: compares am3_mojo with the original C++ AM3 (needs `make reference`)"]

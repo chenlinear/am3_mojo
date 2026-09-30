@@ -1,0 +1,490 @@
+"""Port of Pair (PairProduction.cc): gamma-gamma annihilation into e+/-."""
+
+from std.math import fma
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.specfun import beta, signf
+from am3_mojo.model.runparams import RunParams
+from am3_mojo.model.arrays import AM3Arrays
+from am3_mojo.model.particles import *
+from am3_mojo.utils.parallel import parallel_run
+from am3_mojo.utils.linalg import MatD, MatI, gemv_d
+
+
+struct PairInitJob(Movable):
+    var P: Pointer[Pair, MutUntrackedOrigin]
+    var dat: Pointer[AM3Arrays, MutUntrackedOrigin]
+
+    def __init__(
+        out self,
+        P: Pointer[Pair, MutUntrackedOrigin],
+        dat: Pointer[AM3Arrays, MutUntrackedOrigin],
+    ):
+        self.P = P
+        self.dat = dat
+
+
+def pair_init_work(
+    job: Pointer[PairInitJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    ref P = job[].P[]
+    ref dat = job[].dat[]
+    var n = dat.nbins_pho
+    var i = t
+    while i < dat.nbins_lep:
+        var Kp = P.KER_RggD1pair[i].ptr()
+        for j in range(n):
+            for k in range(n):
+                Kp[unsafe_offset=j * n + k] = P.RggD1(
+                    dat.egrid_lep[i], dat.egrid_pho[j], dat.egrid_pho[k]
+                )
+        i += nt
+
+
+struct PairLepJob(Movable):
+    var P: Pointer[Pair, MutUntrackedOrigin]
+    var dat: Pointer[AM3Arrays, MutUntrackedOrigin]
+    var factor: Int
+
+    def __init__(
+        out self,
+        P: Pointer[Pair, MutUntrackedOrigin],
+        dat: Pointer[AM3Arrays, MutUntrackedOrigin],
+        factor: Int,
+    ):
+        self.P = P
+        self.dat = dat
+        self.factor = factor
+
+
+def pair_lep_work(
+    job: Pointer[PairLepJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    """epspairL(i) for i = 1 + t, 1 + t + nt, ... (same loop order as C++)."""
+    ref P = job[].P[]
+    ref dat = job[].dat[]
+    var png = pd(P.PP_NG)
+    var n = dat.nbins_pho
+    var i = 1 + t
+    while i < dat.nbins_lep - 1:
+        var x = 0.0
+        var Kp = P.KER_RggD1pair[i].ptr()
+        for j in range(P.KER_outerPP[i], n):
+            var kmax = min(-j + 2 * dat.ind_min_energy_pho + job[].factor, n)
+            var pj = png[unsafe_offset=j]
+            var row = Kp.unsafe_offset(j * n)
+            for k in range(P.KER_innerPP.get(i, j), kmax):
+                x += row[unsafe_offset=k] * png[unsafe_offset=k] * pj
+        P.epspairL[i] = x * dat.dlnE * dat.dlnE * 0.75 * dat.egrid_lep[i]
+        i += nt
+
+
+struct Pair(Copyable, Movable):
+    var nthreads: Int
+    var verbose: Bool
+    var afpairG: Vec
+    var epspairL: Vec
+    var PP_NG: Vec
+    var KER_phibarD: MatD  # (nbins_pho x nbins_pho)
+    # Full pair-production kernel KER_RggD1pair[i](j,k); only allocated when the
+    # full (non 8-bin) treatment is requested (the C++ code always allocates
+    # nbins_pho^3 doubles, ~1.9 GB, even when it is never used).
+    var KER_RggD1pair: List[MatD]
+    var KER_outerPP: VecI
+    var KER_innerPP: MatI
+    var A0V: Vec
+    var A_A0_hV: Vec
+    var REG: Float64
+
+    def __init__(out self, rp: RunParams, dat: AM3Arrays, verbose: Bool):
+        self.verbose = verbose
+        self.nthreads = 1
+        self.afpairG = Vec()
+        self.epspairL = Vec()
+        self.PP_NG = Vec()
+        self.KER_phibarD = MatD()
+        self.KER_RggD1pair = List[MatD]()
+        self.KER_outerPP = VecI()
+        self.KER_innerPP = MatI()
+        self.REG = rp.REG
+        self.A0V = zeros(2101)
+        self.A_A0_hV = zeros(2101)
+        self.clear_internal_arrays(dat)
+        for i in range(2101):
+            var h = fma(Float64(i), 0.01, -1.0)  # clang fuses -1.0 + 0.01 * i
+            self.A0V[i] = self.A0f(h)
+            self.A_A0_hV[i] = self.A_A0_hf(h)
+
+    def clear_internal_arrays(mut self, dat: AM3Arrays):
+        resize_zero(self.epspairL, dat.nbins_lep)
+        resize_zero(self.afpairG, dat.nbins_pho)
+        resize_zero(self.PP_NG, dat.nbins_pho)
+
+    def reinitialize_empty_kernels(
+        mut self, dat: AM3Arrays, feedback_8bin: Bool
+    ):
+        self.KER_phibarD = MatD(dat.nbins_pho, dat.nbins_pho)
+        if not feedback_8bin:
+            self.KER_outerPP = zerosi(dat.nbins_lep)
+        self.KER_innerPP = MatI(dat.nbins_lep, dat.nbins_pho)
+        self.KER_RggD1pair = List[MatD]()  # lazily allocated (all zeros)
+
+    def _alloc_full_kernel(mut self, dat: AM3Arrays):
+        if len(self.KER_RggD1pair) != dat.nbins_pho:
+            self.KER_RggD1pair = List[MatD]()
+            for _ in range(dat.nbins_pho):
+                self.KER_RggD1pair.append(MatD(dat.nbins_pho, dat.nbins_pho))
+
+    def initialize_kernels(
+        mut self,
+        rp: RunParams,
+        dat: AM3Arrays,
+        photonLoss: Bool,
+        feedback: Bool,
+        feedback_8bin: Bool,
+    ):
+        self.REG = rp.REG
+        if photonLoss:
+            if self.verbose:
+                print("computing photon to pair annihilation kernel")
+            for i in range(dat.nbins_pho):
+                for j in range(dat.nbins_pho):
+                    var ei = dat.egrid_pho[i]
+                    var ej = dat.egrid_pho[j]
+                    self.KER_phibarD.set(
+                        i, j, 0.375 * self.phibar(ei, ej) / ei / ei / ej / ej
+                    )
+        if feedback:
+            if not feedback_8bin:
+                if self.verbose:
+                    print("computing full e+/- pair production kernel")
+                self._alloc_full_kernel(dat)
+                # R_gg kernel values, stored with k contiguous (element (j,k) of
+                # KER_RggD1pair[i] at [j * nbins_pho + k]); computed in parallel
+                var job = PairInitJob(
+                    Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+                    Pointer(to=dat)
+                    .unsafe_mut_cast[True]()
+                    .unsafe_origin_cast[MutUntrackedOrigin](),
+                )
+                parallel_run[pair_init_work](job, self.nthreads)
+                for i in range(dat.nbins_lep):
+                    self.KER_outerPP[i] = self.outerPP(dat, i)
+                    for j in range(dat.nbins_pho):
+                        self.KER_innerPP.set(
+                            i,
+                            j,
+                            min(
+                                self.innerPP(
+                                    dat, dat.egrid_pho[j], dat.egrid_lep[i]
+                                ),
+                                dat.nbins_pho - 1,
+                            ),
+                        )
+                        pass
+            elif self.verbose:
+                print(
+                    "using eight-bin approx. for e+- distribution from pair"
+                    " production"
+                )
+
+    def Calc_Pair_Phot(mut self, dat: AM3Arrays):
+        if self.verbose:
+            print("computing pair annihilation photon losses")
+        if self.KER_phibarD.rows == 0:
+            fill_zero(self.afpairG)
+            return
+        gemv_d(
+            self.KER_phibarD, pd(dat.n[P_photons]), dat.dlnE, pd(self.afpairG)
+        )
+
+    def phibar(self, a: Float64, b: Float64) -> Float64:
+        var x = a * b
+        if x <= 1.0:
+            return 0.0
+        elif x > 1.0 and x <= 1.1:
+            return self.phibar1(x)
+        elif x > 1.1 and x < 5.0:
+            return self.phibar2(
+                x, -1.0 + 2.0 * x * (1.0 + c_sqrt(1.0 - 1.0 / x))
+            )
+        else:
+            return self.phibar3(x)
+
+    def phibar1(self, s: Float64) -> Float64:
+        var s1 = s - 1.0
+        var s2 = s1 * c_sqrt(s1)
+        return s2 * (1.333333 + 1.2 * s1 - 253.0 / 70.0 * s1 * s1)
+
+    def phibar2(self, s: Float64, w: Float64) -> Float64:
+        var v = c_log(w)
+        var u = 1.0 - 1.0 / s
+        return (
+            (2.0 - 4.0 * s) * c_sqrt(u)
+            + v * (4.0 * c_log(1.0 + w) - 3.0 * v + s * (1.0 + u * u))
+            - 3.289868
+            + self.phisum(w)
+        )
+
+    def phibar3(self, s: Float64) -> Float64:
+        var w = c_log(4.0 * s)
+        return (2.0 * s + w) * (w - 2.0) + (w + 1.125) / s - 0.289868
+
+    def phisum(self, w: Float64) -> Float64:
+        var k = 0.0
+        for i in range(1, 15):
+            k += Float64(signf(i)) / (
+                c_pow(w, Float64(i)) * Float64(i) * Float64(i)
+            )
+        return -4.0 * k
+
+    def Calc_Pair_Lep(mut self, dat: AM3Arrays, max_com_energy_factor: Int):
+        if self.verbose:
+            print(" Calculate pair feedback full")
+        self._alloc_full_kernel(dat)
+        if len(self.KER_outerPP) < dat.nbins_lep:
+            self.KER_outerPP = zerosi(dat.nbins_lep)
+        for i in range(dat.nbins_lep):
+            self.epspairL[i] = 0.0
+        for i in range(dat.nbins_pho):
+            self.PP_NG[i] = (
+                dat.n[P_photons][i] / dat.egrid_pho[i] / dat.egrid_pho[i]
+            )
+        var job = PairLepJob(
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=dat)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+            max_com_energy_factor,
+        )
+        parallel_run[pair_lep_work](job, self.nthreads)
+        var r_alpha_phot = 0.0
+        for i in range(dat.ind_min_energy_pho, dat.nbins_pho):
+            r_alpha_phot += (
+                dat.egrid_pho[i] * self.afpairG[i] * dat.n[P_photons][i]
+            )
+        var r_epspairl_raw = 0.0
+        for i in range(dat.nbins_lep):
+            r_epspairl_raw += dat.egrid_lep[i] * self.epspairL[i]
+        if r_epspairl_raw > 1.0e-100:
+            for i in range(dat.nbins_lep):
+                self.epspairL[i] *= 0.5 * r_alpha_phot / r_epspairl_raw
+        self.epspairL[0] = 0.0
+
+    def Calc_Pair_Lep_OPT(mut self, dat: AM3Arrays):
+        if self.verbose:
+            print(" Calculate pair feedback 8bin")
+        for i in range(dat.nbins_lep):
+            self.epspairL[i] = 0.0
+        var shift_neg: Array[Int, 7] = [0, 1, 3, 4, 7, 10, 17]
+        for j in range(dat.ind_min_energy_pho, dat.nbins_pho):
+            if j > dat.ind_min_energy_pho + 13:
+                var N_phot = self.afpairG[j] * dat.n[P_photons][j]
+                var N_span = 8.0
+                var ind_mec2_half = j - dat.ind_min_energy_pho - 7
+                for w in range(8):
+                    var index_eplus = ind_mec2_half + w
+                    if index_eplus >= 0 and index_eplus < dat.nbins_lep:
+                        self.epspairL[index_eplus] += 0.5 * N_phot / N_span
+                for w in range(7):
+                    var index_eminus = ind_mec2_half - shift_neg[w]
+                    if index_eminus >= 0 and index_eminus < dat.nbins_lep:
+                        self.epspairL[index_eminus] += 0.5 * N_phot / N_span
+        self.epspairL[0] = 0.0
+
+    def innerPP(self, dat: AM3Arrays, x: Float64, gm: Float64) -> Int:
+        if x <= 0.5:
+            var f = self.Fpp_m(x, gm)
+            var q = to_int(
+                c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
+                + Float64(dat.ind_min_energy_pho)
+                + 1.0
+            )
+            return min(max(q, 0), dat.nbins_pho)
+        elif x > 0.5 and x < 1.0 and gm < self.gmB(x):
+            var f = self.Fpp_m(x, gm)
+            var q = to_int(
+                c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
+                + Float64(dat.ind_min_energy_pho)
+                + 1.0
+            )
+            return min(max(q, 0), dat.nbins_pho)
+        elif x > 1.0 and gm < self.gmB(x):
+            var f = self.Fpp_p(x, gm)
+            var q = to_int(
+                c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
+                + Float64(dat.ind_min_energy_pho)
+                + 1.0
+            )
+            return min(max(q, 0), dat.nbins_pho)
+        return 0
+
+    def outerPP(self, dat: AM3Arrays, i: Int) -> Int:
+        var q = to_int(
+            c_log(self.xL(dat.egrid_lep[i])) / dat.dlnE
+            + Float64(dat.ind_min_energy_pho)
+        )
+        return min(max(q, 0), dat.nbins_pho - 1)
+
+    def xL(self, gm: Float64) -> Float64:
+        return 0.5 * gm * (1.0 - beta(gm, self.REG))
+
+    def gmA(self, x: Float64) -> Float64:
+        return (4.0 * x * x + 1.0) * 0.25 / x
+
+    def gmB(self, x: Float64) -> Float64:
+        return x - (x - 1.0) / (2.0 * x - 1.0)
+
+    def Fpp_m(self, x: Float64, gp: Float64) -> Float64:
+        return 2.0 * x - gp * (1.0 - beta(gp, self.REG))
+
+    def Fpp_p(self, x: Float64, gp: Float64) -> Float64:
+        return 2.0 * x - gp * (1.0 + beta(gp, self.REG))
+
+    # RggD1, XcmU, XcmL and TD2 mirror the fused multiply-adds clang emits for
+    # PairProduction.cc (llvm.fmuladd in its IR). These expressions cancel
+    # large terms (gp = x + x1 - gm, gm - sqrt(gm^2 - 1), ...) and TD2 indexes
+    # lookup tables with int(h / 0.01), so plain a*b+c rounding shifted the
+    # full-kernel pair source by up to ~1e-4 relative.
+    def RggD1(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
+        var gp = x + x1 - gm
+        var KU: Float64
+        var KL: Float64
+        if gp > 10.0 and gm > 10.0:
+            KL = (
+                0.25 / gp
+                + 0.09375 / gp / gp / gp
+                + 0.25 / gm
+                + 0.09375 / gm / gm / gm
+            )
+            KU = 0.5 * (
+                gp + c_sqrt(fma(gp, gp, -1.0)) + gm + c_sqrt(fma(gm, gm, -1.0))
+            )
+        elif gp > 10.0 and gm <= 10.0:
+            var sgm = c_sqrt(fma(gm, gm, -1.0))
+            KL = 0.5 * (0.5 / gp + gm - sgm)
+            KU = fma(gm + sgm, 0.5, gp)
+        elif gp <= 10.0 and gm > 10.0:
+            var sgp = c_sqrt(fma(gp, gp, -1.0))
+            KL = 0.5 * (gp - sgp + 0.5 / gm)
+            KU = fma(gp + sgp, 0.5, gm)
+        else:
+            var sgp = c_sqrt(fma(gp, gp, -1.0))
+            var sgm = c_sqrt(fma(gm, gm, -1.0))
+            KL = 0.5 * (gp - sgp + gm - sgm)
+            KU = 0.5 * (gp + sgp + gm + sgm)
+        if gp <= 1.000 or gm <= 1.000:
+            return 0.0
+        elif x < KL or x1 < KL:
+            return 0.0
+        elif x > KU or x1 > KU:
+            return 0.0
+        var T = x + x1
+        var XUpper = self.XcmU(gm, x, x1)
+        var XLower = self.XcmL(gm, x, x1)
+        var u = 4.0 * XUpper * XUpper / T / T
+        var v = 4.0 * XLower * XLower / T / T
+        var a_nh = fma(gm - x, gm - x, -1.0)
+        var a_ih = fma(gm - x1, gm - x1, -1.0)
+        var h_NH_U = a_nh * XUpper * XUpper / (x * x1)
+        var h_NH_L = a_nh * XLower * XLower / (x * x1)
+        var h_IH_U = a_ih * XUpper * XUpper / (x * x1)
+        var h_IH_L = a_ih * XLower * XLower / (x * x1)
+        var TD2A = self.TD2(gm, x, x1, XUpper)
+        var TD2B = self.TD2(gm, x, x1, XLower)
+        var TD2C = self.TD2(gm, x1, x, XUpper)
+        var TD2D = self.TD2(gm, x1, x, XLower)
+        if h_NH_U > 1000.0 and h_NH_L > 1000.0:
+            TD2A = -fma(XUpper, XUpper, 2.0 * c_log(XUpper)) / c_sqrt(a_nh)
+            TD2B = -fma(XLower, XLower, 2.0 * c_log(XLower)) / c_sqrt(a_nh)
+        if h_IH_U > 1000.0 and h_IH_L > 1000.0:
+            TD2C = -fma(XUpper, XUpper, 2.0 * c_log(XUpper)) / c_sqrt(a_ih)
+            TD2D = -fma(XLower, XLower, 2.0 * c_log(XLower)) / c_sqrt(a_ih)
+        if u < 0.01 and v < 0.01:
+            return -0.25 * (fma(0.5 * T, u - v, TD2A) - TD2B + TD2C - TD2D)
+        return -0.25 * (
+            fma(T, c_sqrt(1.0 - v) - c_sqrt(1.0 - u + 1.0e-9), TD2A)
+            - TD2B
+            + TD2C
+            - TD2D
+        )
+
+    def XcmU(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
+        var gp = x + x1 - gm
+        if gp > 15.0 and gm > 15.0:
+            return min(c_sqrt(x * x1), c_sqrt(gp * gm))
+        var t = fma(
+            c_sqrt(fma(gm, gm, -1.0)),
+            c_sqrt(fma(gp, gp, -1.0)),
+            fma(gm, gp, 1.0),
+        )
+        return min(c_sqrt(x * x1), c_sqrt(0.5 * t))
+
+    def XcmL(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
+        var gp = x + x1 - gm
+        if gp > 10.0:
+            if gm > 10.0:
+                return 0.5 * c_sqrt(2.0 + gp / gm + gm / gp)
+            elif gm < 1.001:
+                return 1.001
+            else:
+                var d = gm - c_sqrt(fma(gm, gm, -1.0) + self.REG)
+                return c_sqrt(0.5 * fma(d, gp - 0.5 / gp, 1.0))
+        elif gp < 1.001:
+            return 1.001
+        else:
+            if gm > 10.0:
+                var d = gp - c_sqrt(fma(gp, gp, -1.0) + self.REG)
+                return c_sqrt(0.5 * fma(d, gm - 0.5 / gm, 1.0))
+            elif gm < 1.001:
+                return 1.001
+            else:
+                var r = c_sqrt(fma(gm, gm, -1.0) * fma(gp, gp, -1.0))
+                return c_sqrt(0.5 * (fma(gp, gm, 1.0) - r))
+
+    def TD2(
+        self, gm: Float64, x: Float64, x1: Float64, xcm: Float64
+    ) -> Float64:
+        var y = c_sqrt(x * x1)
+        var y2 = y * y
+        var q = xcm / y
+        var h = fma(gm - x, gm - x, -1.0) * q * q
+        if h > 1000.0:
+            var s = fma(xcm, xcm, h / (xcm * xcm)) + 0.886294
+            s = s - 0.5 * fma(gm, x1 - x, x * x) / y2
+            s = c_log(h) + s
+            return -s * q / c_sqrt(h)
+        elif h < -0.999:
+            return q * fma(
+                q * q * (y2 - 1.0), -1.5707963, 0.5 * ((x1 - x) / y2 - 6.28319)
+            )
+        var Ah = c_sqrt(1.0 + h)
+        var t1 = fma(q * q * q * (y2 - 1.0), self.A_A0_h(h), -Ah / (xcm * y))
+        var t2 = fma(-2.0 * q, q, 1.0 + fma(gm, x1 - x, x * x) / y2) / Ah
+        return fma(0.5 * q, fma(self.A0(h), -4.0, t2), t1)
+
+    def A_A0_h(self, h: Float64) -> Float64:
+        if h <= 20.0:
+            var i = 100 + to_int(h / 0.01)
+            return self.A_A0_hV[i]
+        return -(1.0 - (0.693147 + 0.5 * c_log(h)) / h) / c_sqrt(h)
+
+    def A0(self, h: Float64) -> Float64:
+        if h < 20.0:
+            var i = 100 + to_int(h / 0.01)
+            return self.A0V[i]
+        return (0.693147 + 0.5 * c_log(h)) / c_sqrt(h)
+
+    def A0f(self, h: Float64) -> Float64:
+        if h > 1.0e-6:
+            return c_log(c_sqrt(h) + c_sqrt(1.0 + h)) / c_sqrt(h)
+        elif h < -1.0e-6:
+            return c_asin(c_sqrt(-h) - 1.0e-8) / c_sqrt(-h)
+        return 1.0 - h / 6.0
+
+    def A_A0_hf(self, h: Float64) -> Float64:
+        if h >= -0.1 and h <= 0.1:
+            var t = fma(h, -0.0694444, 0.107143)
+            return fma(fma(-t, h, 0.2), h, -0.666667)
+        return (self.A0f(h) - c_sqrt(1.0 + h + 1.0e-8)) / h

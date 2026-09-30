@@ -1,0 +1,49 @@
+cff-version: 1.2.0
+message: >-
+  If you use am3_mojo, please cite this repository and the AM³ paper
+  (listed under "references").
+type: software
+title: "am3_mojo: the AM³ lepto-hadronic interactions code in Mojo"
+version: 0.1.0
+license: BSD-3-Clause
+authors:
+  - name: "Chen Li"
+repository-code: "https://github.com/chenlinear/am3_mojo"
+keywords:
+  - astrophysics
+  - radiation
+  - lepto-hadronic
+  - neutrinos
+  - Mojo
+references:
+  - type: article
+    title: "AM³: An Open-Source Tool for Time-Dependent Lepto-Hadronic Modeling of Astrophysical Sources"
+    year: 2023
+    authors:
+      - family-names: Klinger
+        given-names: Marc
+      - family-names: Rudolph
+        given-names: Annika
+      - family-names: Rodrigues
+        given-names: Xavier
+      - family-names: Yuan
+        given-names: Chengchao
+      - family-names: Fichet de Clairfontaine
+        given-names: Gaëtan
+      - family-names: Fedynitch
+        given-names: Anatoli
+      - family-names: Winter
+        given-names: Walter
+      - family-names: Pohl
+        given-names: Martin
+      - family-names: Gao
+        given-names: Shan
+    identifiers:
+      - type: other
+        value: "arXiv:2312.13371"
+    url: "https://arxiv.org/abs/2312.13371"
+  - type: software
+    title: AM3
+    authors:
+      - name: "The AM³ authors"
+    url: "https://gitlab.desy.de/am3/am3"
