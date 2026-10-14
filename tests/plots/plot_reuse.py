@@ -1,24 +1,24 @@
 """Plot the difference between re-initialising the kernels for every
-simulation and initialising them once and reusing them (am3_mojo).
+simulation and reusing them (am3_mojo).
 
 usage: python tests/plots/plot_reuse.py [--rerun]
 
-Uses the runs of tests/support/reuse_runner.py cached in results/reuse/ (the
-unit and reference tests write them); missing ones are run here:
-  mojo        fresh             new AM3 + init_kernels() for every configuration
-  mojo        reused            init_kernels() once, clear_am3() between configurations
+Uses the runs of tests/support/reuse_runner.py that the unit and reference
+tests cache in results/reuse/, and runs the missing ones:
+  mojo        fresh             new AM3 + init_kernels() per configuration
+  mojo        reused            init_kernels() once, clear_am3() in between
   mojo        no_clear          wrong on purpose: clear_am3() never called
   mojo        no_escape_reset   wrong on purpose: escape timescale not set again
-  cpp-oobfix  reused            the C++ AM3 doing the correct reuse (if built)
-The configurations (magnetic field, escape/expansion time, pp density, time
-step, injection) are CONFIGS in tests/support/reuse_runner.py; the 4th repeats
-the 1st.
+  mojo-am3    reused            the same with only AM3's processes, the C++ run's baseline
+  cpp-fixed   reused            the C++ AM3 doing the correct reuse (if built)
+The configurations are CONFIGS in tests/support/reuse_runner.py; the 4th
+repeats the 1st.
 
 Figures in results/plots/:
-  reuse_<setup>.png   photon spectra with and without re-initialisation and
-                      the per-bin relative difference for every configuration
-  reuse_summary.png   worst difference in the four spectra per configuration, and
-                      the time spent in init_kernels
+  reuse_<setup>.png   photon spectra with and without re-initialisation, and
+                      their per-bin relative difference, per configuration
+  reuse_summary.png   worst difference in the four spectra per configuration,
+                      and the time spent in init_kernels
 """
 import os, sys
 import numpy as np
@@ -26,18 +26,17 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(1, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))   # tests/
+from support.compare import FLOOR, grid_of, significant  # noqa: E402
 from support.paths import available, results_dir  # noqa: E402
-from support.reuse_runner import CONFIGS, N_STEPS  # noqa: E402
+from support.reuse_runner import CONFIGS, N_STEPS, SETUPS  # noqa: E402
 from support.runs import run_reuse  # noqa: E402
+from deviation import IDENT, rel  # noqa: E402
 
 FIGS = results_dir('plots')
 RUNS = [('mojo', 'fresh'), ('mojo', 'reused'), ('mojo', 'no_clear'),
-        ('mojo', 'no_escape_reset'), ('cpp', 'reused')]
-SETUPS = ['leptohadronic', 'blazar']
-N_CONFIGS = 4
-FLOOR = 1e-12      # bins below FLOOR * max are ignored
-IDENT = 1e-18      # where bitwise-identical values are drawn on log axes
+        ('mojo', 'no_escape_reset'), ('mojo-am3', 'reused'), ('cpp', 'reused')]
+N_CONFIGS = len(CONFIGS)
 SPECIES = [('get_photons', 'get_egrid_photons', 'photons', '#1f77b4'),
            ('get_pairs', 'get_egrid_lep', 'e±', '#2ca02c'),
            ('get_protons', 'get_egrid_had', 'protons', '#9467bd'),
@@ -50,21 +49,10 @@ def ensure_runs(rerun):
     D = {}
     for s in SETUPS:
         for impl, mode in RUNS:
-            real = 'cpp-oobfix' if impl == 'cpp' else impl
+            real = 'cpp-fixed' if impl == 'cpp' else impl
             if available(real):
                 D.setdefault(s, {})[impl, mode] = run_reuse(real, s, mode, rerun)
     return D
-
-
-
-def rel(ref, x):
-    """Per-bin |x/ref - 1| on significant bins (NaN elsewhere); exact 0 -> IDENT."""
-    out = np.full(ref.shape, np.nan)
-    if ref.size == 0 or not np.any(ref != 0):
-        return out
-    sig = np.abs(ref) > FLOOR * np.max(np.abs(ref))
-    out[sig] = np.abs(x[sig] / ref[sig] - 1.0)
-    return np.where(out == 0.0, IDENT, out)
 
 
 def worst(R, T, k, names=None):
@@ -72,13 +60,14 @@ def worst(R, T, k, names=None):
     of configuration k."""
     w = 0.0
     for n in R.files:
-        if not n.startswith(f'{k}/') or (names and n.split('/')[1] not in names):
-            continue
+        if not n.startswith(f'{k}/') or (names and n.split('/')[1] not in names) or n not in T:
+            continue  # (getters of am3_mojo's added processes have no C++ counterpart)
         r, t = R[n], T[n]
         if r.shape != t.shape or r.size == 0 or not np.all(np.isfinite(r)) or not np.any(r != 0):
             continue
-        sig = np.abs(r) > FLOOR * np.max(np.abs(r))
-        w = max(w, np.max(np.abs(t[sig] / r[sig] - 1.0)))
+        E = grid_of(R, n, r.size) if (r.ndim == 1 and not n.split('/')[1].startswith('get_t_')) else None
+        sig = significant(r, FLOOR, E)
+        w = max(w, np.max(np.abs(t[sig] / r[sig] - 1.0), initial=0.0))
     return max(w, IDENT)
 
 
@@ -114,16 +103,18 @@ def plot_setup(setup, D):
 
         for getter, grid, name, col in SPECIES:
             Eg = F[f'{k}/{grid}']
-            d = rel(F[f'{k}/{getter}'], U[f'{k}/{getter}'])
+            d = rel(F[f'{k}/{getter}'], U[f'{k}/{getter}'], Eg)
             axd.semilogy(Eg, d, ls='none', marker='o', ms=2.2, color=col,
                          label=f'reused vs re-init: {name}')
-        d = rel(F[f'{k}/get_photons'], CP[f'{k}/get_photons']) if CP is not None else None
+        # the C++ code has only AM3's processes: compare it with mojo-am3
+        A = D.get(('mojo-am3', 'reused'))
+        d = rel(A[f'{k}/get_photons'], CP[f'{k}/get_photons'], E) if CP is not None else None
         if CP is not None:
             axd.semilogy(E, d, color=C_CPP, lw=0.9, label='for scale: C++ AM3 vs am3_mojo (photons)')
         if k > 0:
-            axd.semilogy(E, rel(f, NC[f'{k}/get_photons']), color=C_NOCLEAR, lw=0.9,
+            axd.semilogy(E, rel(f, NC[f'{k}/get_photons'], E), color=C_NOCLEAR, lw=0.9,
                          label='wrong: no clear_am3() (photons)')
-            axd.semilogy(E, rel(f, NE[f'{k}/get_photons']), color=C_NOESC, lw=0.9,
+            axd.semilogy(E, rel(f, NE[f'{k}/get_photons'], E), color=C_NOESC, lw=0.9,
                          label='wrong: escape not set again (photons)')
         axd.axhline(IDENT, color='k', lw=0.6)
         axd.text(E[0], IDENT * 3, 'bitwise identical', fontsize=7.5)
@@ -164,7 +155,8 @@ def plot_summary(D_all):
         for mode, impl, col, sty, lab in styles:
             if (impl, mode) not in D:
                 continue
-            w = [worst(F, D[impl, mode], k, [g for g, *_ in SPECIES]) for k in range(N_CONFIGS)]
+            ref = D['mojo-am3', 'reused'] if impl == 'cpp' else F
+            w = [worst(ref, D[impl, mode], k, [g for g, *_ in SPECIES]) for k in range(N_CONFIGS)]
             ax.semilogy(runs + (si - 0.5) * 0.08, w, sty, color=col, ms=6,
                         mfc=col if si == 0 else 'white', label=f'{lab}, {setup}')
     ax.axhline(IDENT, color='k', lw=0.6)
@@ -204,13 +196,15 @@ def main():
     D_all = ensure_runs('--rerun' in sys.argv)
     written = [plot_setup(s, D_all[s]) for s in SETUPS]
     written.append(plot_summary(D_all))
-    print('worst relative difference from re-initialising (all getters):')
+    print('worst relative difference from re-initialising (all getters; the C++ AM3,\n'
+          'which has only AM3\'s processes, against am3_mojo without the added ones):')
     for s in SETUPS:
         F = D_all[s]['mojo', 'fresh']
         for i, m in RUNS[1:]:
-            if (i, m) not in D_all[s]:
+            if (i, m) not in D_all[s] or i == 'mojo-am3':
                 continue
-            w = [worst(F, D_all[s][i, m], k) for k in range(N_CONFIGS)]
+            ref = D_all[s]['mojo-am3', 'reused'] if i == 'cpp' else F
+            w = [worst(ref, D_all[s][i, m], k) for k in range(N_CONFIGS)]
             print(f'  {s:14s} {i:4s} {m:16s} ' + '  '.join(
                 'identical' if x == IDENT else f'{x:9.1e}' for x in w))
     print('figures:\n  ' + '\n  '.join(written))

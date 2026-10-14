@@ -3,10 +3,11 @@
 usage: python tests/support/time_scenario.py --impl IMPL --scenario NAME [--repeats R]
 prints one JSON line: {"init": [...], "evolve": [...], "steps": n, "max_rss": bytes}
 """
-import argparse, contextlib, io, json, os, resource, sys, time
+import argparse, gc, json, os, resource, sys, time
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from support.paths import load  # noqa: E402
+sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # tests/
+from support.output import silenced  # noqa: E402
+from support.paths import new_am3  # noqa: E402
 from support.scenarios import SCENARIOS  # noqa: E402
 
 
@@ -42,16 +43,19 @@ def main():
     ap.add_argument('--scenario', required=True)
     ap.add_argument('--repeats', type=int, default=1)
     a = ap.parse_args()
-    mod = load(a.impl)
     res = {'init': [], 'evolve': [], 'steps': 0}
     for _ in range(a.repeats):
-        obj = Timed(mod.AM3())
-        with contextlib.redirect_stdout(io.StringIO()):
+        obj = Timed(new_am3(a.impl))
+        with silenced():
             for _ in SCENARIOS[a.scenario](obj):
                 pass
         res['init'].append(obj.t_init)
         res['evolve'].append(obj.t_evolve)
         res['steps'] = obj.steps
+        # release this simulation before the next one is built, so that the
+        # peak memory is that of one simulation
+        obj = None
+        gc.collect()
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     res['max_rss'] = rss if sys.platform == 'darwin' else rss * 1024  # bytes (Linux reports KiB)
     print(json.dumps(res))

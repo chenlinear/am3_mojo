@@ -2,7 +2,6 @@
 that AM3 calls: `gsl_sf_bessel_Knu`)."""
 
 from std.builtin.globals import global_constant
-from std.math import fma
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.buffers import *
@@ -191,7 +190,7 @@ def _bessel_K_scaled_steed_temme_CF2(
 
 
 def _exp_mult(x: Float64, y: Float64) -> Float64:
-    """GSL gsl_sf_exp_mult_err_e value part (underflow/overflow -> 0/inf)."""
+    """gsl_sf_exp_mult_err_e of GSL, value only (underflow 0, overflow MAX)."""
     var ay = c_fabs(y)
     if y == 0.0:
         return 0.0
@@ -263,10 +262,9 @@ def gsl_bessel_Knu(nu: Float64, x: Float64) -> Float64:
 def beta(g: Float64, REG: Float64) -> Float64:
     if g < 10.0:
         return c_sqrt(1.0 - (1.0 / (g * g)) + REG)
-    else:
-        # clang contracts this into one fma; it matters because callers form
-        # 1 - beta (e.g. the gamma-gamma pair kernel limits)
-        return fma(-0.5 / g / g, 1.0 + 0.25 / g / g, 1.0)
+    # second-order expansion of sqrt(1 - 1/g^2) for large g
+    var ig2 = 1.0 / (g * g)
+    return 1.0 - 0.5 * ig2 * (1.0 + 0.25 * ig2)
 
 
 @always_inline
@@ -294,20 +292,16 @@ def int_bk53l(x: Float64) -> Float64:
 
 
 def int_bk53m(x: Float64) -> Float64:
+    """Integral of K_5/3 from x to 10 as a 100-step left Riemann sum in
+    ln t, plus the tail beyond t = 10."""
+    comptime N = 100
     var yi = c_log(x)
-    var yf = c_log(10.0)
+    var dy = (c_log(10.0) - yi) / Float64(N)
     var result = 0.0
-    var y = yi
-    # clang contracts both updates into fused multiply-adds; mirrored here
-    # because the loop count depends on the accumulated y
-    while y < yf:
-        result = fma(
-            c_exp(y) * gsl_bessel_Knu(5.0 / 3.0, c_exp(y)) * 0.01,
-            yf - yi,
-            result,
-        )
-        y = fma(0.01, yf - yi, y)
-    return result + 0.0000192
+    for i in range(N):
+        var t = c_exp(yi + Float64(i) * dy)
+        result += t * gsl_bessel_Knu(5.0 / 3.0, t)
+    return result * dy + 0.0000192
 
 
 def int_bk53s(x: Float64) -> Float64:
@@ -356,3 +350,28 @@ def number_split(x: Float64, dlnE: Float64) -> Tuple[Int, Float64]:
         r += 0.5 * r * (1.0 - r) * dlnE
         return (i, r)
     return (0, 0.0)
+
+
+def gauss_legendre(n: Int, mut x: Vec, mut w: Vec):
+    """Nodes x and weights w of the n-point Gauss-Legendre rule on [-1, 1]."""
+    x = zeros(n)
+    w = zeros(n)
+    for i in range(n):
+        var z = c_cos(mathpi * (Float64(i) + 0.75) / (Float64(n) + 0.5))
+        var dp = 0.0
+        for _ in range(100):
+            var p0 = 1.0
+            var p1 = 0.0
+            for k in range(1, n + 1):
+                var p2 = p1
+                p1 = p0
+                p0 = (
+                    (2.0 * Float64(k) - 1.0) * z * p1 - (Float64(k) - 1.0) * p2
+                ) / Float64(k)
+            dp = Float64(n) * (z * p0 - p1) / (z * z - 1.0)
+            var z1 = z
+            z = z1 - p0 / dp
+            if c_fabs(z - z1) < 1e-15:
+                break
+        x[i] = z
+        w[i] = 2.0 / ((1.0 - z * z) * dp * dp)

@@ -1,0 +1,306 @@
+[
+ [
+  "get_process_pair_annihilation",
+  "get_process_pair_annihilation(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for e+e- annihilation (am3_mojo addition).\nSee `set_process_pair_annihilation`.\n"
+ ],
+ [
+  "set_process_pair_annihilation",
+  "set_process_pair_annihilation(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for electron-positron annihilation, e+ e- -> gamma gamma (am3_mojo addition; not the\nphoton-photon annihilation into pairs of `set_process_annihilation`), with Svensson's (1982) exact rates and\nphoton spectra. Needs `set_process_merge_positrons_into_electrons(False)` (the default). A step's sinks and\nphotons come from the densities at its start: keep the time step below about 0.05 of the shortest\nannihilation time (`get_t_electron_annihilation()`, `get_t_positron_annihilation()`).\nSet to False (no e+e- annihilation, as in AM3) / True (photon emission and e+/- loss, each with its own switch). Default: True.\n"
+ ],
+ [
+  "get_process_pair_annihilation_emission",
+  "get_process_pair_annihilation_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls the photon emission of e+e- annihilation (am3_mojo addition).\nSee `set_process_pair_annihilation_emission`.\n"
+ ],
+ [
+  "set_process_pair_annihilation_emission",
+  "set_process_pair_annihilation_emission(self: am3.AM3, arg0: bool) -> None\n\nSwitch for the photons from e+e- annihilation (am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_pair_annihilation` must be True for emission to be on.\n"
+ ],
+ [
+  "get_process_pair_annihilation_cooling",
+  "get_process_pair_annihilation_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls the e+/- loss by e+e- annihilation (am3_mojo addition).\nSee `set_process_pair_annihilation_cooling`.\n"
+ ],
+ [
+  "set_process_pair_annihilation_cooling",
+  "set_process_pair_annihilation_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for the loss of electrons and positrons by e+e- annihilation (am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_pair_annihilation` must be True for the loss to be on.\n"
+ ],
+ [
+  "get_photons_pair_annihilation",
+  "get_photons_pair_annihilation(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of photons from e+e- annihilation (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_electron_annihilation",
+  "get_t_electron_annihilation(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of electron loss by annihilation with positrons [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_positron_annihilation",
+  "get_t_positron_annihilation(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of positron loss by annihilation with electrons [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_process_triplet_pair_production",
+  "get_process_triplet_pair_production(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for triplet pair production, e+- gamma -> e+- e+ e- (am3_mojo addition).\nSee `set_process_triplet_pair_production`.\n"
+ ],
+ [
+  "set_process_triplet_pair_production",
+  "set_process_triplet_pair_production(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for triplet pair production, e+- gamma -> e+- e+ e- (am3_mojo addition), from the lowest-order\nQED matrix element (all eight diagrams), for ultra-relativistic leptons on photons below m_e c^2. The leptons\nlose the energy the pairs take (a continuous loss), the pairs are injected and evolved as the component\n`get_pairs_triplet`, and the photons are absorbed.\nSet to False (no triplet pair production, as in AM3) / True (pair emission and e+/- loss, each with its own switch). Default: True.\n"
+ ],
+ [
+  "get_process_triplet_pair_production_emission",
+  "get_process_triplet_pair_production_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls the pair emission of triplet pair production (am3_mojo addition).\nSee `set_process_triplet_pair_production_emission`.\n"
+ ],
+ [
+  "set_process_triplet_pair_production_emission",
+  "set_process_triplet_pair_production_emission(self: am3.AM3, arg0: bool) -> None\n\nSwitch for the emission of the pairs made in triplet pair production (am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_triplet_pair_production` must be True for the emission to be on.\n"
+ ],
+ [
+  "get_process_triplet_pair_production_cooling",
+  "get_process_triplet_pair_production_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls the e+- energy loss by triplet pair production (am3_mojo addition).\nSee `set_process_triplet_pair_production_cooling`.\n"
+ ],
+ [
+  "set_process_triplet_pair_production_cooling",
+  "set_process_triplet_pair_production_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for the energy loss of electrons and positrons by triplet pair production (am3_mojo addition):\nthe energy the produced pairs take, as a continuous loss.\nSet to False / True. Default: True.\nThe master switch `set_process_triplet_pair_production` must be True for the loss to be on.\n"
+ ],
+ [
+  "get_pairs_triplet",
+  "get_pairs_triplet(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of e+- pairs from triplet pair production (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_triplet_pairs_syn",
+  "get_photons_triplet_pairs_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of synchrotron photons from pairs from triplet pair production (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_triplet_pairs_compton",
+  "get_photons_triplet_pairs_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of inverse-Compton photons from pairs from triplet pair production (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_triplet_pairs_syn_compton",
+  "get_photons_triplet_pairs_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of synchrotron and inverse-Compton photons from pairs from triplet pair production (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_pair_triplet",
+  "get_t_pair_triplet(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of e+- energy loss by triplet pair production [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_photon_triplet",
+  "get_t_photon_triplet(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of photon absorption by triplet pair production [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_process_neutron_decay",
+  "get_process_neutron_decay(self: am3.AM3) -> bool\n\nCheck the current value of the switch for neutron decay, n -> p e- anti-nu_e (am3_mojo addition).\nSee `set_process_neutron_decay`.\n"
+ ],
+ [
+  "set_process_neutron_decay",
+  "set_process_neutron_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for neutron decay, n -> p e- anti-nu_e (am3_mojo addition), at the rate 1/(gamma tau_n) with the\nmean life of PDG 2026. The protons, electrons and electron anti-neutrinos are injected with the spectra of the\ndecay: the allowed beta spectrum with the Coulomb correction, boosted exactly to the neutron energy. The\nelectrons and anti-neutrinos are also components (`get_electrons_neutron_decay`,\n`get_electron_anti_neutrinos_neutron_decay`). Needs the hadronic processes; set it before `init_kernels`.\nSet to False (neutrons do not decay, as in AM3) / True. Default: True.\n"
+ ],
+ [
+  "get_electrons_neutron_decay",
+  "get_electrons_neutron_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electrons from neutron decay (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_neutron_decay_electrons_syn",
+  "get_photons_neutron_decay_electrons_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of synchrotron photons from electrons from neutron decay (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_neutron_decay_electrons_compton",
+  "get_photons_neutron_decay_electrons_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of inverse-Compton photons from electrons from neutron decay (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_neutron_decay_electrons_syn_compton",
+  "get_photons_neutron_decay_electrons_syn_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of synchrotron and inverse-Compton photons from electrons from neutron decay (am3_mojo addition)\n"
+ ],
+ [
+  "get_electron_anti_neutrinos_neutron_decay",
+  "get_electron_anti_neutrinos_neutron_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from neutron decay (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_neutron_decay",
+  "get_t_neutron_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of neutron decay [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_process_kaons",
+  "get_process_kaons(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for the kaons K+, K-, K0_S and K0_L (am3_mojo addition).\nSee `set_process_kaons`.\n"
+ ],
+ [
+  "set_process_kaons",
+  "set_process_kaons(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for kaons (am3_mojo addition): K+, K-, K0_S and K0_L from photo-hadronic interactions of\nprotons and neutrons and from pp collisions, their escape, cooling (synchrotron and inverse Compton for K+-)\nand decay, and the decay products (pions, muons, e+-, neutrinos). Needs the photo-pion or the pp process\nwith its emission. With kaons on, the pion yields of the photo-hadronic multi-pion types are reduced by the\nkaons' energy, and in pp collisions the protons also lose the kaons' energy.\nSet to False (no kaons, as in AM3) / True. Default: True.\n"
+ ],
+ [
+  "get_process_kaon_decay",
+  "get_process_kaon_decay(self: am3.AM3) -> bool\n\nCheck the current value of the switch for kaon decay (am3_mojo addition).\nSee `set_process_kaon_decay`.\n"
+ ],
+ [
+  "set_process_kaon_decay",
+  "set_process_kaon_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for kaon decay (am3_mojo addition): every non-radiative mode of K+-, K0_S and K0_L with a\nbranching ratio above 0.1 % (PDG 2026) and the smaller K0_S semileptonic and K0_L -> pi0 pi0 modes.\nSet to False (kaons do not decay) / True. Default: True.\n"
+ ],
+ [
+  "get_process_kaon_syn",
+  "get_process_kaon_syn(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for kaon synchrotron (am3_mojo addition).\nSee `set_process_kaon_syn`.\n"
+ ],
+ [
+  "set_process_kaon_syn",
+  "set_process_kaon_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the synchrotron radiation of charged kaons (am3_mojo addition).\nSet to False (turn off kaon synchrotron emission and cooling) / True (turn both on; each can be switched off separately). Default: True.\n"
+ ],
+ [
+  "get_process_kaon_syn_emission",
+  "get_process_kaon_syn_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls kaon synchrotron emission (am3_mojo addition).\nSee `set_process_kaon_syn_emission`.\nNote also the value of the master switch `get_process_kaon_syn()`, which controls both emission and cooling.\n"
+ ],
+ [
+  "set_process_kaon_syn_emission",
+  "set_process_kaon_syn_emission(self: am3.AM3, arg0: bool) -> None\n\nSwitch for kaon synchrotron emission (am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_kaon_syn` must be True for emission to be on.\n"
+ ],
+ [
+  "get_process_kaon_syn_cooling",
+  "get_process_kaon_syn_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls kaon synchrotron cooling (am3_mojo addition).\nSee `set_process_kaon_syn_cooling`.\nNote also the value of the master switch `get_process_kaon_syn()`, which controls both emission and cooling.\n"
+ ],
+ [
+  "set_process_kaon_syn_cooling",
+  "set_process_kaon_syn_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for kaon synchrotron cooling (am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_kaon_syn` must be True for cooling to be on.\n"
+ ],
+ [
+  "get_process_kaon_compton",
+  "get_process_kaon_compton(self: am3.AM3) -> bool\n\nCheck the current value of the master switch for kaon inverse Compton (am3_mojo addition).\nSee `set_process_kaon_compton`.\n"
+ ],
+ [
+  "set_process_kaon_compton",
+  "set_process_kaon_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the inverse Compton scattering of charged kaons (am3_mojo addition), treated as for charged pions.\nSet to False (turn off kaon inverse Compton emission and cooling) / True (turn both on; each can be switched off separately). Default: True.\n"
+ ],
+ [
+  "get_process_kaon_compton_emission",
+  "get_process_kaon_compton_emission(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls kaon inverse Compton emission (am3_mojo addition).\nSee `set_process_kaon_compton_emission`.\nNote also the value of the master switch `get_process_kaon_compton()`, which controls both emission and cooling.\n"
+ ],
+ [
+  "set_process_kaon_compton_emission",
+  "set_process_kaon_compton_emission(self: am3.AM3, arg0: bool) -> None\n\nSwitch for kaon inverse Compton emission (am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_kaon_compton` must be True for emission to be on.\n"
+ ],
+ [
+  "get_process_kaon_compton_cooling",
+  "get_process_kaon_compton_cooling(self: am3.AM3) -> bool\n\nCheck the current value of the switch that controls kaon inverse Compton cooling (am3_mojo addition).\nSee `set_process_kaon_compton_cooling`.\nNote also the value of the master switch `get_process_kaon_compton()`, which controls both emission and cooling.\n"
+ ],
+ [
+  "set_process_kaon_compton_cooling",
+  "set_process_kaon_compton_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for kaon inverse Compton cooling (am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_kaon_compton` must be True for cooling to be on.\n"
+ ],
+ [
+  "get_kaons",
+  "get_kaons(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of all charged kaons, both positive and negative (am3_mojo addition)\n"
+ ],
+ [
+  "get_kaon_plus",
+  "get_kaon_plus(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of positive kaons (K+) (am3_mojo addition)\n"
+ ],
+ [
+  "get_kaon_minus",
+  "get_kaon_minus(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of negative kaons (K-) (am3_mojo addition)\n"
+ ],
+ [
+  "get_kaon_0S",
+  "get_kaon_0S(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of short-lived neutral kaons (K0_S) (am3_mojo addition)\n"
+ ],
+ [
+  "get_kaon_0L",
+  "get_kaon_0L(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of long-lived neutral kaons (K0_L) (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_kaon_0S_decay",
+  "get_t_kaon_0S_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_S decay [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_kaon_0L_decay",
+  "get_t_kaon_0L_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_L decay [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_kaons_syn",
+  "get_photons_kaons_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of photons from kaon synchrotron (am3_mojo addition)\n"
+ ],
+ [
+  "get_photons_kaons_compton",
+  "get_photons_kaons_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of IC photons from kaons (am3_mojo addition)\n"
+ ],
+ [
+  "get_neutrinos_kaon_decay",
+  "get_neutrinos_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from kaon decays\n(am3_mojo addition): those of the kaon decays (K -> mu nu, K_l3) and of the pion and muon decays that\nfollow, for the kaons from photo-hadronic interactions and pp collisions. They are also part of the\nphotopion and proton-proton components, by the kaons' origin; see also `get_neutrinos_pion_muon_decay_photopion`.\n"
+ ],
+ [
+  "get_electron_neutrinos_kaon_decay",
+  "get_electron_neutrinos_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from kaon decays (am3_mojo addition;\nsee `get_neutrinos_kaon_decay`)\n"
+ ],
+ [
+  "get_electron_anti_neutrinos_kaon_decay",
+  "get_electron_anti_neutrinos_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from kaon decays (am3_mojo addition;\nsee `get_neutrinos_kaon_decay`)\n"
+ ],
+ [
+  "get_muon_neutrinos_kaon_decay",
+  "get_muon_neutrinos_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from kaon decays (am3_mojo addition;\nsee `get_neutrinos_kaon_decay`)\n"
+ ],
+ [
+  "get_muon_anti_neutrinos_kaon_decay",
+  "get_muon_anti_neutrinos_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from kaon decays (am3_mojo addition;\nsee `get_neutrinos_kaon_decay`)\n"
+ ],
+ [
+  "get_neutrinos_pion_muon_decay_photopion",
+  "get_neutrinos_pion_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\npions made in photopion interactions and of their muons (am3_mojo addition): the photopion component\nwithout the neutrinos of kaon decays (`get_neutrinos_kaon_decay`), which it holds with kaons on\n"
+ ],
+ [
+  "get_electron_neutrinos_pion_muon_decay_photopion",
+  "get_electron_neutrinos_pion_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the pions made in photopion interactions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_photopion`)\n"
+ ],
+ [
+  "get_electron_anti_neutrinos_pion_muon_decay_photopion",
+  "get_electron_anti_neutrinos_pion_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the pions made in photopion interactions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_photopion`)\n"
+ ],
+ [
+  "get_muon_neutrinos_pion_muon_decay_photopion",
+  "get_muon_neutrinos_pion_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the pions made in photopion interactions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_photopion`)\n"
+ ],
+ [
+  "get_muon_anti_neutrinos_pion_muon_decay_photopion",
+  "get_muon_anti_neutrinos_pion_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the pions made in photopion interactions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_photopion`)\n"
+ ],
+ [
+  "get_neutrinos_pion_muon_decay_proton_proton",
+  "get_neutrinos_pion_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\npions made in proton-proton collisions and of their muons (am3_mojo addition): the proton-proton component\nwithout the neutrinos of kaon decays (`get_neutrinos_kaon_decay`), which it holds with kaons on\n"
+ ],
+ [
+  "get_electron_neutrinos_pion_muon_decay_proton_proton",
+  "get_electron_neutrinos_pion_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the pions made in proton-proton collisions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_proton_proton`)\n"
+ ],
+ [
+  "get_electron_anti_neutrinos_pion_muon_decay_proton_proton",
+  "get_electron_anti_neutrinos_pion_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the pions made in proton-proton collisions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_proton_proton`)\n"
+ ],
+ [
+  "get_muon_neutrinos_pion_muon_decay_proton_proton",
+  "get_muon_neutrinos_pion_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the pions made in proton-proton collisions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_proton_proton`)\n"
+ ],
+ [
+  "get_muon_anti_neutrinos_pion_muon_decay_proton_proton",
+  "get_muon_anti_neutrinos_pion_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the pions made in proton-proton collisions\nand of their muons (am3_mojo addition; see `get_neutrinos_pion_muon_decay_proton_proton`)\n"
+ ],
+ [
+  "get_t_kaon_syn",
+  "get_t_kaon_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon synchrotron cooling [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_kaon_compton",
+  "get_t_kaon_compton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon inverse Compton cooling [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_kaon_decay",
+  "get_t_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon decay [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_kaon_escape",
+  "get_t_kaon_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon escape [s] (am3_mojo addition; as for charged pions, see `set_escape_fraction_pions`)\n"
+ ],
+ [
+  "get_t_kaon_neutral_escape",
+  "get_t_kaon_neutral_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_S and K0_L escape [s] (am3_mojo addition; as for neutrons, see `set_escape_fraction_neutrons`)\n"
+ ],
+ [
+  "set_t_kaon_extra_cooling",
+  "set_t_kaon_extra_cooling(self: am3.AM3, arg0: typing.Annotated[numpy.typing.ArrayLike, numpy.float64]) -> None\n\nSet extra cooling timescale of kaons (all four species) as an array. [s] (am3_mojo addition)\n"
+ ],
+ [
+  "get_t_kaon_extra_cooling",
+  "get_t_kaon_extra_cooling(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of kaon extra cooling term [s] (am3_mojo addition)\n"
+ ]
+]

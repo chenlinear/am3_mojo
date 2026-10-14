@@ -8,11 +8,11 @@ backend-path = ["tools"]
 
 [project]
 name = "am3-mojo"
-version = "0.1.0"
-description = "am3_mojo: the AM3 lepto-hadronic radiation code written in Mojo, with the AM3 Python interface"
+version = "0.2.0"
+description = "am3_mojo: the AM3 lepto-hadronic interactions code written in Mojo, with the AM3 Python interface"
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.14,<3.15"
 dependencies = [
     "numpy>=2.0",
     "mojo-compiler==1.1.0",   # provides the Mojo runtime libraries the module loads
@@ -27,6 +27,13 @@ dev = [
     "cmake>=3.24",
     "ninja>=1.11",
     "pybind11>=2.12",
+    # the scripts in tests/literature_checks/ and tools/triplet/
+    "scipy>=1.18",
+    "mpmath>=1.3",
+    "sympy>=1.14",
+    "antlr4-python3-runtime==4.11.*",   # sympy's LaTeX parser (literature_checks/derivations/)
+    "vegas>=6.4",   # the triplet Monte Carlo
+    "gvar>=13.1",   # vegas's random numbers and errors
 ]
 
 [tool.uv]
@@ -35,4 +42,7 @@ package = false   # `uv sync` sets up the development environment; the module is
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tests"]   # `from support import ...`
+# pytest's defaults, and tests/reference/work (the downloaded and built C++ reference)
+norecursedirs = [".*", "*.egg", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "work"]
 markers = ["reference: compares am3_mojo with the original C++ AM3 (needs `make reference`)"]

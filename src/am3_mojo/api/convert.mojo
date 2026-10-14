@@ -12,12 +12,28 @@ def scaled(v: Vec, factor: Float64) -> Vec:
     return res^
 
 
-def summed(factor: Float64, *vs: Vec) -> Vec:
+# fixed arities: Mojo 1.1.0 miscompiles a variadic pack of list references in
+# builds with assertions enabled
+def summed(factor: Float64, a: Vec, b: Vec) -> Vec:
     """Element-wise sum of the arrays, multiplied by `factor`."""
-    var res = vs[0].copy()
-    for k in range(1, len(vs)):
+    var res = a.copy()
+    for i in range(len(res)):
+        res[i] += b[i]
+    if factor != 1.0:
         for i in range(len(res)):
-            res[i] += vs[k][i]
+            res[i] *= factor
+    return res^
+
+
+def summed(factor: Float64, a: Vec, b: Vec, c: Vec, d: Vec) -> Vec:
+    """Element-wise sum of the arrays, multiplied by `factor`."""
+    var res = a.copy()
+    for i in range(len(res)):
+        res[i] += b[i]
+    for i in range(len(res)):
+        res[i] += c[i]
+    for i in range(len(res)):
+        res[i] += d[i]
     if factor != 1.0:
         for i in range(len(res)):
             res[i] *= factor
@@ -50,13 +66,25 @@ def emission_timescales(density: Vec, source: Vec, numerator: Float64) -> Vec:
     return res^
 
 
-def set_rates_from_timescales(mut rates: Vec, times: Vec, numerator: Float64):
+def check_length(src: Vec, n: Int) raises:
+    """An input array must have one value per bin of its energy grid."""
+    if len(src) != n:
+        raise Error(
+            String("array has ", len(src), " elements, the energy grid has ", n)
+        )
+
+
+def set_rates_from_timescales(
+    mut rates: Vec, times: Vec, numerator: Float64
+) raises:
     """`rates[i] = numerator / times[i]` (numerator carries sign and units)."""
+    check_length(times, len(rates))
     for i in range(len(rates)):
         rates[i] = numerator / times[i]
 
 
-def assign_divided(mut dst: Vec, src: Vec, divisor: Float64):
+def assign_divided(mut dst: Vec, src: Vec, divisor: Float64) raises:
     """`dst[i] = src[i] / divisor` (physical units -> internal units)."""
+    check_length(src, len(dst))
     for i in range(len(dst)):
         dst[i] = src[i] / divisor

@@ -8,8 +8,8 @@ comptime Vec = List[Float64]
 comptime VecF = List[Float32]
 comptime VecI = List[Int]
 
-# SIMD widths used by the hot loops (NEON: 2 x f64 / 4 x f32 per register;
-# wider vectors are split by LLVM and give extra instruction-level parallelism).
+# SIMD widths of the hot loops (NEON: 2 x f64 / 4 x f32 per register; LLVM
+# splits wider vectors, which gives extra instruction-level parallelism).
 comptime WD = 8
 comptime WF = 16
 

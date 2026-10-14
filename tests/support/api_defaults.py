@@ -3,11 +3,12 @@ behaviour of a few calls, as JSON (run in its own process per implementation).
 
 usage: python tests/support/api_defaults.py --impl IMPL --out FILE.json
 """
-import argparse, contextlib, io, json, os, sys
+import argparse, json, os, sys
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from support.paths import load  # noqa: E402
+sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # tests/
+from support.output import silenced  # noqa: E402
+from support.paths import new_am3  # noqa: E402
 from support.scenarios import dump_state  # noqa: E402
 
 CALLS = [('set_injection_rate_protons', (np.zeros((2, 2)),)), ('set_mag_field', ()),
@@ -19,9 +20,8 @@ def main():
     ap.add_argument('--impl', required=True)
     ap.add_argument('--out', required=True)
     a = ap.parse_args()
-    mod = load(a.impl)
-    obj = mod.AM3()
-    with contextlib.redirect_stdout(io.StringIO()):
+    obj = new_am3(a.impl)
+    with silenced():
         obj.init_kernels()
     res = {k: v.tolist() for k, v in dump_state(obj).items()}
     errs = {}

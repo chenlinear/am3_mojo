@@ -1,4 +1,4 @@
-"""Tables from Hümmer et al. (2010/2012) used by the photo-pion model (PhotoPion.cc)."""
+"""Hümmer et al. (2010/2012) tables for the photo-pion model (PhotoPion.cc)."""
 
 from std.builtin.globals import global_constant
 

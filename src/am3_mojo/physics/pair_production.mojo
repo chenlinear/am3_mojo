@@ -1,6 +1,5 @@
 """Port of Pair (PairProduction.cc): gamma-gamma annihilation into e+/-."""
 
-from std.math import fma
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.buffers import *
@@ -9,7 +8,7 @@ from am3_mojo.model.runparams import RunParams
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.particles import *
 from am3_mojo.utils.parallel import parallel_run
-from am3_mojo.utils.linalg import MatD, MatI, gemv_d
+from am3_mojo.utils.linalg import MatD, MatI, gemv_d, dot
 
 
 struct PairInitJob(Movable):
@@ -61,7 +60,8 @@ struct PairLepJob(Movable):
 def pair_lep_work(
     job: Pointer[PairLepJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
-    """epspairL(i) for i = 1 + t, 1 + t + nt, ... (same loop order as C++)."""
+    """epspairL(i) = sum_j n(j) sum_k K_i(j, k) n(k) for i = 1 + t,
+    1 + t + nt, ..."""
     ref P = job[].P[]
     ref dat = job[].dat[]
     var png = pd(P.PP_NG)
@@ -71,11 +71,12 @@ def pair_lep_work(
         var x = 0.0
         var Kp = P.KER_RggD1pair[i].ptr()
         for j in range(P.KER_outerPP[i], n):
+            var k0 = P.KER_innerPP.get(i, j)
             var kmax = min(-j + 2 * dat.ind_min_energy_pho + job[].factor, n)
-            var pj = png[unsafe_offset=j]
-            var row = Kp.unsafe_offset(j * n)
-            for k in range(P.KER_innerPP.get(i, j), kmax):
-                x += row[unsafe_offset=k] * png[unsafe_offset=k] * pj
+            if kmax > k0:
+                x += png[unsafe_offset=j] * dot(
+                    Kp.unsafe_offset(j * n + k0), png.unsafe_offset(k0), kmax - k0
+                )
         P.epspairL[i] = x * dat.dlnE * dat.dlnE * 0.75 * dat.egrid_lep[i]
         i += nt
 
@@ -87,9 +88,12 @@ struct Pair(Copyable, Movable):
     var epspairL: Vec
     var PP_NG: Vec
     var KER_phibarD: MatD  # (nbins_pho x nbins_pho)
-    # Full pair-production kernel KER_RggD1pair[i](j,k); only allocated when the
-    # full (non 8-bin) treatment is requested (the C++ code always allocates
-    # nbins_pho^3 doubles, ~1.9 GB, even when it is never used).
+    # Full pair-production kernel KER_RggD1pair[i](j,k), allocated only for the
+    # full (non 8-bin) treatment: one matrix per outgoing lepton bin (1.05 GB
+    # on the default grids). The C++ code allocates one per photon bin,
+    # nbins_pho^3 doubles (~1.9 GB; only the first nbins_lep = 340 are used),
+    # even when it is never used: braces are missing after
+    # `if(!feedback_8bin)` in PairProduction.cc.
     var KER_RggD1pair: List[MatD]
     var KER_outerPP: VecI
     var KER_innerPP: MatI
@@ -112,7 +116,7 @@ struct Pair(Copyable, Movable):
         self.A_A0_hV = zeros(2101)
         self.clear_internal_arrays(dat)
         for i in range(2101):
-            var h = fma(Float64(i), 0.01, -1.0)  # clang fuses -1.0 + 0.01 * i
+            var h = -1.0 + 0.01 * Float64(i)
             self.A0V[i] = self.A0f(h)
             self.A_A0_hV[i] = self.A_A0_hf(h)
 
@@ -131,9 +135,13 @@ struct Pair(Copyable, Movable):
         self.KER_RggD1pair = List[MatD]()  # lazily allocated (all zeros)
 
     def _alloc_full_kernel(mut self, dat: AM3Arrays):
-        if len(self.KER_RggD1pair) != dat.nbins_pho:
+        # one matrix per outgoing lepton bin (see KER_RggD1pair)
+        if (
+            len(self.KER_RggD1pair) != dat.nbins_lep
+            or self.KER_RggD1pair[0].rows != dat.nbins_pho
+        ):
             self.KER_RggD1pair = List[MatD]()
-            for _ in range(dat.nbins_pho):
+            for _ in range(dat.nbins_lep):
                 self.KER_RggD1pair.append(MatD(dat.nbins_pho, dat.nbins_pho))
 
     def initialize_kernels(
@@ -161,7 +169,7 @@ struct Pair(Copyable, Movable):
                     print("computing full e+/- pair production kernel")
                 self._alloc_full_kernel(dat)
                 # R_gg kernel values, stored with k contiguous (element (j,k) of
-                # KER_RggD1pair[i] at [j * nbins_pho + k]); computed in parallel
+                # KER_RggD1pair[i] at [j * nbins_pho + k])
                 var job = PairInitJob(
                     Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
                     Pointer(to=dat)
@@ -342,11 +350,6 @@ struct Pair(Copyable, Movable):
     def Fpp_p(self, x: Float64, gp: Float64) -> Float64:
         return 2.0 * x - gp * (1.0 + beta(gp, self.REG))
 
-    # RggD1, XcmU, XcmL and TD2 mirror the fused multiply-adds clang emits for
-    # PairProduction.cc (llvm.fmuladd in its IR). These expressions cancel
-    # large terms (gp = x + x1 - gm, gm - sqrt(gm^2 - 1), ...) and TD2 indexes
-    # lookup tables with int(h / 0.01), so plain a*b+c rounding shifted the
-    # full-kernel pair source by up to ~1e-4 relative.
     def RggD1(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
         var gp = x + x1 - gm
         var KU: Float64
@@ -359,19 +362,19 @@ struct Pair(Copyable, Movable):
                 + 0.09375 / gm / gm / gm
             )
             KU = 0.5 * (
-                gp + c_sqrt(fma(gp, gp, -1.0)) + gm + c_sqrt(fma(gm, gm, -1.0))
+                gp + c_sqrt(gp * gp - 1.0) + gm + c_sqrt(gm * gm - 1.0)
             )
         elif gp > 10.0 and gm <= 10.0:
-            var sgm = c_sqrt(fma(gm, gm, -1.0))
+            var sgm = c_sqrt(gm * gm - 1.0)
             KL = 0.5 * (0.5 / gp + gm - sgm)
-            KU = fma(gm + sgm, 0.5, gp)
+            KU = gp + 0.5 * (gm + sgm)
         elif gp <= 10.0 and gm > 10.0:
-            var sgp = c_sqrt(fma(gp, gp, -1.0))
+            var sgp = c_sqrt(gp * gp - 1.0)
             KL = 0.5 * (gp - sgp + 0.5 / gm)
-            KU = fma(gp + sgp, 0.5, gm)
+            KU = gm + 0.5 * (gp + sgp)
         else:
-            var sgp = c_sqrt(fma(gp, gp, -1.0))
-            var sgm = c_sqrt(fma(gm, gm, -1.0))
+            var sgp = c_sqrt(gp * gp - 1.0)
+            var sgm = c_sqrt(gm * gm - 1.0)
             KL = 0.5 * (gp - sgp + gm - sgm)
             KU = 0.5 * (gp + sgp + gm + sgm)
         if gp <= 1.000 or gm <= 1.000:
@@ -385,8 +388,8 @@ struct Pair(Copyable, Movable):
         var XLower = self.XcmL(gm, x, x1)
         var u = 4.0 * XUpper * XUpper / T / T
         var v = 4.0 * XLower * XLower / T / T
-        var a_nh = fma(gm - x, gm - x, -1.0)
-        var a_ih = fma(gm - x1, gm - x1, -1.0)
+        var a_nh = (gm - x) * (gm - x) - 1.0
+        var a_ih = (gm - x1) * (gm - x1) - 1.0
         var h_NH_U = a_nh * XUpper * XUpper / (x * x1)
         var h_NH_L = a_nh * XLower * XLower / (x * x1)
         var h_IH_U = a_ih * XUpper * XUpper / (x * x1)
@@ -396,29 +399,21 @@ struct Pair(Copyable, Movable):
         var TD2C = self.TD2(gm, x1, x, XUpper)
         var TD2D = self.TD2(gm, x1, x, XLower)
         if h_NH_U > 1000.0 and h_NH_L > 1000.0:
-            TD2A = -fma(XUpper, XUpper, 2.0 * c_log(XUpper)) / c_sqrt(a_nh)
-            TD2B = -fma(XLower, XLower, 2.0 * c_log(XLower)) / c_sqrt(a_nh)
+            TD2A = -(XUpper * XUpper + 2.0 * c_log(XUpper)) / c_sqrt(a_nh)
+            TD2B = -(XLower * XLower + 2.0 * c_log(XLower)) / c_sqrt(a_nh)
         if h_IH_U > 1000.0 and h_IH_L > 1000.0:
-            TD2C = -fma(XUpper, XUpper, 2.0 * c_log(XUpper)) / c_sqrt(a_ih)
-            TD2D = -fma(XLower, XLower, 2.0 * c_log(XLower)) / c_sqrt(a_ih)
+            TD2C = -(XUpper * XUpper + 2.0 * c_log(XUpper)) / c_sqrt(a_ih)
+            TD2D = -(XLower * XLower + 2.0 * c_log(XLower)) / c_sqrt(a_ih)
+        var td_sum = TD2A - TD2B + TD2C - TD2D
         if u < 0.01 and v < 0.01:
-            return -0.25 * (fma(0.5 * T, u - v, TD2A) - TD2B + TD2C - TD2D)
-        return -0.25 * (
-            fma(T, c_sqrt(1.0 - v) - c_sqrt(1.0 - u + 1.0e-9), TD2A)
-            - TD2B
-            + TD2C
-            - TD2D
-        )
+            return -0.25 * (0.5 * T * (u - v) + td_sum)
+        return -0.25 * (T * (c_sqrt(1.0 - v) - c_sqrt(1.0 - u + 1.0e-9)) + td_sum)
 
     def XcmU(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
         var gp = x + x1 - gm
         if gp > 15.0 and gm > 15.0:
             return min(c_sqrt(x * x1), c_sqrt(gp * gm))
-        var t = fma(
-            c_sqrt(fma(gm, gm, -1.0)),
-            c_sqrt(fma(gp, gp, -1.0)),
-            fma(gm, gp, 1.0),
-        )
+        var t = gm * gp + 1.0 + c_sqrt(gm * gm - 1.0) * c_sqrt(gp * gp - 1.0)
         return min(c_sqrt(x * x1), c_sqrt(0.5 * t))
 
     def XcmL(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
@@ -429,19 +424,19 @@ struct Pair(Copyable, Movable):
             elif gm < 1.001:
                 return 1.001
             else:
-                var d = gm - c_sqrt(fma(gm, gm, -1.0) + self.REG)
-                return c_sqrt(0.5 * fma(d, gp - 0.5 / gp, 1.0))
+                var d = gm - c_sqrt(gm * gm - 1.0 + self.REG)
+                return c_sqrt(0.5 * (1.0 + d * (gp - 0.5 / gp)))
         elif gp < 1.001:
             return 1.001
         else:
             if gm > 10.0:
-                var d = gp - c_sqrt(fma(gp, gp, -1.0) + self.REG)
-                return c_sqrt(0.5 * fma(d, gm - 0.5 / gm, 1.0))
+                var d = gp - c_sqrt(gp * gp - 1.0 + self.REG)
+                return c_sqrt(0.5 * (1.0 + d * (gm - 0.5 / gm)))
             elif gm < 1.001:
                 return 1.001
             else:
-                var r = c_sqrt(fma(gm, gm, -1.0) * fma(gp, gp, -1.0))
-                return c_sqrt(0.5 * (fma(gp, gm, 1.0) - r))
+                var r = c_sqrt((gm * gm - 1.0) * (gp * gp - 1.0))
+                return c_sqrt(0.5 * (gp * gm + 1.0 - r))
 
     def TD2(
         self, gm: Float64, x: Float64, x1: Float64, xcm: Float64
@@ -449,20 +444,19 @@ struct Pair(Copyable, Movable):
         var y = c_sqrt(x * x1)
         var y2 = y * y
         var q = xcm / y
-        var h = fma(gm - x, gm - x, -1.0) * q * q
+        var h = ((gm - x) * (gm - x) - 1.0) * q * q
+        var b = (x * x + gm * (x1 - x)) / y2
         if h > 1000.0:
-            var s = fma(xcm, xcm, h / (xcm * xcm)) + 0.886294
-            s = s - 0.5 * fma(gm, x1 - x, x * x) / y2
-            s = c_log(h) + s
+            var s = c_log(h) + xcm * xcm + h / (xcm * xcm) + 0.886294 - 0.5 * b
             return -s * q / c_sqrt(h)
         elif h < -0.999:
-            return q * fma(
-                q * q * (y2 - 1.0), -1.5707963, 0.5 * ((x1 - x) / y2 - 6.28319)
+            return q * (
+                0.5 * ((x1 - x) / y2 - 6.28319) - 1.5707963 * q * q * (y2 - 1.0)
             )
         var Ah = c_sqrt(1.0 + h)
-        var t1 = fma(q * q * q * (y2 - 1.0), self.A_A0_h(h), -Ah / (xcm * y))
-        var t2 = fma(-2.0 * q, q, 1.0 + fma(gm, x1 - x, x * x) / y2) / Ah
-        return fma(0.5 * q, fma(self.A0(h), -4.0, t2), t1)
+        var t1 = q * q * q * (y2 - 1.0) * self.A_A0_h(h) - Ah / (xcm * y)
+        var t2 = (1.0 - 2.0 * q * q + b) / Ah
+        return t1 + 0.5 * q * (t2 - 4.0 * self.A0(h))
 
     def A_A0_h(self, h: Float64) -> Float64:
         if h <= 20.0:
@@ -485,6 +479,5 @@ struct Pair(Copyable, Movable):
 
     def A_A0_hf(self, h: Float64) -> Float64:
         if h >= -0.1 and h <= 0.1:
-            var t = fma(h, -0.0694444, 0.107143)
-            return fma(fma(-t, h, 0.2), h, -0.666667)
+            return -0.666667 + h * (0.2 + h * (-0.107143 + 0.0694444 * h))
         return (self.A0f(h) - c_sqrt(1.0 + h + 1.0e-8)) / h

@@ -4,7 +4,7 @@ message: >-
   (listed under "references").
 type: software
 title: "am3_mojo: the AM³ lepto-hadronic interactions code in Mojo"
-version: 0.1.0
+version: 0.2.0
 license: BSD-3-Clause
 authors:
   - name: "Chen Li"
@@ -18,7 +18,11 @@ keywords:
 references:
   - type: article
     title: "AM³: An Open-Source Tool for Time-Dependent Lepto-Hadronic Modeling of Astrophysical Sources"
-    year: 2023
+    year: 2024
+    journal: "The Astrophysical Journal Supplement Series"
+    volume: 275
+    start: 4
+    doi: "10.3847/1538-4365/ad725c"
     authors:
       - family-names: Klinger
         given-names: Marc
@@ -39,6 +43,8 @@ references:
       - family-names: Gao
         given-names: Shan
     identifiers:
+      - type: doi
+        value: "10.3847/1538-4365/ad725c"
       - type: other
         value: "arXiv:2312.13371"
     url: "https://arxiv.org/abs/2312.13371"

@@ -62,4 +62,36 @@ comptime SA_gmuic = 57
 comptime SA_gpi0_pg = 58
 comptime SA_gpi0_pp = 59
 comptime SA_ginj = 60
-comptime N_SOLVERS = 61
+# solvers of the species am3_mojo adds to AM3
+comptime SA_gpann = 61  # e+e- annihilation photon component
+comptime SA_eptpp = 62  # pairs from triplet pair production
+comptime SA_gtppsy = 63  # their synchrotron photons
+comptime SA_gtppic = 64  # their inverse-Compton photons
+comptime SA_endec = 65  # electrons from neutron decay
+comptime SA_gndecsy = 66  # their synchrotron photons
+comptime SA_gndecic = 67  # their inverse-Compton photons
+comptime SA_nueA_ndec = 68  # anti-nu_e from neutron decay
+comptime SA_K = 69  # kaons from photo-hadronic interactions, SA_K + s
+comptime SA_Km = 70
+comptime SA_KS = 71
+comptime SA_KL = 72
+comptime SA_gksy = 73  # kaon synchrotron photon component
+comptime SA_gkic = 74  # kaon inverse-Compton photon component
+comptime SA_Kpp = 75  # kaons from pp collisions, SA_Kpp + s
+# pions, muons and neutrinos from the decays of the photo-hadronic and the pp
+# kaons (model/particles.mojo, P_pion_plus_Kpg ...)
+comptime SA_Pip_Kpg = 79  # pi+, pi-
+comptime SA_Pip_Kpp = 81
+comptime SA_MpL_Kpg = 83  # + 0 .. 3
+comptime SA_MpL_Kpp = 87
+comptime SA_nue_Kpg = 91  # + 0 .. 3
+comptime SA_nue_Kpp = 95
+comptime N_SOLVERS = 99
+
+
+@always_inline
+def kaon_solver(s: Int, pp: Bool = False) -> Int:
+    """Solver of kaon species s (model/particles.mojo: K+, K-, K0_S, K0_L), of
+    the photo-hadronic or (pp) the pp component; both are configured the same.
+    """
+    return (SA_Kpp if pp else SA_K) + s

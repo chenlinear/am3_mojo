@@ -16,6 +16,7 @@ struct ExtraCooling(Copyable, Movable):
     var AExtraCoolNU: Vec
     var AExtraCoolPipm: Vec
     var AExtraCoolMu: Vec
+    var AExtraCoolK: Vec  # kaons (am3_mojo addition)
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
         self.verbose = verbose
@@ -26,6 +27,7 @@ struct ExtraCooling(Copyable, Movable):
         self.AExtraCoolNU = Vec()
         self.AExtraCoolPipm = Vec()
         self.AExtraCoolMu = Vec()
+        self.AExtraCoolK = Vec()
         self.clear_internal_arrays(dat)
 
     def clear_internal_arrays(mut self, dat: AM3Arrays):
@@ -35,4 +37,5 @@ struct ExtraCooling(Copyable, Movable):
         resize_zero(self.AExtraCoolNTR, dat.nbins_had)
         resize_zero(self.AExtraCoolPipm, dat.nbins_had)
         resize_zero(self.AExtraCoolMu, dat.nbins_had)
+        resize_zero(self.AExtraCoolK, dat.nbins_had)
         resize_zero(self.AExtraCoolNU, dat.nbins_nu)

@@ -2,7 +2,6 @@
 with an acceleration cache) and `gsl_linalg_solve_tridiag`."""
 
 from std.utils.numerics import nan
-from std.math import fma
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.buffers import *
@@ -11,9 +10,9 @@ from am3_mojo.utils.buffers import *
 struct LinearSpline(Copyable, Movable):
     """`gsl_spline` with `gsl_interp_linear` + `gsl_interp_accel`.
 
-    The spline keeps raw pointers to the abscissa/ordinate arrays (GSL copies
-    them on `gsl_spline_init`; here the caller guarantees the arrays outlive the
-    spline and are not modified while it is used, which is how AM3 uses them).
+    Unlike GSL, which copies the arrays on `gsl_spline_init`, the spline keeps
+    raw pointers to them: the caller guarantees that they outlive it and do
+    not change while it is used, as in AM3.
     """
 
     var xa: FPtr
@@ -68,8 +67,7 @@ struct LinearSpline(Copyable, Movable):
         var y_hi = self.ya[unsafe_offset=index + 1]
         var dx = x_hi - x_lo
         if dx > 0.0:
-            # GSL (compiled with FP contraction) evaluates this as one fused multiply-add
-            return fma((x - x_lo) / dx, y_hi - y_lo, y_lo)
+            return y_lo + (x - x_lo) / dx * (y_hi - y_lo)
         return 0.0
 
 
@@ -95,12 +93,10 @@ def solve_tridiag(
         ok = False
     for i in range(1, N):
         var t = belowdiag[unsafe_offset=i - 1] / alpha[unsafe_offset=i - 1]
-        alpha[unsafe_offset=i] = fma(
-            -t, abovediag[unsafe_offset=i - 1], diag[unsafe_offset=i]
+        alpha[unsafe_offset=i] = (
+            diag[unsafe_offset=i] - t * abovediag[unsafe_offset=i - 1]
         )
-        z[unsafe_offset=i] = fma(
-            -t, z[unsafe_offset=i - 1], rhs[unsafe_offset=i]
-        )
+        z[unsafe_offset=i] = rhs[unsafe_offset=i] - t * z[unsafe_offset=i - 1]
         if alpha[unsafe_offset=i] == 0.0:
             ok = False
     x[unsafe_offset=N - 1] = z[unsafe_offset=N - 1] / alpha[unsafe_offset=N - 1]
@@ -108,12 +104,8 @@ def solve_tridiag(
         var i = N - 2
         while i >= 0:
             x[unsafe_offset=i] = (
-                fma(
-                    -abovediag[unsafe_offset=i],
-                    x[unsafe_offset=i + 1],
-                    z[unsafe_offset=i],
-                )
-                / alpha[unsafe_offset=i]
-            )
+                z[unsafe_offset=i]
+                - abovediag[unsafe_offset=i] * x[unsafe_offset=i + 1]
+            ) / alpha[unsafe_offset=i]
             i -= 1
     return ok

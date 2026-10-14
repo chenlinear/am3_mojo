@@ -4,16 +4,15 @@ tests/unit       am3_mojo on its own (needs `make build`)
 tests/reference  comparison with the original C++ AM3 (needs `make reference`;
                  skipped with a message if the reference is not built)
 """
-import os, sys
+import os
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from support.paths import available, LABELS  # noqa: E402
+from support.paths import available, LABELS
 
 
 def pytest_collection_modifyitems(config, items):
     for item in items:
-        if os.sep + 'reference' + os.sep in str(item.fspath):
+        if os.sep + 'reference' + os.sep in str(item.path):
             item.add_marker(pytest.mark.reference)
             if not available('cpp'):
                 item.add_marker(pytest.mark.skip(

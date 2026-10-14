@@ -1,10 +1,8 @@
-"""Thin wrappers around the platform libm and C conversion semantics.
-
-Transcendental functions go through libm (the library the C++ AM3 links
-against) rather than Mojo's std.math approximations."""
+"""Thin wrappers around the platform libm (for the transcendental functions)
+and C conversion semantics."""
 
 from std.ffi import external_call
-from std.math import sqrt as _sqrt, floor as _floor
+from std.math import sqrt as _sqrt, floor as _floor, ceil as _ceil
 
 # ============================================================================
 # libm wrappers
@@ -32,15 +30,18 @@ def c_pow(x: Float64, y: Float64) -> Float64:
 
 
 @always_inline
-def c_exp10(x: Float64) -> Float64:
-    """clang lowers `pow(10, x)` to `__exp10(x)` on Darwin."""
-    return external_call["__exp10", Float64](x)
+def c_log1p(x: Float64) -> Float64:
+    return external_call["log1p", Float64](x)
 
 
 @always_inline
-def c_exp2(x: Float64) -> Float64:
-    """clang lowers `pow(2, x)` to `exp2(x)`."""
-    return external_call["exp2", Float64](x)
+def c_expm1(x: Float64) -> Float64:
+    return external_call["expm1", Float64](x)
+
+
+@always_inline
+def c_cos(x: Float64) -> Float64:
+    return external_call["cos", Float64](x)
 
 
 @always_inline
@@ -77,6 +78,11 @@ def c_sqrt(x: Float64) -> Float64:
 @always_inline
 def c_floor(x: Float64) -> Float64:
     return _floor(x)
+
+
+@always_inline
+def c_ceil(x: Float64) -> Float64:
+    return _ceil(x)
 
 
 @always_inline

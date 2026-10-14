@@ -23,3 +23,30 @@ comptime masse: Float64 = 0.511e-3
 comptime tdec_pipm: Float64 = 2.6033e-8
 comptime c0: Float64 = 3.0e10
 comptime mubarn: Float64 = 1.0e-30
+
+# ============================================================================
+# Constants of the processes am3_mojo adds to AM3
+# ============================================================================
+# neutron decay (PDG 2026, with its CODATA 2022 masses): neutron and proton
+# masses [GeV], neutron mean life [s] and the fine-structure constant (for
+# the Coulomb correction of the beta spectrum). The proton mass also enters
+# s of the pp kaons, and alpha the unit alpha r_e^2 of the triplet cross
+# section. AM3's rounded nucleon masses massp, massn stay for its processes.
+comptime massN_PDG: Float64 = 0.93956542194
+comptime massP_PDG: Float64 = 0.93827208943
+comptime tdec_n: Float64 = 878.3
+comptime alpha_PDG: Float64 = 1.0 / 137.035999177
+# kaons (PDG 2026 fit values): masses [GeV] and mean lives [s] of K+- and
+# K0_S, K0_L.
+comptime massK: Float64 = 0.493677
+comptime tdec_K: Float64 = 1.2380e-8
+comptime massK0: Float64 = 0.497611
+comptime tdec_KS: Float64 = 8.954e-11
+comptime tdec_KL: Float64 = 5.116e-8
+# PDG 2026 masses [GeV] of the kaon decay products (the electron's also for
+# neutron decay), for the decay kinematics (physics/decays.mojo; AM3's
+# rounded masses above stay for its processes)
+comptime massPi_PDG: Float64 = 0.13957039
+comptime massPi0_PDG: Float64 = 0.1349768
+comptime massMu_PDG: Float64 = 0.1056583755
+comptime massE_PDG: Float64 = 0.51099895069e-3

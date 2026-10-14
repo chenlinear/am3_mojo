@@ -1,10 +1,9 @@
 """Thread-count selection for the parallel loops.
 
-Parallel sections use the Mojo runtime's worker pool through
-`std.runtime._asyncrt.TaskGroup` (the same mechanism that backs
-`parallelize()` in MAX). The number of tasks defaults to the runtime's
-parallelism level and can be overridden with the AM3_MOJO_THREADS
-environment variable (1 = fully serial).
+Parallel sections run on the Mojo runtime's worker pool through
+`std.runtime._asyncrt.TaskGroup`, the mechanism behind `parallelize()` in MAX.
+The number of tasks defaults to the runtime's parallelism level; the
+AM3_MOJO_THREADS environment variable overrides it (1 = fully serial).
 """
 
 from std.os import getenv

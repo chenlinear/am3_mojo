@@ -125,7 +125,6 @@ struct AM3Arrays(Copyable, Movable):
                     self.l2h_lo[i] = lo
                     self.l2h_w[i] = w
 
-
     def update_energy_grid_parameters(
         mut self, Egamma_min_eV: Float64, Enu_min_eV: Float64, E_max_eV: Float64
     ):
@@ -151,8 +150,13 @@ struct AM3Arrays(Copyable, Movable):
             c_log(1e9 / mec2_eV) / self.dlnE
         )
         self.nbins_pho_hadgrid = self.nbins_pho
-        self.ind_min_energy_pho_hadgrid = 1 + to_int(
-            c_log(1e9 / Egamma_min_eV) / self.dlnE
+        # as in the constructor, the photon grid is shifted like the lepton
+        # grid, which grid_lep2had / grid_had2lep assume. AM3 took
+        # 1 + int(ln(1e9 / Egamma_min) / dlnE), one more for 79 % of the values
+        # of Egamma_min, every power of ten among them, so that its photons on
+        # the hadron grid were labelled e^-dlnE times their energy: AM3 bug.
+        self.ind_min_energy_pho_hadgrid = (
+            self.ind_min_energy_lep_hadgrid + self.ind_min_energy_pho
         )
         self.index_BIN_KN = self.ind_min_energy_pho + to_int(
             c_log(1e3 / masse) / self.dlnE
@@ -160,8 +164,12 @@ struct AM3Arrays(Copyable, Movable):
 
     def nbins_of_particle(self, id: Int) -> Int:
         """Grid size of particle array `id`."""
-        if id < P_HAD_END:
+        if id < P_HAD_END or (id >= P_EXT_HAD_BEGIN and id < P_EXT_HAD_END):
             return self.nbins_had
+        if id >= P_EXT_LEP_BEGIN and id < P_EXT_LEP_END:
+            return self.nbins_lep
+        if id >= P_EXT_NU_BEGIN and id < P_EXT_NU_END:
+            return self.nbins_nu
         elif id < P_NU_END:
             return self.nbins_nu
         elif id < P_LEP_END:
@@ -173,23 +181,30 @@ struct AM3Arrays(Copyable, Movable):
         for id in range(P_COUNT):
             resize_zero(self.n[id], self.nbins_of_particle(id))
 
-    # ---------------- grid shifts between hadronic / leptonic origin -------------
+    # ---------------- grid shifts between hadronic / leptonic origin ----------
     @always_inline
     def grid_had2lep(self, i: Int, val: FPtr, nmin: Int, nmax: Int) -> Float64:
         """Value of `val` (on the hadron-anchored grid) at leptonic index i."""
         var lo = self.h2l_lo[i]
         if lo > nmin and lo < nmax - 1:
             var w = self.h2l_w[i]
-            return (1.0 - w) * val[unsafe_offset=lo] + w * val[unsafe_offset=lo + 1]
+            return (1.0 - w) * val[unsafe_offset=lo] + w * val[
+                unsafe_offset=lo + 1
+            ]
         return 0.0
 
     @always_inline
     def grid_lep2had(self, i: Int, val: FPtr, nmin: Int, nmax: Int) -> Float64:
-        """Value of `val` (on the lepton-anchored grid) at hadronic index i."""
+        """Value of `val` (on the lepton-anchored grid) at hadronic index i,
+        read in place with the index and weight computed once per grid (l2h_lo,
+        l2h_w). The C++ Grid_Lep2Had takes the whole spectrum by value: a copy
+        of its 620 values for each of the 620 bins it fills, every step."""
         var lo = self.l2h_lo[i]
         if lo > nmin and lo < nmax - 1:
             var w = self.l2h_w[i]
-            return (1.0 - w) * val[unsafe_offset=lo] + w * val[unsafe_offset=lo + 1]
+            return (1.0 - w) * val[unsafe_offset=lo] + w * val[
+                unsafe_offset=lo + 1
+            ]
         return 0.0
 
     def eV_to_lep_grid_index(self, E_eV: Float64) -> Int:

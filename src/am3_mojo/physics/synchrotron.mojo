@@ -1,7 +1,6 @@
 """Ports of Syn (electron/positron synchrotron, Synchrotron.cc) and SynP
 (proton/pion/muon synchrotron, HadronicSynchrotron.cc)."""
 
-from std.math import fma
 from am3_mojo.utils.parallel import parallel_run
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
@@ -25,7 +24,7 @@ def _syn_fdb_approx(norm: Float64, xbar: Float64, low_cut: Float64) -> Float64:
         var A3 = -0.68137283 * c_pow(y, 3.0)
         var A4 = -0.22754737 * c_pow(y, 4.0)
         var A5 = -0.031967334 * c_pow(y, 5.0)
-        return norm * c_exp10(A0 + A1 + A2 + A3 + A4 + A5) / 2.0
+        return norm * c_pow(10.0, A0 + A1 + A2 + A3 + A4 + A5) / 2.0
     elif 2.0 * xbar >= 1.0 and 2.0 * xbar < 10.0:
         var y = c_log10(2.0 * xbar)
         var A0 = -0.35842494
@@ -34,7 +33,7 @@ def _syn_fdb_approx(norm: Float64, xbar: Float64, low_cut: Float64) -> Float64:
         var A3 = 0.26055213 * c_pow(y, 3.0)
         var A4 = -1.6979017 * c_pow(y, 4.0)
         var A5 = 0.032955035 * c_pow(y, 5.0)
-        return norm * c_exp10(A0 + A1 + A2 + A3 + A4 + A5) / 2.0
+        return norm * c_pow(10.0, A0 + A1 + A2 + A3 + A4 + A5) / 2.0
     elif 2.0 * xbar >= 10.0 and 2.0 * xbar < 100.0:
         return (
             norm
@@ -47,20 +46,16 @@ def _syn_fdb_approx(norm: Float64, xbar: Float64, low_cut: Float64) -> Float64:
         return 0.0
 
 
-# The fused multiply-adds below mirror what clang emits for Synchrotron.cc
-# (llvm.fmuladd in its IR). The kernel is ill-conditioned: 1 - x*ksi cancels
-# near the kinematic limit and the step count of int_bk53m depends on the last
-# bit of z, so plain a*b+c rounding shifts QSyn emission by up to ~1e-8.
 def _I_Qsyn_mu_1(
     mu: Float64, b_ratio: Float64, gamma_e: Float64, epsilon: Float64
 ) -> Float64:
     var ksi0 = 1.5 * b_ratio * gamma_e
     var epsilon_c = 1.5 * b_ratio * gamma_e * gamma_e
     var x0 = epsilon / epsilon_c
-    var s = c_sqrt(fma(-mu, mu, 1.0))
+    var s = c_sqrt(1.0 - mu * mu)
     var x = x0 / s
     var ksi = ksi0 * s
-    var z = x / fma(-x, ksi, 1.0)
+    var z = x / (1.0 - x * ksi)
     if z <= 0.0:
         return 0.0
     var y1 = 0.0 if z > 1.0e3 else int_bessel_k53(z)
@@ -73,10 +68,10 @@ def _I_Qsyn_mu_2(
     var ksi0 = 1.5 * b_ratio * gamma_e
     var epsilon_c = 1.5 * b_ratio * gamma_e * gamma_e
     var x0 = epsilon / epsilon_c
-    var s = c_sqrt(fma(-mu, mu, 1.0))
+    var s = c_sqrt(1.0 - mu * mu)
     var x = x0 / s
     var ksi = ksi0 * s
-    var z = x / fma(-x, ksi, 1.0)
+    var z = x / (1.0 - x * ksi)
     if z <= 0.0:
         return 0.0
     var y2 = 0.0 if z > 1.0e2 else x * ksi * ksi * z * gsl_bessel_Knu(
@@ -104,13 +99,13 @@ def _rk4_mu[
         var v4: Float64
         comptime if which == 1:
             v1 = _I_Qsyn_mu_1(x, b, g, e)
-            v2 = _I_Qsyn_mu_1(fma(diff_x, 0.5, x), b, g, e)
+            v2 = _I_Qsyn_mu_1(x + 0.5 * diff_x, b, g, e)
             v4 = _I_Qsyn_mu_1(x + diff_x, b, g, e)
         else:
             v1 = _I_Qsyn_mu_2(x, b, g, e)
-            v2 = _I_Qsyn_mu_2(fma(diff_x, 0.5, x), b, g, e)
+            v2 = _I_Qsyn_mu_2(x + 0.5 * diff_x, b, g, e)
             v4 = _I_Qsyn_mu_2(x + diff_x, b, g, e)
-        y += fma(v1 + v4, 1.0 / 6.0, v2 * (2.0 / 3.0))
+        y += (v1 + 4.0 * v2 + v4) / 6.0
         x += diff_x
     y *= diff_x
     return y
@@ -221,7 +216,7 @@ struct Syn(Copyable, Movable):
             -0.99, 0.99, N_INTG, b_ratio, gamma_e, epsilon
         )
         var last_bin_avg = (
-            fma(c_pow(eta_0 * bin_width, 2.0 / 3.0), 2.712, -4.947)
+            (2.712 * c_pow(eta_0 * bin_width, 2.0 / 3.0) - 4.947)
             / bin_width
             / (2.0 * eta_0)
         )
@@ -283,7 +278,7 @@ struct Syn(Copyable, Movable):
             var x = SIMD[DType.float64, WD](0)
             for j in range(1, nl - 1):
                 var k = K.unsafe_offset(j * npho + i).unsafe_load[width=WD]()
-                x = k.fma(SIMD[DType.float64, WD](EPX[unsafe_offset=j]), x)
+                x += k * EPX[unsafe_offset=j]
             var e = ep.unsafe_offset(i).unsafe_load[width=WD]()
             var v = coef * x / e / e
             out_.unsafe_offset(i).unsafe_store(
@@ -293,7 +288,7 @@ struct Syn(Copyable, Movable):
         while i < npho:
             var x = 0.0
             for j in range(1, nl - 1):
-                x = fma(K[unsafe_offset=j * npho + i], EPX[unsafe_offset=j], x)
+                x += K[unsafe_offset=j * npho + i] * EPX[unsafe_offset=j]
             var v = coef * x / ep[unsafe_offset=i] / ep[unsafe_offset=i]
             out_[unsafe_offset=i] = v if v > 0.0 else 0.0
             i += 1
@@ -301,17 +296,18 @@ struct Syn(Copyable, Movable):
     def Calc_SY_Phot_Emit(
         self,
         dat: AM3Arrays,
-        outs: Array[FPtr, 6],
-        ins: Array[FPtr, 6],
+        outs: Array[FPtr, N_LEP_IN],
+        ins: Array[FPtr, N_LEP_IN],
         only_first: Bool,
     ):
         """V_phot_out_rate[m][i] = dlnE * sum_j K(i,j) V_elec_in[m][j]."""
+        comptime assert N_LEP_IN == 8, "the register block below has 8 inputs"
         if self.verbose:
             print("computing pair syn emission")
         var npho = dat.nbins_pho
         var nl = dat.nbins_lep
         var dl = dat.dlnE
-        for m in range(6):
+        for m in range(N_LEP_IN):
             for i in range(npho):
                 outs[m][unsafe_offset=i] = 0.0
         var K = self.KER_PsyU.ptr()
@@ -325,15 +321,13 @@ struct Syn(Copyable, Movable):
                     var z = K.unsafe_offset(j * npho + i).unsafe_load[
                         width=WD
                     ]()
-                    y = z.fma(SIMD[DType.float64, WD](e0[unsafe_offset=j]), y)
+                    y += z * e0[unsafe_offset=j]
                 o0.unsafe_offset(i).unsafe_store(dl * y)
                 i += WD
             while i < npho:
                 var y = 0.0
                 for j in range(1, nl - 1):
-                    y = fma(
-                        K[unsafe_offset=j * npho + i], e0[unsafe_offset=j], y
-                    )
+                    y += K[unsafe_offset=j * npho + i] * e0[unsafe_offset=j]
                 o0[unsafe_offset=i] = dl * y
                 i += 1
             return
@@ -346,30 +340,32 @@ struct Syn(Copyable, Movable):
             var y3 = SIMD[DType.float64, W](0)
             var y4 = SIMD[DType.float64, W](0)
             var y5 = SIMD[DType.float64, W](0)
+            var y6 = SIMD[DType.float64, W](0)
+            var y7 = SIMD[DType.float64, W](0)
             for j in range(1, nl - 1):
                 var z = K.unsafe_offset(j * npho + i).unsafe_load[width=W]()
-                y0 = z.fma(SIMD[DType.float64, W](ins[0][unsafe_offset=j]), y0)
-                y1 = z.fma(SIMD[DType.float64, W](ins[1][unsafe_offset=j]), y1)
-                y2 = z.fma(SIMD[DType.float64, W](ins[2][unsafe_offset=j]), y2)
-                y3 = z.fma(SIMD[DType.float64, W](ins[3][unsafe_offset=j]), y3)
-                y4 = z.fma(SIMD[DType.float64, W](ins[4][unsafe_offset=j]), y4)
-                y5 = z.fma(SIMD[DType.float64, W](ins[5][unsafe_offset=j]), y5)
+                y0 += z * ins[0][unsafe_offset=j]
+                y1 += z * ins[1][unsafe_offset=j]
+                y2 += z * ins[2][unsafe_offset=j]
+                y3 += z * ins[3][unsafe_offset=j]
+                y4 += z * ins[4][unsafe_offset=j]
+                y5 += z * ins[5][unsafe_offset=j]
+                y6 += z * ins[6][unsafe_offset=j]
+                y7 += z * ins[7][unsafe_offset=j]
             outs[0].unsafe_offset(i).unsafe_store(dl * y0)
             outs[1].unsafe_offset(i).unsafe_store(dl * y1)
             outs[2].unsafe_offset(i).unsafe_store(dl * y2)
             outs[3].unsafe_offset(i).unsafe_store(dl * y3)
             outs[4].unsafe_offset(i).unsafe_store(dl * y4)
             outs[5].unsafe_offset(i).unsafe_store(dl * y5)
+            outs[6].unsafe_offset(i).unsafe_store(dl * y6)
+            outs[7].unsafe_offset(i).unsafe_store(dl * y7)
             i += W
         while i < npho:
-            for m in range(6):
+            for m in range(N_LEP_IN):
                 var y = 0.0
                 for j in range(1, nl - 1):
-                    y = fma(
-                        K[unsafe_offset=j * npho + i],
-                        ins[m][unsafe_offset=j],
-                        y,
-                    )
+                    y += K[unsafe_offset=j * npho + i] * ins[m][unsafe_offset=j]
                 outs[m][unsafe_offset=i] = dl * y
             i += 1
 
@@ -380,9 +376,11 @@ struct SynP(Copyable, Movable):
     var epsilonsyP: Vec
     var epsilonsyPi: Vec
     var epsilonsyMu: Vec
+    var epsilonsyK: Vec
     var KER_PsyP: MatD
     var KER_PsyPi: MatD
     var KER_PsyMu: MatD
+    var KER_PsyK: MatD  # kaons (am3_mojo addition), allocated when needed
     var w_in: Vec
 
     def __init__(out self, rp: RunParams, dat: AM3Arrays, verbose: Bool):
@@ -390,9 +388,11 @@ struct SynP(Copyable, Movable):
         self.epsilonsyP = Vec()
         self.epsilonsyPi = Vec()
         self.epsilonsyMu = Vec()
+        self.epsilonsyK = Vec()
         self.KER_PsyP = MatD()
         self.KER_PsyPi = MatD()
         self.KER_PsyMu = MatD()
+        self.KER_PsyK = MatD()
         self.w_in = Vec()
         self.b_gauss = rp.mag_field
         self.clear_internal_arrays(dat)
@@ -402,14 +402,21 @@ struct SynP(Copyable, Movable):
         resize_zero(self.epsilonsyP, dat.nbins_pho)
         resize_zero(self.epsilonsyPi, dat.nbins_pho)
         resize_zero(self.epsilonsyMu, dat.nbins_pho)
+        resize_zero(self.epsilonsyK, dat.nbins_pho)
 
     def reinitialize_empty_kernels(mut self, dat: AM3Arrays):
         self.KER_PsyP = MatD(dat.nbins_pho, dat.nbins_had)
         self.KER_PsyPi = MatD(dat.nbins_pho, dat.nbins_had)
         self.KER_PsyMu = MatD(dat.nbins_pho, dat.nbins_had)
+        self.KER_PsyK = MatD()
 
     def initialize_kernels(
-        mut self, dat: AM3Arrays, rad_P: Bool, rad_Pi: Bool, rad_Mu: Bool
+        mut self,
+        dat: AM3Arrays,
+        rad_P: Bool,
+        rad_Pi: Bool,
+        rad_Mu: Bool,
+        rad_K: Bool,
     ):
         if rad_P:
             if self.verbose:
@@ -445,6 +452,19 @@ struct SynP(Copyable, Movable):
                         j,
                         self.syn_kernel_ultrarel(
                             dat.egrid_had_photons[i], dat.egrid_had[j], massmu
+                        ),
+                    )
+        if rad_K:
+            if self.verbose:
+                print("computing kaon syn. rad. kernel")
+            self.KER_PsyK = MatD(dat.nbins_pho, dat.nbins_had)
+            for i in range(dat.nbins_pho):
+                for j in range(dat.nbins_had):
+                    self.KER_PsyK.set(
+                        i,
+                        j,
+                        self.syn_kernel_ultrarel(
+                            dat.egrid_had_photons[i], dat.egrid_had[j], massK
                         ),
                     )
 
@@ -495,3 +515,14 @@ struct SynP(Copyable, Movable):
                 + dat.n[P_muon_minus_right][i]
             )
         gemv_d(self.KER_PsyMu, pd(self.w_in), dat.dlnE, pd(self.epsilonsyMu))
+
+    def Calc_SY_K(mut self, dat: AM3Arrays):
+        if self.verbose:
+            print("computing kaon syn emission")
+        if self.KER_PsyK.rows == 0:
+            fill_zero(self.epsilonsyK)
+            return
+        resize_zero(self.w_in, dat.nbins_had)
+        for i in range(dat.nbins_had):
+            self.w_in[i] = dat.n[P_kaon_plus][i] + dat.n[P_kaon_minus][i]
+        gemv_d(self.KER_PsyK, pd(self.w_in), dat.dlnE, pd(self.epsilonsyK))

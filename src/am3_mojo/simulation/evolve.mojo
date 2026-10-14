@@ -1,9 +1,8 @@
 """Table-driven evolution of particle species.
 
 Each `Evolution` row names a solver, the density it advances in place and the
-coefficient arrays it uses. A group of rows is independent (distinct solvers
-and densities), so the rows of a group run in parallel on the Mojo runtime's
-worker pool.
+coefficient arrays it uses. The rows of a group are independent (distinct
+solvers and densities), so they run in parallel on the Mojo worker pool.
 """
 
 from am3_mojo.utils.parallel import parallel_run
@@ -25,8 +24,8 @@ def vp(ref v: Vec) -> VPtr:
 
 @fieldwise_init
 struct Evolution(Copyable, ImplicitlyCopyable, Movable):
-    """One species update: `n[target] <- solver.evolve(c[a], c[A], c[q], n[target])`,
-    with cooling rates computed from the photon density `n[nphot]`."""
+    """One species update, with cooling rates from the photon density
+    `n[nphot]`: `n[target] <- solver.evolve(c[a], c[A], c[q], n[target])`."""
 
     var solver: Int
     var target: Int

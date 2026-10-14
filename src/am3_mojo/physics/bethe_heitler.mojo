@@ -1,6 +1,12 @@
-"""Port of BetheHeitler (BetheHeitler.cc): p + gamma -> p + e+ e-."""
+"""Port of BetheHeitler (BetheHeitler.cc): p + gamma -> p + e+ e-.
 
-from std.math import fma
+init_kernels builds the float32 pair-emission kernel densely (about 120 MB on
+the default grids). The first step packs it into its non-zero row windows
+(PackedGemvF), which the emission reads sequentially; the C++ code streams the
+dense kernel every step. The sums run only over the proton bins between the
+lowest and the highest that hold particles, and the worker threads share the
+outgoing lepton bins."""
+
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.buffers import *
@@ -180,8 +186,8 @@ struct BHInitJob(Movable):
 
 
 def bh_init_work(job: Pointer[BHInitJob, MutUntrackedOrigin], t: Int, nt: Int):
-    """Electron-generation kernel for outgoing lepton bins i = t*n_el_out, (t+nt)*n_el_out, ...
-    """
+    """Electron-generation kernel for the outgoing lepton bins
+    i = t*n_el_out, (t+nt)*n_el_out, ..."""
     ref J = job[]
     ref dat = J.dat[]
     var i = t * J.n_el_out
@@ -264,9 +270,7 @@ def bh_rad_work(job: Pointer[BHJob, MutUntrackedOrigin], t: Int, nt: Int):
         if phi > plo:
             J.K[].apply(i, J.v, Float32(1.0), res, plo, phi)
         for j in range(plo, phi):
-            x = fma(
-                Float64(res[unsafe_offset=j]), J.protons[unsafe_offset=j], x
-            )
+            x += Float64(res[unsafe_offset=j]) * J.protons[unsafe_offset=j]
         J.out_[unsafe_offset=i] = J.HaRN * x * J.dlnE * J.dlnE * J.k_inj
         i += nt * J.step
     _ = buf^
@@ -281,7 +285,7 @@ struct BetheHeitler(Copyable, Movable):
     var packed: PackedGemvF
     var sparse_valid: Bool
     var nthreads: Int
-    var sparse_prinmin: Int
+    var sparse_prinmin: Int  # first proton row of the kernel (init_kernels)
     var w_res: VecF
     var w_vphot: VecF
 
@@ -336,6 +340,7 @@ struct BetheHeitler(Copyable, Movable):
         photon_in_max: Int,
     ) raises:
         if rad != 0:
+            self.sparse_prinmin = max(proton_in_min, 0)
             if self.verbose:
                 print(
                     "computing BH e+/- generation kernel. Using n_el_out: ",
@@ -384,28 +389,39 @@ struct BetheHeitler(Copyable, Movable):
         for i in range(dat.nbins_lep):
             self.QBH_LGen[i] = 0.0
         var k_inj_rate = c0 * 3.0 / (16.0 * mathpi) * sigmaT / 137.0
-        var EigenHa = 1.0
-        var EigenRN = 1.0e-50
-        for k in range(phinmax):
-            EigenRN += dat.n[P_photons_on_had_grid][k]
-        self.w_vphot = zerosf(phinmax)
-        for k in range(phinmax):
-            self.w_vphot[k] = Float32(dat.n[P_photons_on_had_grid][k] / EigenRN)
+        # the kernel keeps the target photons of init_kernels: photons above a
+        # limit lowered since then count as zero (as for inverse Compton), and
+        # the photon vector covers every column the kernel reads
+        var ncols = self.packed.cols if self.sparse_valid else self.KER.cols
+        var n_now = min(ncols, phinmax)
+        var photon_norm = 1.0e-50
+        for k in range(n_now):
+            photon_norm += dat.n[P_photons_on_had_grid][k]
+        self.w_vphot = zerosf(ncols)
+        for k in range(n_now):
+            self.w_vphot[k] = Float32(
+                dat.n[P_photons_on_had_grid][k] / photon_norm
+            )
         if self.KER.nmat == 0:
             return
-        if not self.sparse_valid or self.sparse_prinmin != prinmin:
-            if self.KER.rows == 0:
-                # the dense kernel was released after packing for another
-                # prinmin; rows below the old limit are not available
-                self.sparse_prinmin = prinmin
-            else:
-                var row_min = zerosi(self.KER.nmat)
-                for k in range(self.KER.nmat):
-                    row_min[k] = max(prinmin, 0)
-                self.packed = PackedGemvF(self.KER, row_min)
-                self.sparse_valid = True
-                self.sparse_prinmin = prinmin
-                self.KER = Mat3F(self.KER.nmat, 0, 0)
+        if not self.sparse_valid and self.KER.rows > 0:
+            # pack every row from the minimum proton energy of init_kernels,
+            # not of the first call, which would lose rows if the minimum were
+            # lowered later. The current minimum only bounds the sum below, as
+            # in the C++.
+            var row_min = zerosi(self.KER.nmat)
+            for k in range(self.KER.nmat):
+                row_min[k] = self.sparse_prinmin
+            self.packed = PackedGemvF(self.KER, row_min)
+            self.sparse_valid = True
+            self.KER = Mat3F(self.KER.nmat, 0, 0)
+        if not self.sparse_valid:
+            return
+        # the packed kernel reads the photon vector through an unchecked pointer
+        debug_assert(
+            len(self.w_vphot) >= self.packed.cols,
+            "Bethe-Heitler: photon vector shorter than the kernel",
+        )
         var job = BHJob(
             Pointer(to=self.packed).unsafe_origin_cast[MutUntrackedOrigin](),
             pf(self.w_vphot),
@@ -415,7 +431,7 @@ struct BetheHeitler(Copyable, Movable):
             dat.nbins_had,
             dat.nbins_lep // nelout,
             nelout,
-            EigenHa * EigenRN,
+            photon_norm,
             dat.dlnE,
             k_inj_rate,
         )
@@ -445,9 +461,9 @@ struct BetheHeitler(Copyable, Movable):
         var nh = self.KER_BH_LOSS.rows
         var ph = pd(dat.n[P_photons_on_had_grid])
         var nb = dat.nbins_had
-        # SIMD over protons j; photons i accumulated in the original order, a
-        # masked lane skips photons below threshold (Eph < 1/gp) exactly as the
-        # scalar `continue` does
+        # SIMD over protons j, photons i accumulated in the original order. A
+        # masked lane skips photons below threshold (Eph < 1/gp), exactly as
+        # the scalar `continue` does
         var j = 0
         while j < nb:
             comptime W = WD
@@ -460,10 +476,7 @@ struct BetheHeitler(Copyable, Movable):
                     var Eph = dat.egrid_had_photons[i] / masse
                     var keep = SIMD[DType.float64, W](Eph).ge(ginv)
                     var k = K.unsafe_offset(i * nh + j).unsafe_load[width=W]()
-                    var upd = k.fma(
-                        SIMD[DType.float64, W](ph[unsafe_offset=i]), rj
-                    )
-                    rj = keep.select(upd, rj)
+                    rj = keep.select(rj + k * ph[unsafe_offset=i], rj)
                 for l in range(W):
                     self.ABHHadP[j + l] = -rj[l] * k_rate_semiana * dat.dlnE
                 j += W
@@ -474,8 +487,6 @@ struct BetheHeitler(Copyable, Movable):
                     var Eph = dat.egrid_had_photons[i] / masse
                     if Eph < 1.0 / gp:
                         continue
-                    rj = fma(
-                        K[unsafe_offset=i * nh + j], ph[unsafe_offset=i], rj
-                    )
+                    rj += K[unsafe_offset=i * nh + j] * ph[unsafe_offset=i]
                 self.ABHHadP[j] = -rj * k_rate_semiana * dat.dlnE
                 j += 1

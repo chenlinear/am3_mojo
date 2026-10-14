@@ -1,4 +1,5 @@
-// Harness: the original AM3 Fic/polylog code, copied verbatim from src/Solver.cc
+// Harness: the AM3 Fic/polylog code, copied verbatim from src/Solver.cc with the
+// series fix of am3_fixes.patch (Fic_1, Fic_2: Jones' Taylor series to z^10)
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -20,12 +21,18 @@ double Fic(double gamma, double Eph_GeV)
 
 double Fic_1(double z)
 {
-	return z < 0.1 ? 8.0 / 9.0 * z * z * z - 14.0 / 5.0 * z * z * z * z + 196.0 / 25.0 * z * z * z * z * z : (z + 6.0 + 3.0 / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 24.0 * z * z + 18.0 * z + 4.0) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + 2.0 * polylog(-2.0 * z);
+	// am3_mojo fix: Jones' Taylor series to z^10 (his Table I); three terms are 2.4 % off at z = 0.1
+	if (z < 0.1)
+		return z * z * z * (8.0 / 9.0 + z * (-14.0 / 5.0 + z * (196.0 / 25.0 + z * (-6464.0 / 315.0 + z * (7520.0 / 147.0 + z * (-2584.0 / 21.0 + z * (116704.0 / 405.0 + z * (-1636352.0 / 2475.0))))))));
+	return (z + 6.0 + 3.0 / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 24.0 * z * z + 18.0 * z + 4.0) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + 2.0 * polylog(-2.0 * z);
 }
 
 double Fic_2(double z)
 {
-	return z < 0.1 ? 4.0 * z * z / 3.0 - 128.0 * z * z * z / 45.0 + 7.0 * z * z * z * z : (z + 31.0 / 6.0 + 5.0 / z + 3.0 / 2.0 / z / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 28.0 * z * z + 103.0 * z / 3.0 + 17.0 + 3.0 / z) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + polylog(-2.0 * z);
+	// am3_mojo fix: Jones' Taylor series to z^10 (his Table I); three terms are 1.2 % off at z = 0.1
+	if (z < 0.1)
+		return z * z * (4.0 / 3.0 + z * (-128.0 / 45.0 + z * (7.0 + z * (-8812.0 / 525.0 + z * (4112.0 / 105.0 + z * (-4384.0 / 49.0 + z * (63356.0 / 315.0 + z * (-397792.0 / 891.0 + z * (2427904.0 / 2475.0)))))))));
+	return (z + 31.0 / 6.0 + 5.0 / z + 3.0 / 2.0 / z / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 28.0 * z * z + 103.0 * z / 3.0 + 17.0 + 3.0 / z) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + polylog(-2.0 * z);
 }
 
 double polylog(double z)

@@ -5,17 +5,13 @@ import numpy as np
 import pytest
 
 from support.compare import kind
-from support.runs import cached_scenario
+from support.runs import cached_scenario, checkpoints
 from support.scenarios import SCENARIOS
 
 
 @pytest.fixture(scope='module', params=sorted(SCENARIOS))
 def run(request):
     return request.param, cached_scenario('mojo', request.param, rerun=True)
-
-
-def steps_of(npz):
-    return sorted({int(k.split('/')[0]) for k in npz.files})
 
 
 def test_fluxes_finite_and_non_negative(run):
@@ -27,7 +23,7 @@ def test_fluxes_finite_and_non_negative(run):
 
 def test_spectra_populated_and_evolving(run):
     name, npz = run
-    steps = steps_of(npz)
+    steps = checkpoints(npz)
     assert len(steps) >= 2
     first, last = steps[0], steps[-1]
     for getter in ('get_photons', 'get_pairs'):

@@ -7,7 +7,7 @@ run in the same virtual environment.
 
 usage: python -m pytest tests/unit/test_environment.py -v
 """
-import os, subprocess, sys, textwrap
+import json, os, subprocess, sys, textwrap
 
 from support.paths import ROOT, IMPLEMENTATIONS
 
@@ -51,7 +51,6 @@ def probe(tmp_path, extra_env=None):
     r = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, env=env,
                        cwd=ROOT, timeout=300)
     assert r.returncode == 0, r.stderr[-3000:]
-    import json
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 

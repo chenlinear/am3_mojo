@@ -1,25 +1,21 @@
 """PEP 517 build backend of am3_mojo (in-tree, see pyproject.toml).
 
-`pip install .` and `uv pip install .` call this backend. It
-compiles src/am3_mojo_module.mojo with the Mojo compiler of the build
-environment (the `mojo-compiler` package from PyPI) into the extension module
-`am3_mojo` and packs it into a wheel:
+`pip install .` and `uv pip install .` call it. It compiles
+src/am3_mojo_module.mojo into the extension module `am3_mojo` with the Mojo
+compiler of the build environment (the `mojo-compiler` package from PyPI), and
+packs it into a wheel:
 
-    am3_mojo.cpython-312-<platform>.so        (the module, at the top level)
+    am3_mojo.cpython-314-<platform>.so        (the module, at the top level)
     am3_mojo-<version>.dist-info/
 
-The module needs Mojo's runtime libraries (libKGENCompilerRTShared and the
-two libraries it loads), which the `mojo-compiler` package installs into
-<site-packages>/modular/lib. The wheel therefore depends on `mojo-compiler`
-and the module looks the libraries up relative to its own location
-(@loader_path/modular/lib on macOS, $ORIGIN/modular/lib on Linux) instead of
-the absolute path of the build environment.
+The module needs Mojo's runtime libraries (libKGENCompilerRTShared and the two
+it loads), which `mojo-compiler` installs into <site-packages>/modular/lib. So
+the wheel depends on `mojo-compiler`, and the module finds the libraries
+through an rpath relative to itself, not in the build environment.
 
-The module is compiled for the CPU of the machine that builds it (Mojo's
-default), so the wheel is meant to be installed on that machine only.
-
-Compiling needs a C compiler on the PATH, which Mojo uses to link (Xcode
-Command Line Tools on macOS, gcc or clang on Linux).
+The module is compiled for the building machine's CPU (Mojo's default), so the
+wheel is meant for that machine only. Mojo links with the C compiler on the
+PATH (Xcode Command Line Tools on macOS, gcc or clang on Linux).
 """
 import base64, csv, hashlib, io, os, re, subprocess, sys, sysconfig, tarfile, tempfile, zipfile
 
@@ -57,10 +53,10 @@ def _metadata(p):
 
 
 def _mojo():
-    """Command that runs the Mojo compiler of the build environment
-    (mojo-compiler==1.1.0), whatever Mojo may be on the PATH. It calls the
-    package's own `mojo` launcher through this interpreter, because pip keeps
-    the build environment's scripts in a directory that is not on sys.prefix."""
+    """Command that runs the build environment's Mojo compiler
+    (mojo-compiler==1.1.0), whatever Mojo is on the PATH. It calls the
+    package's own `mojo` launcher through this interpreter, as pip keeps the
+    build environment's scripts in a directory that is not on sys.prefix."""
     try:
         import mojo._entrypoints  # noqa: F401
     except ImportError:
@@ -86,7 +82,7 @@ def _compile(out_dir):
     ext = sysconfig.get_config_var('EXT_SUFFIX')
     so = os.path.join(out_dir, MODULE + ext)
     rpath = '@loader_path/modular/lib' if sys.platform == 'darwin' else '$ORIGIN/modular/lib'
-    cmd = _mojo() + ['build', '-D', 'ASSERT=none', '--fp-mode', 'contract=off', '--emit', 'shared-lib',
+    cmd = _mojo() + ['build', '-D', 'ASSERT=none', '--emit', 'shared-lib',
            '-I', os.path.join(ROOT, 'src'), os.path.join(ROOT, 'src', 'am3_mojo_module.mojo'), '-o', so,
            '-Xlinker', '-rpath', '-Xlinker', rpath]
     print('compiling am3_mojo:', ' '.join(cmd), file=sys.stderr)
@@ -163,10 +159,14 @@ def build_sdist(sdist_directory, config_settings=None):
     base = f'{_dist_name(p)}-{p["version"]}'
     path = os.path.join(sdist_directory, base + '.tar.gz')
     include = ['pyproject.toml', 'README.md', 'LICENSE', 'src', 'tools']
+    skip = ('__pycache__', '.DS_Store')
+
+    def keep(ti):
+        return None if any(s in ti.name.split('/') for s in skip) else ti
+
     with tarfile.open(path, 'w:gz') as t:
         for item in include:
-            t.add(os.path.join(ROOT, item), arcname=f'{base}/{item}',
-                  filter=lambda ti: None if '__pycache__' in ti.name else ti)
+            t.add(os.path.join(ROOT, item), arcname=f'{base}/{item}', filter=keep)
         info = tarfile.TarInfo(f'{base}/PKG-INFO')
         data = _metadata(p).encode()
         info.size = len(data)

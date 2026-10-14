@@ -1,6 +1,6 @@
-"""Port of PhotoPion (PhotoPion.cc): p/n + gamma -> pions (Hümmer et al. 2010)."""
+"""Port of PhotoPion (PhotoPion.cc): p/n + gamma -> pions (Hümmer et al. 2010),
+plus kaon production (am3_mojo addition, `kaon_production_channels`)."""
 
-from std.math import fma
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.buffers import *
@@ -66,9 +66,202 @@ def pg_fdir(it: Int, y: Float64) -> Float64:
     return (pg_Idir(it, IT2Ex(it)) - pg_Idir(it, IT2Em(it))) / (2.0 * y * y)
 
 
-struct PGConvJob(Movable):
-    """res[c * nh + i] = sum_j H_c[i + vlo + j] v[j] for the photo-pion channels.
+# ---------------------------------------------------------------------------
+# kaon production (am3_mojo addition)
+# ---------------------------------------------------------------------------
+struct KChannel(Copyable, Movable):
+    """Kaon production channel in the framework of Hümmer et al. (2010).
+
+    sigma [mubarn]: constant cross section for the photon energies emin - emax
+    [GeV] in the nucleon rest frame. mp[s], mn[s]: multiplicities of kaon
+    species s from protons and neutrons, with the fractions chi_p[s] and
+    chi_n[s] of the nucleon energy. mtype >= 0: part of multi-pion type
+    M(mtype + 1) of Hümmer et al.'s Table 6 (photopion_tables IT3 entries
+    2 mtype and 2 mtype + 1), over all or part of the type's photon range."""
+
+    var sigma: Float64
+    var emin: Float64
+    var emax: Float64
+    var chi_p: Array[Float64, N_KAON]
+    var chi_n: Array[Float64, N_KAON]
+    var mp: Array[Float64, N_KAON]
+    var mn: Array[Float64, N_KAON]
+    var mtype: Int
+
+    def __init__(
+        out self,
+        sigma: Float64,
+        emin: Float64,
+        emax: Float64,
+        chi_p: Array[Float64, N_KAON],
+        chi_n: Array[Float64, N_KAON],
+        mp: Array[Float64, N_KAON],
+        mn: Array[Float64, N_KAON],
+        mtype: Int,
+    ):
+        self.sigma = sigma
+        self.emin = emin
+        self.emax = emax
+        self.chi_p = chi_p.copy()
+        self.chi_n = chi_n.copy()
+        self.mp = mp.copy()
+        self.mn = mn.copy()
+        self.mtype = mtype
+
+    def f(self, y: Float64) -> Float64:
+        """Response function f(y) = 1/(2 y^2) * integral of eps sigma(eps)
+        d eps up to eps = 2y (Hümmer et al. 2010, Eq. 27)."""
+        var e2 = 4.0 * y * y
+        if e2 < self.emin * self.emin:
+            return 0.0
+        var top = min(e2, self.emax * self.emax)
+        return self.sigma * (top - self.emin * self.emin) / e2
+
+
+def _species(
+    kp: Float64, km: Float64, k0: Float64, k0bar: Float64
+) -> Array[Float64, N_KAON]:
+    """Multiplicities of (K+, K-, K0_S, K0_L) from those of K+, K-, K0, anti-K0
+    (a K0 or anti-K0 is half K0_S, half K0_L)."""
+    var m: Array[Float64, N_KAON] = [
+        kp,
+        km,
+        0.5 * (k0 + k0bar),
+        0.5 * (k0 + k0bar),
+    ]
+    return m^
+
+
+def _per_charge(
+    k_charged: Float64, k_neutral: Float64
+) -> Array[Float64, N_KAON]:
+    """A value per kaon species (K+, K-, K0_S, K0_L) from those of the charged
+    and the neutral kaons."""
+    var v: Array[Float64, N_KAON] = [
+        k_charged,
+        k_charged,
+        k_neutral,
+        k_neutral,
+    ]
+    return v^
+
+
+def kaon_production_channels() -> List[KChannel]:
+    """Kaon production in photo-hadronic interactions (README, "Kaons"):
+
+    * two-body associated production N gamma -> K Y (Y = Lambda, Sigma) near
+      threshold, in six steps of the photon energy eps_r in the nucleon rest
+      frame: p -> K+ (K+ Lambda, K+ Sigma0) and K0 (K0 Sigma+), n -> K+
+      (K+ Sigma-) and K0 (K0 Lambda, K0 Sigma0). Cross sections [mubarn]: step
+      means of the data of SAPHIR (Glander et al. 2004; Lawall et al. 2005),
+      CLAS (McCracken et al. 2010; Dey et al. 2010; Anefalos Pereira et al.
+      2010; Compton et al. 2017) and A2 (Akondi et al. 2019). Beyond the data,
+      K0 Sigma0 above 1.36 GeV follows K0 Sigma+, scaled to the A2 data. The
+      first three steps refine the K+ channel of Hümmer et al. (2010,
+      Sec. 4.5). The measured fall-off replaces its constant 2.7 mubarn up to
+      the highest energies. chi: two-body kinematics (Hümmer et al. Eq. 16
+      with m_N -> m_Y, m_pi -> m_K) at the kaon's measured mean CM angle.
+      tests/support/measured/ky_angular.py computes both.
+    * kaons made with further particles (K Y pi, K anti-K N, ...) in the
+      multi-pion types M2 - M7 of Hümmer et al. (Table 6, same cross sections
+      and energy ranges). Their multiplicities follow from strangeness balance
+      and inclusive photo- and hadro-production data (SLAC hybrid facility at
+      20 GeV, Abe et al. 1985; M5 - M7: K/pi = 0.07 - 0.10, as in hadronic
+      collisions at higher energies). A low part has chi = 1.6 x that of the
+      type's low-energy pions (the kaon/pion transverse-mass ratio at
+      pT ~ 0.35 GeV), a leading part that of its leading pions. Neutrons:
+      K+ <-> K0, K- <-> anti-K0.
+      M2 (0.9 - 1.5 GeV): kaons from 1.15 GeV, the threshold of
+      gamma N -> K Lambda pi (1.152 - 1.168 GeV for the four charge states),
+      at the middle of the measured three-body cross sections (SAPHIR,
+      CBELSA/TAPS, ABBHHM;
+      tests/literature_checks/kaon_production/multibody_strangeness.py).
+      M3 (1.5 - 5 GeV), where the yields rise most, has two steps
+      (1.5 - 2.5, 2.5 - 5 GeV): the middle of the ranges from the
+      strange-particle events of the ABBHHM bubble chamber (Erbe et al. 1969)
+      and the cross sections measured with a hyperon and further particles at
+      1.5 - 2.5 GeV (ABBHHM; SAPHIR, Schulday et al. 2010; CBELSA/TAPS, Nanova
+      et al. 2008), times 1.21 and 1.32. The SLAC bubble chamber and DESY
+      count more visible strange-particle decays than ABBHHM. The factors are
+      the middle of the three experiments' range, raised to the least DESY
+      allows (multibody_strangeness.py).
+      M4 (5 - 50 GeV) has two steps too (5 - 15, 15 - 50 GeV), on the line in
+      log eps_r through M3 at 2.5 - 5 GeV and the kaons that balance the
+      strange particles measured at 20 GeV (Abe et al. 1985; the K0 share of
+      the kaons with a Lambda from its K0_S Lambda pairs). The low part's chi,
+      1.8 and 0.93 x that of the type's low-energy pions, gives the K0_S the
+      mean energy fraction measured there (Abe et al. 1984), taken to each
+      step's middle (m4_steps.py).
     """
+    var c = List[KChannel]()
+    # (emin, emax [GeV]; chi of p -> K+, p -> K0, n -> K+, n -> K0; cross
+    # sections [mubarn] of p -> K+, p -> K0, n -> K+, n -> K0)
+    var ky: List[Array[Float64, 10]] = [
+        [0.91, 1.05, 0.30, 0.30, 0.30, 0.34, 1.31, 0.0, 0.0, 0.81],
+        [1.05, 1.25, 0.29, 0.32, 0.29, 0.35, 3.00, 0.31, 0.49, 1.78],
+        [1.25, 1.65, 0.29, 0.30, 0.30, 0.33, 4.09, 0.55, 1.28, 1.89],
+        [1.65, 2.2, 0.26, 0.29, 0.29, 0.29, 2.44, 0.26, 1.03, 0.80],
+        [2.2, 3.0, 0.23, 0.30, 0.29, 0.27, 1.25, 0.083, 0.90, 0.28],
+        [3.0, 5.0, 0.19, 0.23, 0.22, 0.19, 0.44, 0.030, 0.39, 0.10],
+    ]
+    for r in ky:
+        # unit cross section, the per-species cross sections as multiplicities
+        c.append(
+            KChannel(
+                1.0,
+                r[0],
+                r[1],
+                _per_charge(r[2], r[3]),
+                _per_charge(r[4], r[5]),
+                _species(r[6], 0.0, r[7], 0.0),
+                _species(r[8], 0.0, r[9], 0.0),
+                -1,
+            )
+        )
+    # multi-pion types (index t: M(t + 1)) in steps eps_min - eps_max [GeV] of
+    # the photon energy: kaons per interaction from protons (K+, K0, K-,
+    # anti-K0), leading fractions h+ (K+, K0) and h- (K-, anti-K0), and the
+    # other kaons' energy fraction in units of the type's low-energy pions'
+    var mpi: List[Array[Float64, 10]] = [
+        [1.0, 1.15, 1.5, 0.0051, 0.0060, 0.0, 0.0, 0.25, 0.15, 1.6],
+        [2.0, 1.5, 2.5, 0.0278, 0.0206, 0.0030, 0.0034, 0.25, 0.15, 1.6],
+        [2.0, 2.5, 5.0, 0.0585, 0.0449, 0.0214, 0.0201, 0.25, 0.15, 1.6],
+        [3.0, 5.0, 15.0, 0.0935, 0.0687, 0.0468, 0.0461, 0.15, 0.09, 1.8],
+        [3.0, 15.0, 50.0, 0.1316, 0.0988, 0.0794, 0.0796, 0.15, 0.09, 0.93],
+        [4.0, 50.0, 500.0, 0.185, 0.170, 0.140, 0.135, 0.07, 0.04, 1.6],
+        [5.0, 500.0, 5000.0, 0.350, 0.335, 0.300, 0.295, 0.05, 0.03, 1.6],
+        [6.0, 5000.0, 5.0e6, 0.575, 0.560, 0.520, 0.515, 0.035, 0.02, 1.6],
+    ]
+    for r in mpi:
+        var t = Int(r[0])
+        var kp = r[3]
+        var k0 = r[4]
+        var km = r[5]
+        var k0b = r[6]
+        for lead in range(2):
+            var it = 2 * t + lead  # IT3 entry: L (lead = 0) or H (lead = 1)
+            var hp = r[7] if lead == 1 else 1.0 - r[7]
+            var hm = r[8] if lead == 1 else 1.0 - r[8]
+            var chi = IT3kai(it) if lead == 1 else r[9] * IT3kai(it)
+            c.append(
+                KChannel(
+                    IT3sig(it),
+                    r[1],
+                    r[2],
+                    _per_charge(chi, chi),
+                    _per_charge(chi, chi),
+                    _species(hp * kp, hm * km, hp * k0, hm * k0b),
+                    _species(hp * k0, hm * k0b, hp * kp, hm * km),
+                    t,
+                )
+            )
+    return c^
+
+
+struct PGConvJob(Movable):
+    """res[c * nh + i] = sum_j H_c[i + vlo + j] v[j] for the channels c.
+
+    One job runs the photo-pion channels, a second one the kaon channels."""
 
     var H: FPtr
     var res: FPtr
@@ -79,6 +272,7 @@ struct PGConvJob(Movable):
     var nv: Int
     var hlo: IPtr
     var hhi: IPtr
+    var nch: Int
 
     def __init__(
         out self,
@@ -91,6 +285,7 @@ struct PGConvJob(Movable):
         nv: Int,
         hlo: IPtr,
         hhi: IPtr,
+        nch: Int,
     ):
         self.H = H
         self.res = res
@@ -101,12 +296,13 @@ struct PGConvJob(Movable):
         self.nv = nv
         self.hlo = hlo
         self.hhi = hhi
+        self.nch = nch
 
 
 def pg_conv_work(job: Pointer[PGConvJob, MutUntrackedOrigin], t: Int, nt: Int):
     ref J = job[]
     var c = t
-    while c < N_PG_CHANNELS:
+    while c < J.nch:
         # the table row shifted by vlo, so that column 0 is target bin vlo
         diagonal_gemv[True](
             J.H.unsafe_offset(c * J.nhk + J.vlo),
@@ -131,10 +327,10 @@ struct PhotoPion(Copyable, Movable):
     var qpip: Vec
     var qpim: Vec
     var afPG_Rad: Vec
-    # Pion-production channels (28 resonance, 9 direct, 14 multi-pion). Every
-    # kernel entry depends on gamma_p * eps = exp((i + j) dlnE) / m_p, i.e. on
-    # i + j only (Hankel form), so channel c is stored as one vector
-    # H[c * nhk + m], m = i + j (proton bin i, target photon bin j).
+    # Pion-production channels (28 resonance, 9 direct, 14 multi-pion). A
+    # kernel entry depends only on m = i + j (proton bin i, target photon bin
+    # j), through gamma_p * eps = exp(m dlnE) / m_p (Hankel form), so channel
+    # c is one vector H[c * nhk + m].
     var ncols: Int
     var nhk: Int
     var H: Vec
@@ -144,9 +340,25 @@ struct PhotoPion(Copyable, Movable):
     var nthreads: Int
     # channel results res[c * nbins_had + i] = sum_j K_c(i, j) v_j
     var res: Vec
+    # kaon production channels (same Hankel form), built at init_kernels when
+    # kaons are switched on (kaons_built); the manager sets `kaons` (set_kaons)
+    var kaons: Bool
+    var kaons_built: Bool
+    var kchan: List[KChannel]
+    var HK: Vec
+    var hloK: VecI
+    var hhiK: VecI
+    var resK: Vec
+    var qK: List[Vec]  # source of kaon species s (model/particles.mojo)
+    # with kaons: share of its multi-pion type's pion energy that the kaons of
+    # channel c take (protons, neutrons; 0 for two-body ones; _set_pion_cuts)
+    var pion_cut_p: Vec
+    var pion_cut_n: Vec
+    var w_res_p: Vec  # a multi-pion entry's response less these shares
+    var w_res_n: Vec
     var KER_FPGapn: MatD  # (nbins_had x nbins_pho)
     var KER_FPGara: MatD  # (nbins_pho x nbins_had)
-    var EigenRN: Float64
+    var photon_norm: Float64
     var w_vphot: Vec
     var w_in: Vec
 
@@ -168,17 +380,34 @@ struct PhotoPion(Copyable, Movable):
         self.kern_valid = False
         self.nthreads = 1
         self.res = zeros(dat.nbins_had * N_PG_CHANNELS)
+        self.kaons = False
+        self.kaons_built = False
+        self.kchan = kaon_production_channels()
+        self.pion_cut_p = Vec()
+        self.pion_cut_n = Vec()
+        self.w_res_p = Vec()
+        self.w_res_n = Vec()
+        self.HK = Vec()
+        self.hloK = VecI()
+        self.hhiK = VecI()
+        self.resK = Vec()
+        self.qK = List[Vec]()
+        for _ in range(N_KAON):
+            self.qK.append(Vec())
         self.KER_FPGapn = MatD()
         self.KER_FPGara = MatD()
-        self.EigenRN = 0.0
+        self.photon_norm = 0.0
         self.w_vphot = Vec()
         self.w_in = Vec()
+        self._set_pion_cuts()
         self.clear_internal_arrays(dat)
 
     def clear_internal_arrays(mut self, dat: AM3Arrays):
         resize_zero(self.qpi0, dat.nbins_had)
         resize_zero(self.qpip, dat.nbins_had)
         resize_zero(self.qpim, dat.nbins_had)
+        for s in range(N_KAON):
+            resize_zero(self.qK[s], dat.nbins_had)
         resize_zero(self.QPG_PROGen, dat.nbins_had)
         resize_zero(self.QPG_NTRGen, dat.nbins_had)
         resize_zero(self.afPG_PRO, dat.nbins_had)
@@ -192,6 +421,13 @@ struct PhotoPion(Copyable, Movable):
         self.kern_valid = False
         if len(self.res) != dat.nbins_had * N_PG_CHANNELS:
             self.res = zeros(dat.nbins_had * N_PG_CHANNELS)
+        # no kaon kernels until initialize_kernels builds them for this grid
+        self.HK = Vec()
+        self.hloK = VecI()
+        self.hhiK = VecI()
+        self.resK = Vec()
+        self.kaons_built = False
+        self.set_kaons(False)
         self.KER_FPGapn = MatD(dat.nbins_had, dat.nbins_pho)
         self.KER_FPGara = MatD(dat.nbins_pho, dat.nbins_had)
 
@@ -205,6 +441,12 @@ struct PhotoPion(Copyable, Movable):
             return pg_fdir(c - 28, y)
         return IT3sig(c - 37) * pg_fmult(c - 37, y)
 
+    def set_kaons(mut self, active: Bool):
+        """Kaons are made in this step if `active` and their kernels are
+        built; the pion yields of the multi-pion types follow
+        (Calc_PhotoPion_Rad)."""
+        self.kaons = active and self.kaons_built
+
     def initialize_kernels(
         mut self,
         dat: AM3Arrays,
@@ -212,6 +454,7 @@ struct PhotoPion(Copyable, Movable):
         cool: Int,
         photonLoss: Int,
         photon_in_max: Int,
+        build_kaons: Bool,
     ):
         if rad != 0:
             if self.verbose:
@@ -231,20 +474,27 @@ struct PhotoPion(Copyable, Movable):
             self.hlo = zerosi(N_PG_CHANNELS)
             self.hhi = zerosi(N_PG_CHANNELS)
             for c in range(N_PG_CHANNELS):
-                var lo = self.nhk
-                var hi = 0
-                for m in range(self.nhk):
-                    var i = min(m, nh - 1)
-                    var y = (dat.egrid_had[i] / massp) * dat.egrid_had_photons[
-                        m - i
-                    ]
-                    var v = PhotoPion.channel_value(c, y)
-                    self.H[c * self.nhk + m] = v
-                    if v != 0.0:
-                        lo = min(lo, m)
-                        hi = m + 1
-                self.hlo[c] = lo
-                self.hhi[c] = hi
+                PhotoPion._fill_channel(
+                    dat, self.nhk, c, -1, self.kchan, self.H, self.hlo, self.hhi
+                )
+            if build_kaons:
+                var nk = len(self.kchan)
+                self.HK = zeros(nk * self.nhk)
+                self.hloK = zerosi(nk)
+                self.hhiK = zerosi(nk)
+                self.resK = zeros(nk * nh)
+                for c in range(nk):
+                    PhotoPion._fill_channel(
+                        dat,
+                        self.nhk,
+                        c,
+                        c,
+                        self.kchan,
+                        self.HK,
+                        self.hloK,
+                        self.hhiK,
+                    )
+                self.kaons_built = True
             self.kern_valid = True
         var co = c0 * dat.dlnE * mubarn
         if cool != 0:
@@ -269,6 +519,66 @@ struct PhotoPion(Copyable, Movable):
                         i,
                         self.KER_FPGara.get(j, i) + self._loss_kernel(yg, co),
                     )
+
+    def _set_pion_cuts(mut self):
+        """Hümmer et al.'s multi-pion types put the whole inelastic energy into
+        pions (their fractions reproduce SOPHIA's). The kaons of channel c of
+        type t take E_K = sum chi * M_K of the nucleon energy, the type's pions
+        E_pi = sum chi * M_pi. To keep the energy, Calc_PhotoPion_Rad leaves
+        out the share E_K / E_pi of the type's pions in the channel's photon
+        energies."""
+        var n = len(self.kchan)
+        self.pion_cut_p = zeros(n)
+        self.pion_cut_n = zeros(n)
+        for c in range(n):
+            var t = self.kchan[c].mtype
+            if t < 0:
+                continue
+            var e_pi_p = 0.0
+            var e_pi_n = 0.0
+            for it in range(2 * t, 2 * t + 2):
+                e_pi_p += IT3kai(it) * (
+                    IT3MpPi0(it) + IT3MpPip(it) + IT3MpPim(it)
+                )
+                e_pi_n += IT3kai(it) * (
+                    IT3MnPi0(it) + IT3MnPip(it) + IT3MnPim(it)
+                )
+            var e_k_p = 0.0
+            var e_k_n = 0.0
+            for s in range(N_KAON):
+                e_k_p += self.kchan[c].chi_p[s] * self.kchan[c].mp[s]
+                e_k_n += self.kchan[c].chi_n[s] * self.kchan[c].mn[s]
+            self.pion_cut_p[c] = e_k_p / e_pi_p
+            self.pion_cut_n[c] = e_k_n / e_pi_n
+
+    @staticmethod
+    def _fill_channel(
+        dat: AM3Arrays,
+        nhk: Int,
+        c: Int,
+        kaon: Int,
+        kchan: List[KChannel],
+        mut H: Vec,
+        mut hlo: VecI,
+        mut hhi: VecI,
+    ):
+        """Hankel vector H[c * nhk + m] of channel c, m = i + j (kaon >= 0:
+        kaon production channel kchan[kaon])."""
+        var nh = dat.nbins_had
+        var lo = nhk
+        var hi = 0
+        for m in range(nhk):
+            var i = min(m, nh - 1)
+            var y = (dat.egrid_had[i] / massp) * dat.egrid_had_photons[m - i]
+            var v = kchan[kaon].f(y) if kaon >= 0 else PhotoPion.channel_value(
+                c, y
+            )
+            H[c * nhk + m] = v
+            if v != 0.0:
+                lo = min(lo, m)
+                hi = m + 1
+        hlo[c] = lo
+        hhi[c] = hi
 
     def _loss_kernel(self, yg: Float64, co: Float64) -> Float64:
         """Sum over the channels that change the nucleon (loss rate kernel)."""
@@ -312,20 +622,26 @@ struct PhotoPion(Copyable, Movable):
             self.w_in[i] = dat.n[P_protons][i] + dat.n[P_neutrons][i]
         gemv_d(self.KER_FPGara, pd(self.w_in), 1.0, pd(self.afPG_Rad))
 
-    def Calc_PhotoPion_PhotonConvolution(mut self, dat: AM3Arrays):
+    def Calc_PhotoPion_PhotonConvolution(
+        mut self, dat: AM3Arrays, phinmax: Int
+    ):
         """Channel responses res[c, i] = sum_j K_c(i, j) v_j to the normalised
-        target photon field v (Hankel products)."""
+        target photon field v (Hankel products). The kernels keep the photon
+        range of init_kernels. If `phinmax` was lowered since, the photons
+        above it count as zero."""
         if self.verbose:
             print("computing photo-pion photon-convolution")
         var nc = self.ncols
-        self.EigenRN = 1.0e-50
-        for k in range(nc):
-            self.EigenRN += dat.n[P_photons_on_had_grid][k]
+        var n_now = min(nc, phinmax)
+        self.photon_norm = 1.0e-50
+        for k in range(n_now):
+            self.photon_norm += dat.n[P_photons_on_had_grid][k]
         resize_zero(self.w_vphot, nc)
-        for k in range(nc):
-            self.w_vphot[k] = dat.n[P_photons_on_had_grid][k] / self.EigenRN
+        for k in range(n_now):
+            self.w_vphot[k] = dat.n[P_photons_on_had_grid][k] / self.photon_norm
         if not self.kern_valid:
             fill_zero(self.res)
+            fill_zero(self.resK)
             return
         # only target bins [vlo, vhi) hold photons
         var vlo = nc
@@ -336,6 +652,7 @@ struct PhotoPion(Copyable, Movable):
                 vhi = k + 1
         if vhi <= vlo:
             fill_zero(self.res)
+            fill_zero(self.resK)
             return
         var job = PGConvJob(
             pd(self.H),
@@ -347,8 +664,25 @@ struct PhotoPion(Copyable, Movable):
             vhi - vlo,
             pi_(self.hlo),
             pi_(self.hhi),
+            N_PG_CHANNELS,
         )
         parallel_run[pg_conv_work](job, self.nthreads)
+        if self.kaons and len(self.resK) == len(self.kchan) * dat.nbins_had:
+            var jobK = PGConvJob(
+                pd(self.HK),
+                pd(self.resK),
+                pd(self.w_vphot).unsafe_offset(vlo),
+                self.nhk,
+                dat.nbins_had,
+                vlo,
+                vhi - vlo,
+                pi_(self.hloK),
+                pi_(self.hhiK),
+                len(self.kchan),
+            )
+            parallel_run[pg_conv_work](
+                jobK, min(self.nthreads, len(self.kchan))
+            )
 
     def _reinj_channel(
         mut self,
@@ -374,7 +708,7 @@ struct PhotoPion(Copyable, Movable):
         var prot = pd(dat.n[P_protons])
         var neut = pd(dat.n[P_neutrons])
         for i in range(nh):
-            var rco = co * self.EigenRN * res_c[unsafe_offset=i]
+            var rco = co * self.photon_norm * res_c[unsafe_offset=i]
             var p_i = p + i
             var p_i1 = p_i + 1
             var npr = pr * rco
@@ -458,7 +792,7 @@ struct PhotoPion(Copyable, Movable):
         var prot = pd(dat.n[P_protons])
         var neut = pd(dat.n[P_neutrons])
         for i in range(nh):
-            var rco = co * self.EigenRN * res_c[unsafe_offset=i]
+            var rco = co * self.photon_norm * res_c[unsafe_offset=i]
             var qi = q + i
             var qi1 = qi + 1
             var nqr = qr * rco
@@ -472,6 +806,46 @@ struct PhotoPion(Copyable, Movable):
                 QP[unsafe_offset=qi1] += nqr * (pi_ * MpPip + ni * MnPip)
                 QM[unsafe_offset=qi] += vqr * (pi_ * MpPim + ni * MnPim)
                 QM[unsafe_offset=qi1] += nqr * (pi_ * MpPim + ni * MnPim)
+
+    def _rad_channel_pn(
+        mut self,
+        dat: AM3Arrays,
+        kai: Float64,
+        res_p: FPtr,
+        res_n: FPtr,
+        MpPi0: Float64,
+        MnPi0: Float64,
+        MpPip: Float64,
+        MnPip: Float64,
+        MpPim: Float64,
+        MnPim: Float64,
+        co: Float64,
+    ):
+        """As _rad_channel, with the response res_p for protons and res_n for
+        neutrons."""
+        var q: Int
+        var qr: Float64
+        q, qr = number_split(c_log(kai) / dat.dlnE, dat.dlnE)
+        var nh = dat.nbins_had
+        var Q0 = pd(self.qpi0)
+        var QP = pd(self.qpip)
+        var QM = pd(self.qpim)
+        var prot = pd(dat.n[P_protons])
+        var neut = pd(dat.n[P_neutrons])
+        var f = co * self.photon_norm
+        for i in range(max(0, -q), min(nh, nh - 1 - q)):
+            var wp = f * res_p[unsafe_offset=i] * prot[unsafe_offset=i]
+            var wn = f * res_n[unsafe_offset=i] * neut[unsafe_offset=i]
+            var s0 = wp * MpPi0 + wn * MnPi0
+            var sp = wp * MpPip + wn * MnPip
+            var sm = wp * MpPim + wn * MnPim
+            var qi = q + i
+            Q0[unsafe_offset=qi] += (1.0 - qr) * s0
+            Q0[unsafe_offset=qi + 1] += qr * s0
+            QP[unsafe_offset=qi] += (1.0 - qr) * sp
+            QP[unsafe_offset=qi + 1] += qr * sp
+            QM[unsafe_offset=qi] += (1.0 - qr) * sm
+            QM[unsafe_offset=qi + 1] += qr * sm
 
     def Calc_PhotoPion_Rad(mut self, dat: AM3Arrays):
         if self.verbose:
@@ -509,11 +883,47 @@ struct PhotoPion(Copyable, Movable):
                 IT2MnPim(it),
                 co,
             )
+        var with_kaons = self.kaons and len(self.resK) == len(self.kchan) * nh
+        if with_kaons:
+            resize_zero(self.w_res_p, nh)
+            resize_zero(self.w_res_n, nh)
         for it in range(14):
-            self._rad_channel(
+            var res_it = r.unsafe_offset((37 + it) * nh)
+            if not with_kaons:
+                self._rad_channel(
+                    dat,
+                    IT3kai(it),
+                    res_it,
+                    IT3MpPi0(it),
+                    IT3MnPi0(it),
+                    IT3MpPip(it),
+                    IT3MnPip(it),
+                    IT3MpPim(it),
+                    IT3MnPim(it),
+                    co,
+                )
+                continue
+            # the type's kaons take their energy from its pions: fewer pions in
+            # each kaon channel's photon range (resK: its photon response)
+            var rp = pd(self.w_res_p)
+            var rn = pd(self.w_res_n)
+            for i in range(nh):
+                rp[unsafe_offset=i] = res_it[unsafe_offset=i]
+                rn[unsafe_offset=i] = res_it[unsafe_offset=i]
+            for c in range(len(self.kchan)):
+                if self.kchan[c].mtype != it // 2:
+                    continue
+                var rK = pd(self.resK).unsafe_offset(c * nh)
+                var cp = self.pion_cut_p[c]
+                var cn = self.pion_cut_n[c]
+                for i in range(nh):
+                    rp[unsafe_offset=i] -= cp * rK[unsafe_offset=i]
+                    rn[unsafe_offset=i] -= cn * rK[unsafe_offset=i]
+            self._rad_channel_pn(
                 dat,
                 IT3kai(it),
-                r.unsafe_offset((37 + it) * nh),
+                rp,
+                rn,
                 IT3MpPi0(it),
                 IT3MnPi0(it),
                 IT3MpPip(it),
@@ -522,3 +932,44 @@ struct PhotoPion(Copyable, Movable):
                 IT3MnPim(it),
                 co,
             )
+
+    def Calc_PhotoPion_Kaons(mut self, dat: AM3Arrays):
+        """Kaon sources qK[s] on the hadron grid from the last
+        Calc_PhotoPion_PhotonConvolution. The kaons of species s from nucleon
+        bin i land, with the channel's multiplicities, at chi * E_N (chi_p[s]
+        for protons, chi_n[s] for neutrons), split between the two neighbouring
+        bins by AM3's weights (number_split, as for its pions)."""
+        var co = c0 * dat.dlnE * mubarn
+        for s in range(N_KAON):
+            fill_zero(self.qK[s])
+        if (
+            not self.kern_valid
+            or not self.kaons
+            or len(self.resK) != len(self.kchan) * dat.nbins_had
+        ):
+            return
+        var nh = dat.nbins_had
+        var f = co * self.photon_norm
+        for c in range(len(self.kchan)):
+            ref ch = self.kchan[c]
+            var r = pd(self.resK).unsafe_offset(c * nh)
+            for nucleon in range(2):  # protons, neutrons
+                var dens = pd(dat.n[P_protons if nucleon == 0 else P_neutrons])
+                for s in range(N_KAON):
+                    var m = ch.mp[s] if nucleon == 0 else ch.mn[s]
+                    if m == 0.0:
+                        continue
+                    var chi = ch.chi_p[s] if nucleon == 0 else ch.chi_n[s]
+                    var q: Int
+                    var qr: Float64
+                    q, qr = number_split(c_log(chi) / dat.dlnE, dat.dlnE)
+                    # nucleon bins whose kaons land on q + i, q + i + 1 < nh
+                    var i0 = max(0, -q)
+                    var i1 = min(nh, nh - 1 - q)
+                    var lo = (1.0 - qr) * m * f
+                    var hi = qr * m * f
+                    var QK = pd(self.qK[s]).unsafe_offset(q)
+                    for i in range(i0, i1):
+                        var a = r[unsafe_offset=i] * dens[unsafe_offset=i]
+                        QK[unsafe_offset=i] += lo * a
+                        QK[unsafe_offset=i + 1] += hi * a

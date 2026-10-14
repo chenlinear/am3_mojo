@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# Build the original C++ AM3 v1.0.1 (commit 04d63d9, gitlab.desy.de/am3/am3) as
+# Build the original C++ AM3 v1.2.0 (commit 04d63d9, gitlab.desy.de/am3/am3) as
 # the reference for tests/reference and the benchmark:
 #   work/build/serial/libpython   the unmodified original (serial build)
-#   work/build/oobfix/libpython   the same with its two out-of-bounds reads
-#                                  fixed (oob_fix.patch)
-# Dependencies (GSL 2.8, Eigen 3.4.0 and, on macOS, LLVM libomp 19.1.7) are
-# downloaded and built into work/deps; cmake, ninja and pybind11 come from the
-# project's Python environment (`uv sync`). Every step is skipped if its
-# result already exists, so the script can be re-run.
+#   work/build/fixed/libpython    the same with the AM3 bugs that am3_mojo fixes
+#                                 fixed (am3_fixes.patch): the like-for-like
+#                                 reference for the comparisons
+# GSL 2.8, Eigen 3.4.0 and, on macOS, LLVM libomp 19.1.7 are downloaded and
+# built into work/deps. cmake, ninja and pybind11 come from the project's
+# Python environment (`uv sync`). Each step is skipped if its result exists
+# (for the AM3 builds: a module for the environment's Python), so the script
+# can be re-run.
 #
 # Environment variables:
 #   AM3_REFERENCE_DIR   work directory (default: tests/reference/work)
@@ -53,8 +55,9 @@ if [ ! -d "$PREFIX/share/eigen3/cmake" ]; then
     cmake -S "$DEPS/eigen-3.4.0" -B "$DEPS/eigen-build" -G Ninja -DCMAKE_INSTALL_PREFIX="$PREFIX" >/dev/null
     cmake --install "$DEPS/eigen-build" >/dev/null
 fi
-# AM3's CMakeLists requires OpenMP; the reference is built serially (the
-# OpenMP flags only point at the headers, so the pragmas are ignored).
+# AM3's CMakeLists requires OpenMP; the reference is built serially: the
+# OpenMP flags leave out -fopenmp (on macOS they only point at the headers),
+# so the pragmas are ignored.
 if [ "$(uname)" = Darwin ]; then
     if [ ! -f "$PREFIX/lib/libomp.dylib" ]; then
         say "building LLVM libomp 19.1.7"
@@ -76,9 +79,13 @@ fi
 
 # --- 3. AM3 builds ------------------------------------------------------------
 PYBIND="$("$PY" -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+EXT="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
 build() {  # build <name> <source dir>
     local out="$WORK/build/$1"
-    if ls "$out/libpython/"am3*.so >/dev/null 2>&1; then return; fi
+    if [ -f "$out/libpython/am3$EXT" ]; then return; fi
+    # none for this Python (another Python's module, or an unfinished build):
+    # configure afresh, as CMake caches the Python it found
+    rm -rf "$out"
     say "building AM3 ($1)"
     cmake -S "$2" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
         -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH="$PREFIX/lib" -DCMAKE_PREFIX_PATH="$PREFIX" \
@@ -89,16 +96,19 @@ build() {  # build <name> <source dir>
     if [ "$(uname)" = Darwin ]; then cp "$PREFIX/lib/libomp.dylib" "$out/libpython/"; fi
 }
 build serial "$SRC"
-if [ ! -d "$WORK/src-oobfix" ]; then
-    cp -R "$SRC" "$WORK/src-oobfix" && rm -rf "$WORK/src-oobfix/.git"
-    patch -s -d "$WORK/src-oobfix" -p1 < "$HERE/oob_fix.patch"
+# (rebuilt whenever the patch changes)
+if [ ! -f "$WORK/src-fixed/.patch" ] || ! cmp -s "$HERE/am3_fixes.patch" "$WORK/src-fixed/.patch"; then
+    rm -rf "$WORK/src-fixed" "$WORK/build/fixed"
+    cp -R "$SRC" "$WORK/src-fixed" && rm -rf "$WORK/src-fixed/.git"
+    patch -s -d "$WORK/src-fixed" -p1 < "$HERE/am3_fixes.patch"
+    cp "$HERE/am3_fixes.patch" "$WORK/src-fixed/.patch"
 fi
-build oobfix "$WORK/src-oobfix"
+build fixed "$WORK/src-fixed"
 
 "$PY" - "$WORK" <<'PYEOF'
 import os, subprocess, sys
 ok = True
-for b in ('serial', 'oobfix'):
+for b in ('serial', 'fixed'):
     d = os.path.join(sys.argv[1], 'build', b, 'libpython')
     r = subprocess.run([sys.executable, '-c', f'import sys; sys.path.insert(0, {d!r}); import am3; am3.AM3()'],
                        capture_output=True, text=True)
