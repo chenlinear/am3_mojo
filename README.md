@@ -214,7 +214,7 @@ which counts both photons: $\int v\ \frac{d\sigma}{dk}\ dk = 2\langle\sigma v\ra
 
 $$\langle\sigma v\rangle(\gamma_+,\gamma_-) = c\thinspace \frac{G(\gamma_r^+) - G(\gamma_r^-)}{2\thinspace p_+p_-\thinspace \gamma_+\gamma_-},\qquad \gamma_r^\pm = \gamma_+\gamma_- \pm p_+p_-,$$
 
-$$G(x) = \int_1^{x}\sqrt{t^2-1}\thinspace \sigma_{\rm rest}(t)\thinspace dt = \frac{3\sigma_T}{4}\left[\frac{(x-1)^{3/2}}{2\thinspace (x+1)^{1/2}}\thinspace \ell - (x+1) + \frac{3}{4}\thinspace \ell^2\right] + \frac{3\sigma_T}{2},\qquad \ell = \operatorname{arccosh} x,$$
+$$G(x) = \int_1^{x}\sqrt{t^2-1}\thinspace \sigma_{\rm rest}(t)\thinspace dt = \frac{3\sigma_T}{4}\left[\frac{(x-1)^{3/2}}{2\thinspace (x+1)^{1/2}}\thinspace \ell - (x+1) + \frac{3}{4}\thinspace \ell^2\right] + \frac{3\sigma_T}{2},\qquad \ell = \mathrm{arccosh}\thinspace x,$$
 
 with the Dirac cross section of a lepton of Lorentz factor $t$ annihilating on one at rest,
 

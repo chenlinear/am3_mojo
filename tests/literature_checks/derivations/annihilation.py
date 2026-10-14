@@ -328,7 +328,7 @@ def readme_sigma(arg):
 def readme_G(arg):
     s = L.sides(L.part(GLINE(), "G(x)"))
     assert s[1] == r"\int_1^{x}\sqrt{t^2-1}\thinspace \sigma_{\rm rest}(t)\thinspace dt", s[1]
-    assert L.part(GLINE(), r"\ell") == r"\ell = \operatorname{arccosh} x"
+    assert L.part(GLINE(), r"\ell") == r"\ell = \mathrm{arccosh}\thinspace x"
     return L.to_sympy(s[2], {"x": arg, r"\sigma_T": SIGMA_T, r"\ell": sp.acosh(arg)})
 
 
