@@ -1,6 +1,81 @@
+diff -ruN a/src/AM3.cc b/src/AM3.cc
+--- a/src/AM3.cc	2026-10-03 23:00:00
++++ b/src/AM3.cc	2026-10-03 23:00:00
+@@ -497,7 +497,7 @@
+ // IC
+ void AM3::set_optimize_compton_emission_emin(double new_value){
+ 	// limit optimization range to energy grid
+-	double mec2_eV = 0.51099895e6;
++	double mec2_eV = masse * 1e9; // am3_mojo PDG
+ 	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
+ 	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
+ 	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
+@@ -508,7 +508,7 @@
+ 	
+ void AM3::set_optimize_compton_target_emax(double new_value){
+ 	// limit optimization range to energy grid
+-	double mec2_eV = 0.51099895e6;
++	double mec2_eV = masse * 1e9; // am3_mojo PDG
+ 	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
+ 	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
+ 	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
+@@ -546,7 +546,7 @@
+ 
+ void AM3::set_optimize_bethe_heitler_target_photon_max(double new_value){
+ 	// limit optimization range to energy grid
+-	double mec2_eV = 0.51099895e6;
++	double mec2_eV = masse * 1e9; // am3_mojo PDG
+ 	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
+ 	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
+ 	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
+@@ -561,7 +561,7 @@
+ 
+ void AM3::set_optimize_photopion_target_photon_max(double new_value){
+ 	// limit optimization range to energy grid
+-	double mec2_eV = 0.51099895e6;
++	double mec2_eV = masse * 1e9; // am3_mojo PDG
+ 	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
+ 	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
+ 	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
+@@ -781,7 +781,7 @@
+ { 
+ 	vector<double> res = dat.egrid_lep;
+ 	for(int i=0; i< dat.nbins_lep; i++)
+-		res[i] *= mec2_erg*erg2eV;
++		res[i] *= masse * 1e9; // am3_mojo PDG: m_e c^2 [eV]
+ 	return res; 
+ }
+ // energy grid photons
+@@ -789,7 +789,7 @@
+ {
+ 	vector<double> res = dat.egrid_pho;
+ 	for(int i =0; i< dat.nbins_pho; i++)
+-		res[i] *= mec2_erg * erg2eV;
++		res[i] *= masse * 1e9; // am3_mojo PDG: m_e c^2 [eV]
+ 	return res; 
+ }
+ 
+@@ -852,7 +852,7 @@
+ 	double Egamma_min_eV, double Enu_min_eV, double E_max_eV)
+ {
+ 	// keep energies of optimisations if possible
+-	double mec2_eV = 0.51099895e6;
++	double mec2_eV = masse * 1e9; // am3_mojo PDG
+ 	double opt_E_ic_ph_in_max = max(min(dat.egrid_pho[sim.optimize_compton_target_emax]*mec2_eV, E_max_eV), Egamma_min_eV);
+ 	double opt_E_ic_ph_out_min = max(min(dat.egrid_pho[sim.optimize_compton_emission_emin]*mec2_eV, E_max_eV), Egamma_min_eV);
+ 	double opt_E_bh_pr_in_min = max(min(dat.egrid_had[sim.optimize_bethe_heitler_incoming_protons_min]*1e9, E_max_eV), 2e9);
 diff -ruN a/src/AM3Arrays.cc b/src/AM3Arrays.cc
 --- a/src/AM3Arrays.cc	2026-10-03 23:00:00
 +++ b/src/AM3Arrays.cc	2026-10-03 23:00:00
+@@ -117,7 +117,7 @@
+ 	double Egamma_min_eV, double Enu_min_eV, double E_max_eV)
+ {
+ 	// maximum energy
+-	double mec2_eV = 511e3;
++	double mec2_eV = masse * 1e9; // am3_mojo PDG
+ 	nbins_lep = (int)(log(E_max_eV/mec2_eV)/dlnE);
+ 	if (nbins_lep%2) nbins_lep += 1;
+ 	nbins_had = (int)(log(E_max_eV/1e9)/dlnE);
 @@ -134,7 +134,12 @@
  	nbins_lep_hadgrid = nbins_lep;
  	ind_min_energy_lep_hadgrid = 1 + (int)(log(1e9/mec2_eV)/dlnE);
@@ -15,6 +90,138 @@ diff -ruN a/src/AM3Arrays.cc b/src/AM3Arrays.cc
  	
  	index_BIN_KN = ind_min_energy_pho + (int)(log(1e3/masse)/dlnE);
  }
+@@ -267,10 +272,10 @@
+ 
+ 
+ int AM3Arrays::eV_to_lep_grid_index(double E_eV){
+-	return (int)(log(E_eV/mec2_erg/erg2eV)/dlnE);}
++	return (int)(log(E_eV/(masse * 1e9))/dlnE);} // am3_mojo PDG: m_e c^2 [eV]
+ 
+ int AM3Arrays::eV_to_photon_grid_index(double E_eV){
+-	return (int)(log(E_eV/mec2_erg/erg2eV)/dlnE + ind_min_energy_pho);}
++	return (int)(log(E_eV/(masse * 1e9))/dlnE + ind_min_energy_pho);} // am3_mojo PDG
+ 
+ int AM3Arrays::eV_to_had_grid_index(double E_eV){
+ 	return (int)(log(E_eV/1e9)/dlnE);}
+diff -ruN a/src/BetheHeitler.cc b/src/BetheHeitler.cc
+--- a/src/BetheHeitler.cc	2026-10-03 23:00:00
++++ b/src/BetheHeitler.cc	2026-10-03 23:00:00
+@@ -114,7 +114,7 @@
+     }
+     for (int i = 0; i < dat.nbins_lep; i++) QBH_LGen(i) = 0.0;
+ 
+-    const double k_inj_rate = c0*3.0/(16.0*mathpi) * sigmaT / 137.0;
++    const double k_inj_rate = c0*3.0/(16.0*mathpi) * sigmaT * 0.007297352564331425; // am3_mojo PDG: alpha
+ 
+     const double EigenHa = 1.0; 
+ 
+@@ -157,7 +157,7 @@
+             
+     for (int i = 0; i < dat.nbins_had; i++) ABHHadP(i) = 0.0;
+ 
+-    const double k_rate_semiana = (3.0/8.0/mathpi)*(1.0/137.0)*sigmaT*c0*(masse/massp);
++    const double k_rate_semiana = (3.0/8.0/mathpi)*0.007297352564331425*sigmaT*c0*(masse/massp); // am3_mojo PDG: alpha
+     for(int j=0; j<dat.nbins_had; j++)
+     {
+         double rj = 0.0;
+@@ -350,7 +350,7 @@
+     else if(x<25.0)
+     {
+         double z = x-2.0;
+-        y=(3.1416/12.0)*z*z*z*z/(1.0+0.8048*z+0.1459*z*z
++        y=(mathpi/12.0)*z*z*z*z/(1.0+0.8048*z+0.1459*z*z // am3_mojo PDG: pi
+             +1.137e-3*z*z*z-3.879e-6*z*z*z*z);
+     }
+     else
+diff -ruN a/src/HadronicSynchrotron.cc b/src/HadronicSynchrotron.cc
+--- a/src/HadronicSynchrotron.cc	2026-10-03 23:00:00
++++ b/src/HadronicSynchrotron.cc	2026-10-03 23:00:00
+@@ -80,7 +80,7 @@
+ // Below until Calc_SY : Cooling coefficients for protons due to synchrotron. For muons and pions: cooling terms in new solver (analytical!)
+ double SynP::syn_kernel_ultrarel(double x, double pe, double mass) // x in GeV
+ { //Proton synchrotron;
+-    double b_crit = 4.41e13;
++    double b_crit = 44140052309905.484; // am3_mojo PDG: m_e^2 c^3/(e hbar) [G]
+     double norm = (3.0 * 1.732 / mathpi) * sigmaT * c0 * b_gauss * b_crit / (8.0 * mathpi) * erg_GeV / mass;
+     double b_dimless = b_gauss/b_crit;
+     // B_crit ~ m^2
+diff -ruN a/src/Injection.cc b/src/Injection.cc
+--- a/src/Injection.cc	2026-10-03 23:00:00
++++ b/src/Injection.cc	2026-10-03 23:00:00
+@@ -86,7 +86,7 @@
+     double pidxm1_high = ph_idx - 1;
+ 
+     double integral = 0.;
+-    double mec2_eV = 0.510998e6;
++    double mec2_eV = masse * 1e9; // am3_mojo PDG
+     double Gamma_mid = rp.powerlaw_injection_electrons_ebreak / mec2_eV;
+     double Gamma_max = rp.powerlaw_injection_electrons_emax / mec2_eV;
+ 
+diff -ruN a/src/MuonDecay.cc b/src/MuonDecay.cc
+--- a/src/MuonDecay.cc	2026-10-03 23:00:00
++++ b/src/MuonDecay.cc	2026-10-03 23:00:00
+@@ -32,8 +32,9 @@
+ }
+ void MuonDecay::reinitialize_empty_kernels()
+ {
+-    // muon to electron
+-    KER_FMU2E = Eigen::MatrixXd::Zero(dat.nbins_lep, dat.nbins_had);
++    // muon to electron, one kernel per muon helicity (am3_mojo fix)
++    KER_FMU2Ep = Eigen::MatrixXd::Zero(dat.nbins_lep, dat.nbins_had);
++    KER_FMU2Em = Eigen::MatrixXd::Zero(dat.nbins_lep, dat.nbins_had);
+     // charged pion to muon + neutrino
+     KER_FNU1p = Eigen::MatrixXd::Zero(dat.nbins_nu, dat.nbins_had);
+     KER_FNU1m = Eigen::MatrixXd::Zero(dat.nbins_nu, dat.nbins_had);
+@@ -67,7 +68,10 @@
+         for (int j = 0; j < dat.nbins_had; j++)
+         {
+             double r = dat.egrid_had_leptons[i] / dat.egrid_had[j];
+-            KER_FMU2E(i,j) = r * FMU2E(r);
++            // am3_mojo fix: the e+- of a muon of helicity h have the spectrum of its nu_mu-type neutrino (V-A),
++            // FNU1(x, h) for mu+ and FNU1(x, -h) for mu-, not FMU2E = 4/3 (1 - x^3) (that of h = +1) for both
++            KER_FMU2Ep(i,j) = r * FNU1(r, +1.0);
++            KER_FMU2Em(i,j) = r * FNU1(r, -1.0);
+         }
+     }
+ }
+@@ -118,11 +122,12 @@
+     Eigen::ArrayXd tdec = Eigen::Map<Eigen::ArrayXd, Eigen::Unaligned>(
+         dat.egrid_had.data(), dat.egrid_had.size()) / massmu*mu_decay_s;
+ 
+-    Eigen::VectorXd total_mup_rate = ((mu_pl + mu_pr) / tdec);
+-    Eigen::VectorXd total_mum_rate = ((mu_ml + mu_mr) / tdec);
++    // am3_mojo fix: each helicity with its own kernel, as the nu_mu-type neutrinos in Calc_MUtoNU
++    Eigen::VectorXd rate_pl = mu_pl / tdec, rate_pr = mu_pr / tdec;
++    Eigen::VectorXd rate_ml = mu_ml / tdec, rate_mr = mu_mr / tdec;
+ 
+-    QMU2PGen_mu = dat.dlnE * KER_FMU2E * total_mup_rate; 
+-    QMU2EGen_mu = dat.dlnE * KER_FMU2E * total_mum_rate;
++    QMU2PGen_mu = dat.dlnE * (KER_FMU2Em * rate_pl + KER_FMU2Ep * rate_pr);
++    QMU2EGen_mu = dat.dlnE * (KER_FMU2Ep * rate_ml + KER_FMU2Em * rate_mr);
+ }
+ 
+ // kernels below
+diff -ruN a/src/PairProduction.cc b/src/PairProduction.cc
+--- a/src/PairProduction.cc	2026-10-03 23:00:00
++++ b/src/PairProduction.cc	2026-10-03 23:00:00
+@@ -135,7 +135,7 @@
+     double v = log(w);
+     double u = 1.0 - 1.0 / s;
+ 
+-    return (2.0 - 4.0 * s) * sqrt(u) + v * (4.0 * log(1.0 + w) - 3.0 * v + s * (1.0 + u * u)) - 3.289868 + phisum(w);
++    return (2.0 - 4.0 * s) * sqrt(u) + v * (4.0 * log(1.0 + w) - 3.0 * v + s * (1.0 + u * u)) - mathpi * mathpi / 3.0 + phisum(w); // am3_mojo PDG: pi
+ 
+ } //3.289868 = pi*pi/3
+ 
+@@ -443,7 +443,7 @@
+                q / sqrt(h);
+ 
+     else if (h < -0.999) //see "SSC_pair.nb" for addional information. ; h+1.0<0.001
+-        return q * (q * q * (y2 - 1.0) * (-1.5707963) + 0.5 * ((x1 - x) / y2 - 6.28319));
++        return q * (q * q * (y2 - 1.0) * (-0.5 * mathpi) + 0.5 * ((x1 - x) / y2 - 2.0 * mathpi)); // am3_mojo PDG: pi
+ 
+     else
+     {
 diff -ruN a/src/PhotoPion.cc b/src/PhotoPion.cc
 --- a/src/PhotoPion.cc	2026-10-03 23:00:00
 +++ b/src/PhotoPion.cc	2026-10-03 23:00:00
@@ -44,7 +251,32 @@ diff -ruN a/src/PionDecay.cc b/src/PionDecay.cc
      
      QPI2GGen = Eigen::VectorXd::Zero(dat.nbins_pho);
  }
-@@ -76,7 +76,7 @@
+@@ -49,13 +49,22 @@
+     if(verbose)
+         std::cout<<"computing charged pion decay to muon + neutrino kernels"<<std::endl;
+     // charged pion to muon + neutrino
++    // am3_mojo fix: the muons of a decay whose energy fraction lies in the bin of grid point i (within a factor
++    // exp(dlnE/2) of egrid_had[i] / egrid_had[j]), per dlnE: integrals of FMu1 and FMu2 over the bin, so that every
++    // decay makes one muon (the values at the grid points, without x = 1, made 0.876 muons per decay)
++    double rpi = massmu * massmu / masspip / masspip;
++    auto PMu1 = [rpi](double x) { return rpi * (log(x) - x) / (1.0 - rpi) / (1.0 - rpi); };
++    auto PMu2 = [rpi](double x) { return (x - rpi * log(x)) / (1.0 - rpi) / (1.0 - rpi); };
++    double half = exp(0.5 * dat.dlnE);
+     for (int i = 0; i < dat.nbins_had; i++)
+     {
+         for (int j = 0; j < dat.nbins_had; j++)
+         {
+             double r = dat.egrid_had[i] / dat.egrid_had[j];
+-            KER_FMU1(i,j) = r * FMu1(r);
+-            KER_FMU2(i,j) = r * FMu2(r);
++            double lo = min(max(r / half, rpi), 1.0);
++            double hi = min(max(r * half, rpi), 1.0);
++            KER_FMU1(i,j) = (PMu1(hi) - PMu1(lo)) / dat.dlnE;
++            KER_FMU2(i,j) = (PMu2(hi) - PMu2(lo)) / dat.dlnE;
+         }
+     }
+ 
+@@ -76,7 +85,7 @@
          for (int j = 0; j < dat.nbins_had; j++)
          {
              double r = dat.egrid_had_photons[i] * 2.0 / (
@@ -232,7 +464,22 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
 diff -ruN a/src/Solver.cc b/src/Solver.cc
 --- a/src/Solver.cc	2026-10-03 23:00:00
 +++ b/src/Solver.cc	2026-10-03 23:00:00
-@@ -90,8 +90,10 @@
+@@ -1,4 +1,5 @@
+ #include "AM3/Solver.h"
++#include "AM3/consts.h" // am3_mojo PDG: the constants below
+ 
+ #include <chrono>
+ using std::chrono::steady_clock;
+@@ -38,7 +39,7 @@
+ 	ker_status = 0;
+ 
+ 	// decay rate (always const)
+-	const double mass_e = 0.511e-3;
++	const double mass_e = masse; // am3_mojo PDG
+ 	const double mass = MASS_R * mass_e; // in GeV
+ 	for(int i=0; i<N_BINS; i++)
+ 	{
+@@ -90,8 +91,10 @@
  			a_esc[i] += alpha_decay[i];
  	}
  
@@ -245,7 +492,29 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  
  	// check if solver needs to be evolved
  	double sum_qinj = 0;
-@@ -188,14 +190,14 @@
+@@ -170,15 +173,16 @@
+ 	if (process_ic and ker_status == 0)
+ 		compute_ic_ker();
+ 
+-	const double c_light = 3.0e10 * T_UNIT_S / L_UNIT_CM;
+-	const double sigma_t = 0.665e-24 / L_UNIT_CM / L_UNIT_CM;
+-	const double mass_e = 0.511e-3;
+-	const double erg_to_gev = 624.0;
++	// am3_mojo PDG: c, sigma_T, m_e, erg/GeV and pi of consts.h
++	const double c_light = c0 * T_UNIT_S / L_UNIT_CM;
++	const double sigma_t = sigmaT / L_UNIT_CM / L_UNIT_CM;
++	const double mass_e = masse;
++	const double erg_to_gev = erg_GeV;
+ 
+ 	const double mass = MASS_R * mass_e; // in gev
+ 	const int N_PHOT = N_BINS - PHOT_GRID_ORIGIN;
+ 
+-	double ub_Edimless = b_gauss * b_gauss / (8.0 * 3.1416 * mass_e / erg_to_gev) * L_UNIT_CM * L_UNIT_CM * L_UNIT_CM;
++	double ub_Edimless = b_gauss * b_gauss / (8.0 * mathpi * mass_e / erg_to_gev) * L_UNIT_CM * L_UNIT_CM * L_UNIT_CM; // am3_mojo PDG
+ 	double k_synch = (4.0 / 3.0) * c_light * sigma_t / MASS_R / MASS_R / MASS_R * ub_Edimless;
+ 
+ 	for (int i = 0; i < N_BINS; i++)
+@@ -188,14 +192,14 @@
  
  		if (process_quantum_syn_cooling)
  		{
@@ -262,7 +531,33 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				Aic[i] += - ker_ic[i][j] * n_phot[j] * DELTA_X; // Aic<0
  		}
  		A_cool[i] += Asy[i] + Aic[i];
-@@ -247,12 +249,18 @@
+@@ -207,13 +211,13 @@
+ 	if (verbose)
+ 		cout << "calc ic kernel" << endl;
+ 
+-	const double mass_e = 0.511e-3;
++	const double mass_e = masse; // am3_mojo PDG: m_e, c, sigma_T of consts.h
+ 	const double mass = MASS_R * mass_e; // GeV
+ 
+ 	const int N_PHOT = N_BINS - PHOT_GRID_ORIGIN;
+ 
+-	const double c_light = 3.0e10 * T_UNIT_S / L_UNIT_CM;
+-	const double sigma_t = 0.665e-24 / L_UNIT_CM / L_UNIT_CM;
++	const double c_light = c0 * T_UNIT_S / L_UNIT_CM;
++	const double sigma_t = sigmaT / L_UNIT_CM / L_UNIT_CM;
+ 
+ 	const double coeff = 3.0 / 16.0 * c_light * sigma_t * mass_e * mass_e;
+ 
+@@ -235,7 +239,7 @@
+ 
+ double SolverAlgorithm::Fic(double gamma, double Eph_GeV)
+ {
+-	double mass_mu = MASS_R * 0.511e-3;
++	double mass_mu = MASS_R * masse; // am3_mojo PDG
+ 	double gamma_bar = gamma + sqrt(gamma * gamma - 1.0 + 1.0e-10);
+ 	double za = Eph_GeV / mass_mu * gamma_bar;
+ 	double zb = Eph_GeV / mass_mu / gamma_bar;
+@@ -247,12 +251,18 @@
  
  double SolverAlgorithm::Fic_1(double z)
  {
@@ -283,7 +578,13 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  }
  
  double SolverAlgorithm::polylog(double z)
-@@ -312,6 +320,105 @@
+@@ -307,11 +317,110 @@
+ double SolverAlgorithm::polylog_largez(double z)
+ {
+ 	double x = -z;
+-	return -3.1415926 * 3.1415927 / 6.0 - 0.5 * log(x) * log(x) + 1.0 / x - 1.0 / 4.0 / x / x + 1.0 / 9.0 / x / x / x;
++	return -mathpi * mathpi / 6.0 - 0.5 * log(x) * log(x) + 1.0 / x - 1.0 / 4.0 / x / x + 1.0 / 9.0 / x / x / x; // am3_mojo PDG: pi
+ }
  
  // end IC cooling
  
@@ -389,7 +690,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  std::vector<double> SolverAlgorithm::solve_next_step(
  	const std::vector<double> &a_esc, const std::vector<double> &A_cool,
  	const std::vector<double> &q_inj, const std::vector<double> &n0)
-@@ -335,6 +442,12 @@
+@@ -335,6 +444,12 @@
  	// 4: A_cool, qinj relevant, 1/(A*dx) >> dt : time-dep. analytical result assuming constant coefficients for next dt
  	int regime = 0;
  	int new_regime = 0;
@@ -402,7 +703,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	std::vector<double> n1(N_BINS, 0);
  	// skip last 2 bins to avoid odd values
  	for (int i = imax; i>0; i--)
-@@ -343,6 +456,8 @@
+@@ -343,6 +458,8 @@
  		nqint += n0[i] + q_inj[i] * delta_t;
  		if(nqint > threshold_inj_n0)
  		{
@@ -411,7 +712,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  			// only evolve if there are particles or significant injection
  			// determine regime
  			if(-A_cool[i] < threshold_esc_dom * a_esc[i])
-@@ -391,7 +506,11 @@
+@@ -391,7 +508,11 @@
  		// check if regime changed 
  		// and if regime's energy range big enough (solver size)
  		// or if we need to calc the low energy rest regime (i==1)
@@ -424,7 +725,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  		{
  			// change of regime
  			// -> solve with corresponding solver
-@@ -423,6 +542,13 @@
+@@ -423,6 +544,13 @@
  					q[k] = q_inj[i + 1 + k];
  					n[k] = n0[i + 1 + k];
  				}
@@ -438,7 +739,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				std::vector<double>  n1_regime = solve_steadystate_esc_inj(a, q, n);
  				for (int k = 0; k < N; k++)
  					n1[i + 1 + k] = n1_regime[k];
-@@ -434,13 +560,17 @@
+@@ -434,13 +562,17 @@
  				// a_esc, q_inj, A_cool -> matrix
  				// highest 2 elements from matrix solver are not used
  				// -> effective q term needs to be added to imax -> q[N-1]
@@ -462,7 +763,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				{
  					if (i + 1 - Nb + k >= 0 and i + 1 - Nb + k < N_BINS)
  					{
-@@ -455,6 +585,10 @@
+@@ -455,6 +587,10 @@
  				// 	q[N + Nb - 1 + shift_m] += - (
  				// 		A_cool[imax+shift_out] * n1[imax+shift_out] -  
  				// 		A_cool[imax+shift_out-1] * n1[imax+shift_out-1] ) / DELTA_X;
@@ -473,7 +774,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				std::vector<double> n1_regime = solve_matrix(a, A, q, n);
  				// cout << "Na = " << Na << endl;
  				// cout << "len n1_regime: " << n1_regime.size() << endl;
-@@ -472,7 +606,10 @@
+@@ -472,7 +608,10 @@
  				// a_esc, q_inj, A_cool -> ss for dt
  				// add 20 bins before and after for larger grids in solver
  				int Nb = 10; // before
@@ -485,7 +786,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				std::vector<double> a(N + Nb + Na, 0.0);
  				std::vector<double> A(N + Nb + Na, 0.0);
  				std::vector<double> q(N + Nb + Na, 0.0);
-@@ -487,6 +624,18 @@
+@@ -487,6 +626,18 @@
  						n[k] = n0[i + 1 - Nb + k] + 1e-150;
  					}	
  				}
@@ -504,7 +805,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				// add effective q term from advection (A_cool) to last entry
  				// if (imax + 1 < N_BINS)
  				// 	q[N + Nb -1] += -A_cool[imax+1] * n1[imax+1] / DELTA_X;
-@@ -503,7 +652,10 @@
+@@ -503,7 +654,10 @@
  				// q_inj, A_cool -> ss for dt
  				// add 20 bins before and after for larger grids in solver
  				int Nb = 10; // before
@@ -516,7 +817,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				std::vector<double> A(N + Nb + Na, 0.0);
  				std::vector<double> q(N + Nb + Na, 0.0);
  				std::vector<double> n(N + Nb + Na, 0.0);
-@@ -516,6 +668,18 @@
+@@ -516,6 +670,18 @@
  						n[k] = n0[i + 1 - Nb + k] + 1e-150;
  					}	
  				}
@@ -535,7 +836,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				// add effective q term from advection (A_cool) to last entry
  				// if (imax + 1 < N_BINS)
  				// 	q[N + Nb -1] += -A_cool[imax+1] * n1[imax+1] / DELTA_X;
-@@ -538,6 +702,7 @@
+@@ -538,6 +704,7 @@
  
  			// Reset parameters
  			imax = i;
@@ -543,7 +844,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  			regime = new_regime;
  			
  		}
-@@ -785,6 +950,16 @@
+@@ -785,6 +952,16 @@
  	for (int i = q2_q3_sep; i < N; i++)
  		q3_intg_lin[i] = q3_intg_lin[i - 1] + 0.5 * (q_inj[i] + q_inj[i - 1]) * DELTA_X;
  
@@ -560,7 +861,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	// std::cout <<" initialising spline on x ln \n";
  	gsl_interp_accel *gsl_spl_ac_lnmivA = gsl_interp_accel_alloc();
  	gsl_interp_accel *gsl_spl_ac_ivB = gsl_interp_accel_alloc();
-@@ -885,6 +1060,11 @@
+@@ -885,6 +1062,11 @@
  		DiffAL, DiffBL, DiffDL, PerLeftE, PerDiagE, PerRightE,
  		TriSuperE, TriDiagE, TriSubE, TriQE, TempNVE);
  	
@@ -572,7 +873,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	// tempNV = M * n0, M = PertMat
  	MatOP_TriDiagMDotV(TempNVE, PerLeftE, PerDiagE, PerRightE, &n0[0], N);
  
-@@ -1148,6 +1328,10 @@
+@@ -1148,6 +1330,10 @@
  	return y;
  }
  
@@ -583,7 +884,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  void SolverAlgorithm::compute_n1_a_A(
  	std::vector<double> &n1, int N, double *x_ln, double *y_ln,
  	const std::vector<double> &a_esc, const std::vector<double> &A_cool,
-@@ -1164,6 +1348,53 @@
+@@ -1164,6 +1350,53 @@
  	if (verbose)
  		cout << "computing n1" << endl;
  
@@ -637,7 +938,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	for(int i=1; i<N-1; i++)
  	{
  		// use analytical asymptotic solution if energy loss rate is low
-@@ -1203,11 +1434,8 @@
+@@ -1203,11 +1436,8 @@
  			}
  			else
  			{
@@ -651,7 +952,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  			}
  			
  				
-@@ -1268,7 +1496,7 @@
+@@ -1268,7 +1498,7 @@
  			else 
  				intgd_injection = injection3_1 - injection3_0;
  			// remember that A is negative
@@ -660,7 +961,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  		}
  	}
  
-@@ -1424,14 +1652,21 @@
+@@ -1424,14 +1654,21 @@
  					gsl_spl_fn_lna, gsl_spl_ac_lna
  				) > -0.8)
  			{
@@ -684,7 +985,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  		}
  		
  
-@@ -1471,6 +1706,83 @@
+@@ -1471,6 +1708,83 @@
  }
  
  
@@ -768,7 +1069,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  double SolverAlgorithm::simple_integral_q(
  	double lower, double upper, const int N_INTG_OUTER_PER_BIN, 
  	double * x_ln, double x_min, double x_max,
-@@ -1478,34 +1790,46 @@
+@@ -1478,34 +1792,46 @@
  	gsl_spline *gsl_spl_fn_q, gsl_interp_accel *gsl_spl_ac_q,
  	gsl_spline *gsl_spl_fn_lnmivA, gsl_interp_accel *gsl_spl_ac_lnmivA)
  {
@@ -837,3 +1138,107 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	return integral * exp( gsl_spline_eval(gsl_spl_fn_lnmivA, x, gsl_spl_ac_lnmivA) );
  }
 \ No newline at end of file
+diff -ruN a/src/Synchrotron.cc b/src/Synchrotron.cc
+--- a/src/Synchrotron.cc	2026-10-03 23:00:00
++++ b/src/Synchrotron.cc	2026-10-03 23:00:00
+@@ -28,7 +28,7 @@
+     // define constants in unit system
+     double mass_GeV = masse;
+ 
+-    double h_GeVs = 4.131870326679899e-24;
++    double h_GeVs = 4.135667696923859e-24; // am3_mojo PDG: h [GeV s]
+     double lambC = h_GeVs * c0 / mass_GeV / L_SSC_CGS;
+     coeff_abs = pow(lambC, 3) / 8 / mathpi;
+ }
+@@ -72,10 +72,10 @@
+ double Syn::syn_kernel_ultrarel(double x, double g)
+ { //Ultra Relativistic
+ 
+-    double b_crit = 4.41e13;
++    double b_crit = 44140052309905.484; // am3_mojo PDG: m_e^2 c^3/(e hbar) [G]
+     double b_dimless = b_gauss / b_crit;
+-    double b_nat = 8.14e-16 * b_gauss;
+-    double b_ub_nat = b_nat * b_nat / (8.0 * mathpi);
++    // am3_mojo PDG: the magnetic energy density B^2/(8 pi) in the code units
++    double b_ub_nat = b_gauss * b_gauss / (8.0 * mathpi) / (masse / erg_GeV * n_SSC_CGS);
+     double norm = (1.65399 / b_dimless) * b_ub_nat;
+ 
+     double xbar = x / (3.0 * g * g * b_dimless);
+@@ -196,10 +196,10 @@
+ double Syn::Q_Qsyn_avg(double gamma_e, double epsilon, const double bin_width, const int N_INTG)
+ {
+ 
+-    double b_crit = 4.41e13;
++    double b_crit = 44140052309905.484; // am3_mojo PDG
+     double b_dimless = b_gauss / b_crit;
+-    double nu_0 = 1.235e20;
+-    double alpha_0 = 1.0/137.0;
++    double nu_0 = masse / 4.135667696923859e-24; // am3_mojo PDG: m_e c^2 / h [Hz]
++    double alpha_0 = 0.007297352564331425; // am3_mojo PDG: 1/137.035999177
+ 
+     return sqrt(3.0) * nu_0 * alpha_0 * b_dimless * I_Qsyn_avg( b_dimless, gamma_e, epsilon,  bin_width, N_INTG); 
+ }
+diff -ruN a/include/AM3/MuonDecay.h b/include/AM3/MuonDecay.h
+--- a/include/AM3/MuonDecay.h	2026-10-03 23:00:00
++++ b/include/AM3/MuonDecay.h	2026-10-03 23:00:00
+@@ -63,7 +63,9 @@
+     void clear_internal_arrays();
+ 
+     // kernels
+-    Eigen::MatrixXd KER_FMU2E; /**< kernel muons -> electrons/positrons */
++    // am3_mojo fix: one kernel muons -> electrons/positrons per muon helicity h
++    Eigen::MatrixXd KER_FMU2Ep; /**< kernel muons -> electrons/positrons, h = +1 */
++    Eigen::MatrixXd KER_FMU2Em; /**< kernel muons -> electrons/positrons, h = -1 */
+     // muon neutrinos from muon decay
+     Eigen::MatrixXd KER_FNU1p; /**< kernel mu+ -> mu neutrinos */
+     Eigen::MatrixXd KER_FNU1m; /**< kernel mu- -> mu neutrinos */
+diff -ruN a/include/AM3/consts.h b/include/AM3/consts.h
+--- a/include/AM3/consts.h	2026-10-03 23:00:00
++++ b/include/AM3/consts.h	2026-10-03 23:00:00
+@@ -8,26 +8,29 @@
+  */
+ //======== Physics, Math Constants ========
+ 
++// am3_mojo PDG: the PDG 2026 values (Table 1.1, CODATA 2022, and the particle
++// listings) of am3_mojo's src/am3_mojo/utils/constants.mojo, the derived ones
++// (SSC units, erg_GeV, statcol) as am3_mojo's Float64 values
+ const double
+-    mathpi = 3.141592654, //!<  math PI
++    mathpi = 3.141592653589793, //!<  math PI
+     lambdaC_over_8pi = 11.8332, //<! SSC units (L=sqrt(sigma_Thomson,E=masse,v=c)
+-    L_SSC_CGS = 8.156e-13, //<! = sigma_T^(1/2)
+-    T_SSC_CGS = 2.719e-23, //<! = L/c = sigma_T^(1/2) / c
+-    n_SSC_CGS = 1.843e36,  // = L^-3 = sigma_T^(-3/2)
+-    Rate_SSC_CGS = 6.784e58, // = L^-3 / T = c/sigma_T^2
+-    erg_GeV = 624.0, //!< conversion of erg to GeV 
+-    statcol = 4.803e-10, // elementary charge in statc
+-    sigmaT = 0.665e-24,  //!< Thomson cross section [cm^2]
+-    massp = 0.938, // proton mass / GeV
+-    massn = 0.938, // neutron mass / GeV
+-    masspi0 = 0.1350, 
+-    masspip = 0.1396,
+-    masspim = 0.1396,
+-    masseta = 0.54786,
+-    massmu = 0.10566,
+-    masse = 0.511e-3, //GeV
++    L_SSC_CGS = 8.15626060465211e-13, //<! = sigma_T^(1/2)
++    T_SSC_CGS = 2.7206356887911134e-23, //<! = L/c = sigma_T^(1/2) / c
++    n_SSC_CGS = 1.8430058721140123e+36,  // = L^-3 = sigma_T^(-3/2)
++    Rate_SSC_CGS = 6.774173696636808e+58, // = L^-3 / T = c/sigma_T^2
++    erg_GeV = 624.1509074460763, //!< conversion of erg to GeV 
++    statcol = 4.803204712234039e-10, // elementary charge in statc
++    sigmaT = 0.66524587051e-24,  //!< Thomson cross section [cm^2]
++    massp = 0.93827208943, // proton mass / GeV
++    massn = 0.93956542194, // neutron mass / GeV
++    masspi0 = 0.1349768, 
++    masspip = 0.13957039,
++    masspim = 0.13957039,
++    masseta = 0.547862,
++    massmu = 0.1056583755,
++    masse = 0.51099895069e-3, //GeV
+     tdec_pipm = 2.6033e-8, // sec
+-    c0 = 3.0e10,      // speed of light cgs
++    c0 = 2.99792458e10,      // speed of light cgs
+     mubarn = 1.0e-30, //cm^-2, c0 and densities should be consistent with this. microbarn
+     mrp2e = massp / masse; //!< ratio between proton and electron masses
+ 

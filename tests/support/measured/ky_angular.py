@@ -1,43 +1,29 @@
-"""Energy fractions chi of the two-body kaon channels (gamma N -> K Y) from the
-measured angular distributions (README, "Production in photo-hadronic
-interactions").
+"""Energy fractions chi of the two-body kaon channels (gamma N -> K Y) from the measured angular distributions
+(tests/literature_checks/kaons/README.md, "The energy fraction of a two-body kaon").
 
-In the centre-of-momentum frame of the photon and a nucleon of energy E_N
-(ultra-relativistic, head-on photon), a kaon of energy E* and velocity beta*
-emitted at angle theta to the photon has the energy fraction
+In the centre-of-momentum frame of the photon and a nucleon of energy E_N (ultra-relativistic, head-on photon), a kaon
+of velocity beta* emitted at angle theta to the photon has the energy fraction
 
     chi = E_K / E_N = (s - m_Y^2 + m_K^2) / (2 s) * (1 - beta* cos theta),
 
-Hümmer et al. (2010) eq. 16 with m_N -> m_Y, m_pi -> m_K (they take the angle
-from the nucleon, opposite to the photon). kin_chi and threshold take it and s
-from derivations/kaon_production.py (kp.chi), which reads them from the README
-and checks them. As chi is linear in cos theta, its mean is chi(<cos theta>).
-In each step, a channel column (p -> K+, p -> K0, n -> K+, n -> K0) has the
-mean chi of its reactions over the step, weighted by their cross sections, and
-the sum of their mean cross sections.
+Hümmer et al. (2010) eq. 16 with m_N -> m_Y, m_pi -> m_K (their angle is from the nucleon, opposite to the photon).
+kin_chi and threshold take chi and s from kaons/kaon_production.py (kp.chi), which reads and checks the page's.
+Linear in cos theta, chi has the mean chi(<cos theta>).
 
-DATA holds, for every reaction and data set, (E_gamma [GeV], sigma [mubarn],
-<cos theta_K>) per energy bin, each the mean over its bin, taken at the bin
-centre. tools/ky_angular_extract.py made it from HEPData (SAPHIR: ins626695,
-ins680746; CLAS: ins840934, ins857728, ins841145; A2: ins1703675) and the CLAS
-tables in the arXiv source of Compton et al. (2017, arXiv:1706.04748). It
-integrates dsigma/dcos theta over the measured bins, the gaps between them and
-the edges to cos theta = -1 and +1. Only bins measured from cos theta <= -0.6
-to >= 0.6 are kept (A2: -0.7, 0.7; CLAS K0 Lambda: -0.5, 0.6; CLAS K+ Sigma-:
--0.1, 0.6, which keeps its bins above 2.85 GeV).
+DATA: for every reaction and data set, (E_gamma [GeV], sigma [mubarn], <cos theta_K>) per energy bin, means over the
+bin, at the bin centre. tools/ky_angular_extract.py made it from HEPData (SAPHIR: ins626695, ins680746; CLAS: ins840934,
+ins857728, ins841145; A2: ins1703675) and the CLAS tables in the arXiv source of Compton et al. (2017,
+arXiv:1706.04748). It integrates dsigma/dcos theta over the measured bins, the gaps and the edges to
+cos theta = -1 and +1, and keeps the energy bins measured from cos theta <= -0.6 to >= 0.6 (exceptions: its docstring).
 
-The data sets of a reaction are averaged at each energy. Where a reaction is
-not measured:
-  * below its first data point, sigma rises linearly from 0 at threshold, with
-    the first point's <cos>. gamma n -> K0 Sigma0 starts at the value of A2's
-    first bin (W = 1675-1705 MeV, centred 0.5 MeV in E_gamma below threshold);
-  * above its data, it takes the <cos> of the analogous gamma p reaction
-    (REACTIONS, with a hyperon of the same isospin) at the same energy, and its
-    sigma scaled to agree over the last 0.6 GeV of data (all of them for
-    K0 Sigma0). K0 Sigma0 follows K0 Sigma+, as both lack kaon exchange in the
-    t channel (the photon does not couple to a K0);
-  * above all data (3.8 GeV), <cos> is the sigma-weighted mean of the last
-    0.4 GeV of data, and sigma a power law fitted to the last 1 GeV.
+A reaction's data sets are averaged at each energy. Where it is not measured:
+  * below its first point, sigma rises linearly from 0 at threshold, with that point's <cos>. gamma n -> K0 Sigma0
+    starts at the value of A2's first bin (W = 1675-1705 MeV, centred 0.5 MeV in E_gamma below threshold);
+  * above its data, it takes the <cos> of the analogous gamma p reaction (REACTIONS: a hyperon of the same isospin) at
+    the same energy, and its sigma scaled to agree over the last 0.6 GeV of data (all of them for K0 Sigma0). K0 Sigma0
+    follows K0 Sigma+, as both lack kaon exchange in the t channel (the photon does not couple to a K0);
+  * above all data (3.8 GeV), <cos> is the sigma-weighted mean of the last 0.4 GeV of data, and sigma a power law fitted
+    to the last 1 GeV.
 """
 
 import numpy as np
@@ -46,8 +32,8 @@ from support.paths import load_derivation
 
 readme = load_derivation('kaon_production')
 
-# PDG 2026 masses [GeV] (derivations/kaon_production.py)
-MP, MN, ML, MS0, MSP, MSM, MKP, MK0 = (readme.MASS[q] for q in ('p', 'n', 'Lambda', 'Sigma0', 'Sigma+', 'Sigma-', 'K+', 'K0'))
+# PDG 2026 masses [GeV] (kaons/kaon_production.py)
+MP, MN, ML, MS0, MSP, MSM, MKP, MK0 = (readme.MASS[q] for q in 'p n Lambda Sigma0 Sigma+ Sigma- K+ K0'.split())
 
 # (nucleon, hyperon, kaon masses; analogous gamma p reaction)
 REACTIONS = {
@@ -185,13 +171,13 @@ DATA = {
 
 
 def threshold(r):
-    """The photon energy [GeV] at the threshold of reaction r (the README's s = (m_Y + m_K)^2)."""
+    """Threshold photon energy [GeV] of reaction r (the page's s = (m_Y + m_K)^2)."""
     mN, mY, mK, _ = REACTIONS[r]
     return float(readme.photon_threshold()(mN, mY + mK))
 
 
 def kin_chi(r, E, cos):
-    """The README's chi of reaction r at photon energy E [GeV] (above its threshold) for <cos theta_K>."""
+    """The page's chi of reaction r at photon energy E [GeV] (above its threshold) for <cos theta_K>."""
     mN, mY, mK, _ = REACTIONS[r]
     with np.errstate(invalid='ignore'):
         return readme.numeric_chi()(mN, mY, mK, np.asarray(E, float), cos)
@@ -212,7 +198,7 @@ def _measured(r, E, col):
 
 
 def power_law(r):
-    """sigma of r above all its data: (exponent n, ln A) of A E^n fitted to its last GeV of data, and the points fitted."""
+    """sigma of r above all its data: (n, ln A) of A E^n fitted to its last GeV of data, and the points fitted."""
     P = _points(r)
     top = P[P[:, 0] > P[-1, 0] - 1.0]
     n, lnA = np.polyfit(np.log(top[:, 0]), np.log(top[:, 1]), 1)
@@ -220,8 +206,8 @@ def power_law(r):
 
 
 def analogue_factor(r):
-    """The factor by which r follows its analogous gamma p reaction above its data: the ratio of their mean cross
-    sections over the last 0.6 GeV of r's data (all of them if they span less)."""
+    """Factor on the analogous gamma p reaction's sigma above r's data: the ratio of their mean cross sections over
+    the last 0.6 GeV of r's data (all of them if they span less)."""
     P = _points(r)
     win = np.linspace(max(P[0, 0], P[-1, 0] - 0.6), P[-1, 0], 61)
     return np.mean(_measured(r, win, 1)) / np.mean(sigma(REACTIONS[r][3], win))
@@ -262,8 +248,8 @@ def sigma(r, E):
 
 
 def step_chi(column, step, isotropic=False):
-    """Cross-section-weighted chi of a channel column over a step (NaN if
-    the column has no cross section there); isotropic: for <cos theta> = 0."""
+    """Cross-section-weighted chi of a channel column over a step (NaN if the column has no cross section there);
+    isotropic: for <cos theta> = 0."""
     a, b = STEPS[step]
     E = np.linspace(a, b, 2001)
     num = den = 0.0

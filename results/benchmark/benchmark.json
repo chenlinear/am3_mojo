@@ -1,106 +1,106 @@
 {
  "blazar_simple": {
   "C++ AM3 (serial)": {
-   "init_s": 6.9117671249987325,
-   "ms_per_step": 11.627744466113654,
+   "init_s": 6.911910124999849,
+   "ms_per_step": 11.537078404999193,
    "steps": 800,
-   "max_rss_gb": 2.87752192
+   "max_rss_gb": 2.920251392
   },
   "am3_mojo, 4 threads": {
-   "init_s": 1.9401527090012678,
-   "ms_per_step": 1.9518119886924978,
+   "init_s": 1.7930529589975777,
+   "ms_per_step": 0.8520296537062677,
    "steps": 800,
-   "max_rss_gb": 0.250462208
+   "max_rss_gb": 0.297058304
   },
   "am3_mojo, 1 thread": {
-   "init_s": 6.565319875000569,
-   "ms_per_step": 2.840225133841159,
+   "init_s": 6.680437875002099,
+   "ms_per_step": 1.889411607544389,
    "steps": 800,
-   "max_rss_gb": 0.2502656
+   "max_rss_gb": 0.297156608
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 2.1251524580002297,
-   "ms_per_step": 3.3306997437648533,
+   "init_s": 2.1730848330007575,
+   "ms_per_step": 2.015165567445365,
    "steps": 800,
-   "max_rss_gb": 0.278265856
+   "max_rss_gb": 0.341671936
   }
  },
  "leptohadronic_all": {
   "C++ AM3 (serial)": {
-   "init_s": 11.068728375001228,
-   "ms_per_step": 17.027350423134823,
+   "init_s": 11.045565041000373,
+   "ms_per_step": 17.008575546618278,
    "steps": 300,
-   "max_rss_gb": 2.877734912
+   "max_rss_gb": 2.920316928
   },
   "am3_mojo, 4 threads": {
-   "init_s": 2.9842925000048126,
-   "ms_per_step": 3.0049576367309783,
+   "init_s": 2.849777333998645,
+   "ms_per_step": 1.2959734433631336,
    "steps": 300,
-   "max_rss_gb": 0.243089408
+   "max_rss_gb": 0.300662784
   },
   "am3_mojo, 1 thread": {
-   "init_s": 11.326613208999333,
-   "ms_per_step": 4.555962366527335,
+   "init_s": 10.692788750002364,
+   "ms_per_step": 2.90343628662716,
    "steps": 300,
-   "max_rss_gb": 0.242876416
+   "max_rss_gb": 0.300498944
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 3.180108917003963,
-   "ms_per_step": 5.0639723501323415,
+   "init_s": 3.358616334000544,
+   "ms_per_step": 3.0541625166855133,
    "steps": 300,
-   "max_rss_gb": 0.284868608
+   "max_rss_gb": 0.351666176
   }
  },
  "ssc_external": {
   "C++ AM3 (serial)": {
-   "init_s": 0.14399241699720733,
-   "ms_per_step": 3.0414437649778847,
+   "init_s": 0.1446835419992567,
+   "ms_per_step": 3.030196764993889,
    "steps": 400,
-   "max_rss_gb": 2.06897152
+   "max_rss_gb": 2.111111168
   },
   "am3_mojo, 4 threads": {
-   "init_s": 0.16849250000086613,
-   "ms_per_step": 0.5222373676951975,
+   "init_s": 0.08625312499862048,
+   "ms_per_step": 0.23062236239638878,
    "steps": 400,
-   "max_rss_gb": 0.09363456
+   "max_rss_gb": 0.149356544
   },
   "am3_mojo, 1 thread": {
-   "init_s": 0.16834770800051047,
-   "ms_per_step": 1.0173808500803716,
+   "init_s": 0.21043562500199187,
+   "ms_per_step": 0.5832049400669348,
    "steps": 400,
-   "max_rss_gb": 0.093749248
+   "max_rss_gb": 0.146374656
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 0.18487504099903163,
-   "ms_per_step": 0.6852891648304649,
+   "init_s": 0.09873383300146088,
+   "ms_per_step": 0.3079347123821208,
    "steps": 400,
-   "max_rss_gb": 0.095617024
+   "max_rss_gb": 0.149798912
   }
  },
  "exotic": {
   "C++ AM3 (serial)": {
-   "init_s": 1.4852299170015613,
-   "ms_per_step": 11.67133331495279,
+   "init_s": 1.4819481249978708,
+   "ms_per_step": 11.666630844974861,
    "steps": 200,
-   "max_rss_gb": 1.00376576
+   "max_rss_gb": 1.042808832
   },
   "am3_mojo, 4 threads": {
-   "init_s": 0.45611479099898133,
-   "ms_per_step": 2.85504834522726,
+   "init_s": 0.41186929200193845,
+   "ms_per_step": 1.2272464500529168,
    "steps": 200,
-   "max_rss_gb": 0.35250176
+   "max_rss_gb": 0.24723456
   },
   "am3_mojo, 1 thread": {
-   "init_s": 1.4269457499976852,
-   "ms_per_step": 4.2324352697323775,
+   "init_s": 1.4317089590003889,
+   "ms_per_step": 1.8738739598848042,
    "steps": 200,
-   "max_rss_gb": 0.337543168
+   "max_rss_gb": 0.260210688
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 0.5317612080034451,
-   "ms_per_step": 3.6198916750436183,
+   "init_s": 0.6622949999982666,
+   "ms_per_step": 1.9600366898157517,
    "steps": 200,
-   "max_rss_gb": 0.362512384
+   "max_rss_gb": 0.25952256
   }
  }
 }

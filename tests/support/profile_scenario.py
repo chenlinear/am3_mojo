@@ -7,9 +7,9 @@ prints one JSON line: {"labels": [...], "ms": [...]} (ms per step of every profi
 import argparse, json, os, sys
 
 sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # tests/
-from support.output import silenced  # noqa: E402
-from support.paths import new_am3  # noqa: E402
-from support.scenarios import SCENARIOS  # noqa: E402
+from support.output import silenced
+from support.paths import new_am3
+from support.scenarios import SCENARIOS
 
 
 def main():

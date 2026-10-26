@@ -85,7 +85,8 @@ comptime P_PHO_END = 66
 
 # Arrays of the processes am3_mojo adds to AM3 follow AM3's arrays, so that
 # those keep their indices. One block per grid (P_EXT_*_BEGIN/END), each in
-# the order e+e- annihilation, triplet pair production, neutron decay, kaons.
+# the order e+e- annihilation, triplet pair production, neutron decay, kaons,
+# charm hadrons.
 comptime P_EXT_LEP_BEGIN = 66
 # e- and e+ parts of the pair components (P_pairs_in_ele + k,
 # P_pairs_in_pos + k), in the order injected, Bethe-Heitler, gamma-gamma pair
@@ -107,39 +108,71 @@ comptime P_photons_ndecsy = 83  # synchrotron of the neutron-decay e-
 comptime P_photons_ndecic = 84  # inverse Compton of the neutron-decay e-
 comptime P_photons_kasy = 85  # kaon synchrotron
 comptime P_photons_kaic = 86  # kaon inverse Compton
-comptime P_EXT_PHO_END = 87
-comptime P_EXT_HAD_BEGIN = 87
+comptime P_photons_chsy = 87  # charm-hadron synchrotron
+comptime P_photons_chic = 88  # charm-hadron inverse Compton
+comptime P_EXT_PHO_END = 89
+comptime P_EXT_HAD_BEGIN = 89
 # kaons, each block in the species order below: all kaons (the sum of the two
-# origins), kaons from photo-hadronic interactions, kaons from pp collisions
-comptime P_kaon_plus = 87
-comptime P_kaon_minus = 88
-comptime P_kaon_0S = 89
-comptime P_kaon_0L = 90
-comptime P_kaon_plus_pg = 91
-comptime P_kaon_plus_pp = 95
+# origins and of the kaons of the charm decays), kaons from photo-hadronic
+# interactions, kaons from pp collisions
+comptime P_kaon_plus = 89
+comptime P_kaon_minus = 90
+comptime P_kaon_0S = 91
+comptime P_kaon_0L = 92
+comptime P_kaon_plus_pg = 93
+comptime P_kaon_plus_pp = 97
 # per kaon origin, photo-hadronic (_Kpg) or pp (_Kpp): the pions of the kaon
 # decays (pi+, pi-) and the muons of the kaon decays and of these pions
 # (mu+ left, mu+ right, mu- left, mu- right). AM3's photo-hadronic and pp
-# components of the pions and muons are each the sum of this part and the
-# part from the pions made in the interactions (P_*_pg, P_*_pp).
-comptime P_pion_plus_Kpg = 99
-comptime P_pion_minus_Kpg = 100
-comptime P_pion_plus_Kpp = 101
-comptime P_pion_minus_Kpp = 102
-comptime P_muon_plus_left_Kpg = 103  # + 0 .. 3
-comptime P_muon_plus_left_Kpp = 107  # + 0 .. 3
-comptime P_EXT_HAD_END = 111
-comptime P_EXT_NU_BEGIN = 111
-comptime P_neutrino_el_anti_ndec = 111  # anti-nu_e from neutron decay
+# components of the pions and muons are each the sum of this part, the part
+# from the pions made in the interactions (P_*_pg, P_*_pp) and that of the
+# charm decays (below).
+comptime P_pion_plus_Kpg = 101
+comptime P_pion_minus_Kpg = 102
+comptime P_pion_plus_Kpp = 103
+comptime P_pion_minus_Kpp = 104
+comptime P_muon_plus_left_Kpg = 105  # + 0 .. 3
+comptime P_muon_plus_left_Kpp = 109  # + 0 .. 3
+# charm hadrons, each block in the species order below: all (the sum of the
+# two origins), from photo-hadronic interactions, from pp collisions
+comptime P_charm = 113
+comptime P_charm_pg = 121
+comptime P_charm_pp = 129
+# per charm origin, photo-hadronic (_Cpg) or pp (_Cpp), the decay chain of the
+# charm hadrons: the kaons of the charm decays (K+, K-, K0_S, K0_L), the pions
+# of the charm decays and of these kaons' decays (pi+, pi-), and the muons of
+# all their decays (mu+ left, mu+ right, mu- left, mu- right)
+comptime P_kaon_plus_Cpg = 137  # + 0 .. 3
+comptime P_kaon_plus_Cpp = 141  # + 0 .. 3
+comptime P_pion_plus_Cpg = 145  # + 0 .. 1
+comptime P_pion_plus_Cpp = 147  # + 0 .. 1
+comptime P_muon_plus_left_Cpg = 149  # + 0 .. 3
+comptime P_muon_plus_left_Cpp = 153  # + 0 .. 3
+comptime P_EXT_HAD_END = 157
+comptime P_EXT_NU_BEGIN = 157
+comptime P_neutrino_el_anti_ndec = 157  # anti-nu_e from neutron decay
 # per kaon origin: the neutrinos of the kaon decays and of the decays of the
-# pions and muons above (nu_e, anti-nu_e, nu_mu, anti-nu_mu). The neutrino
-# components P_neutrino_*_pg and _pp hold those of the pions made in the
-# interactions and of their muons.
-comptime P_neutrino_el_Kpg = 112  # + 0 .. 3
-comptime P_neutrino_el_Kpp = 116  # + 0 .. 3
-comptime P_EXT_NU_END = 120
+# pions and muons above (nu_e, anti-nu_e, nu_mu, anti-nu_mu)
+comptime P_neutrino_el_Kpg = 158  # + 0 .. 3
+comptime P_neutrino_el_Kpp = 162  # + 0 .. 3
+# per origin, photo-hadronic (_pg) or pp (_pp): the nu_mu and anti-nu_mu of the
+# decays of the pions made in the interactions. The neutrino components
+# P_neutrino_*_pg and _pp hold those of the decays of these pions' muons. AM3's
+# photo-hadronic and pp neutrino components are the sums of the three parts and
+# the charm decay chain's (below).
+comptime P_neutrino_mu_pidec_pg = 166  # + 0 .. 1
+comptime P_neutrino_mu_pidec_pp = 168  # + 0 .. 1
+# per charm origin: the neutrinos of the charm decay chain (nu_e, anti-nu_e,
+# nu_mu, anti-nu_mu), and its nu_tau and anti-nu_tau (of D(s) -> tau nu and
+# the tau decays), which AM3 has no species for: they are not part of the
+# totals P_neutrino_el ... P_neutrino_mu_anti
+comptime P_neutrino_el_Cpg = 170  # + 0 .. 3
+comptime P_neutrino_el_Cpp = 174  # + 0 .. 3
+comptime P_neutrino_tau_Cpg = 178  # + 0 .. 1
+comptime P_neutrino_tau_Cpp = 180  # + 0 .. 1
+comptime P_EXT_NU_END = 182
 
-comptime P_COUNT = 120
+comptime P_COUNT = 182
 
 # e+- arrays whose synchrotron and inverse-Compton photons are computed: all
 # pairs, the N_PAIR_COMP components and the neutron-decay electrons
@@ -152,3 +185,15 @@ comptime KP = 0  # K+
 comptime KM = 1  # K-
 comptime KS = 2  # K0_S
 comptime KL = 3  # K0_L
+
+# charm species s (PDG order, each particle before its antiparticle): arrays
+# P_charm + s, P_charm_pg + s and P_charm_pp + s, solvers ids.charm_solver(s, pp)
+comptime N_CHARM = 8
+comptime CDP = 0  # D+
+comptime CDM = 1  # D-
+comptime CD0 = 2  # D0
+comptime CD0B = 3  # anti-D0
+comptime CDSP = 4  # Ds+
+comptime CDSM = 5  # Ds-
+comptime CLC = 6  # Lambda_c+
+comptime CLCB = 7  # anti-Lambda_c-

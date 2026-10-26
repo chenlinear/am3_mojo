@@ -9,10 +9,13 @@ Differences from the C++ code that do not change results:
 """
 
 from std.builtin.globals import global_constant
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
+from std.math import ceil, fma, sqrt
+from std.utils.numerics import nextafter
 from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
 from am3_mojo.utils.interp import LinearSpline, solve_tridiag
+from am3_mojo.utils.libm import *
+from am3_mojo.utils.parallel import parallel_run
 
 # Taylor coefficients of the inverse-Compton cooling functions (Jones 1965,
 # Table I, as exact fractions): f1 from z^3, f2 from z^2, both to z^10
@@ -54,26 +57,26 @@ comptime _GL4_W: Array[Float64, 4] = [
 ]
 
 
-@always_inline
+@inline(.always)
 def _phi1(u: Float64) -> Float64:
     """(e^u - 1) / u, 1 at u = 0."""
-    return 1.0 if c_fabs(u) < 1e-12 else c_expm1(u) / u
+    return 1.0 if abs(u) < 1e-12 else c_expm1(u) / u
 
 
-@no_inline
+@inline(.never)
 def _zero(p: FPtr, n: Int):
     for i in range(n):
         p[unsafe_offset=i] = 0.0
 
 
 # regime 3's source integral (simple_integral_q): moments of e^(-D v) on [0, 1]
-@always_inline
+@inline(.always)
 def _expmom0(D: Float64) -> Float64:
     """int_0^1 e^(-D v) dv = (1 - e^-D) / D."""
     return 1.0 if D < 1e-300 else -c_expm1(-D) / D
 
 
-@always_inline
+@inline(.always)
 def _expmom(D: Float64, k: Int) -> Float64:
     """int_0^1 v^(k - 1) e^(-D v) dv for k = 2, 3 (series below D = 0.5)."""
     if D < 0.5:
@@ -89,7 +92,7 @@ def _expmom(D: Float64, k: Int) -> Float64:
     return (2.0 - (D * D + 2.0 * D + 2.0) * e) / (D * D * D)
 
 
-@always_inline
+@inline(.always)
 def _source_piece(
     K: Float64,
     h: Float64,
@@ -110,7 +113,7 @@ def _source_piece(
     var rb = 1.0  # kbar / k(h)
     var rm = 1.0  # kbar / k(h / 2)
     var vm = 0.5  # t(h / 2) / D
-    if c_fabs(dd) >= 1e-12:
+    if abs(dd) >= 1e-12:
         var w = c_expm1(0.5 * dd)
         ra = w * (w + 2.0) / dd
         rb = ra / ((1.0 + w) * (1.0 + w))
@@ -129,7 +132,7 @@ def _source_piece(
     )
 
 
-@always_inline
+@inline(.always)
 def _source_cell(
     h: Float64,
     lka: Float64,
@@ -143,8 +146,8 @@ def _source_cell(
     at most 0.25 and the attenuation exponent by at most 2 on average."""
     var d = lkb - lka
     var dc = h * c_exp(lka) * (1.0 if d == 0.0 else c_expm1(d) / d)
-    var mm = c_ceil(max(c_fabs(d) / 0.25, dc / 2.0))
-    var m = 1 if not (mm >= 1.0) else (400 if mm > 400.0 else to_int(mm))
+    var mm = ceil(max(abs(d) / 0.25, dc / 2.0))
+    var m = 1 if not (mm >= 1.0) else (400 if mm > 400.0 else Int(mm))
     var K = 0.0
     var integral = 0.0
     for p in range(m):
@@ -167,6 +170,41 @@ def _source_cell(
     return integral
 
 
+struct ICKerJob(Movable):
+    var S: Pointer[SolverAlgorithm, MutUntrackedOrigin]
+    var eph: FPtr  # photon energies [GeV]
+    var failed: Bool
+
+    def __init__(
+        out self, S: Pointer[SolverAlgorithm, MutUntrackedOrigin], eph: FPtr
+    ):
+        self.S = S
+        self.eph = eph
+        self.failed = False
+
+
+def ic_ker_work(job: Pointer[ICKerJob, MutUntrackedOrigin], t: Int, nt: Int):
+    ref S = job[].S[]
+    var mass = S.MASS_R * MASS_E
+    var NB = S.N_BINS
+    var c_light = C_LIGHT * S.T_UNIT_S / S.L_UNIT_CM
+    var sigma_t = SIGMA_T / S.L_UNIT_CM / S.L_UNIT_CM
+    var coeff = 3.0 / 16.0 * c_light * sigma_t * MASS_E * MASS_E
+    var kp = pd(S.ker_ic_t)
+    var i = t
+    while i < NB:
+        var gm = c_exp(S.DELTA_X * Float64(i)) * S.X_UNIT_GEV / mass
+        for j in range(S.N_PHOT):
+            var eph = job[].eph[unsafe_offset=j]
+            try:
+                kp[unsafe_offset=j * NB + i] = (
+                    coeff * S.Fic(gm, eph) / eph / eph / gm / gm / gm
+                )
+            except:
+                job[].failed = True
+        i += nt
+
+
 struct SolverAlgorithm(Copyable, Movable):
     var particle_name: String
     var N_BINS: Int
@@ -175,10 +213,8 @@ struct SolverAlgorithm(Copyable, Movable):
     var X_UNIT_GEV: Float64
     var L_UNIT_CM: Float64
     var T_UNIT_S: Float64
-    var HALF_LIFE_S: Float64
     var MASS_R: Float64
     var delta_t: Float64
-    var step_counter: Int
     var process_sy: Bool
     var process_quantum_syn_cooling: Bool
     var process_ic: Bool
@@ -190,6 +226,7 @@ struct SolverAlgorithm(Copyable, Movable):
     var verbose: Bool
 
     var alpha_decay: Vec
+    var gam: Vec  # Lorentz factor of every bin
     var Asy: Vec
     var Aic: Vec
     var cooling_on: Bool
@@ -259,10 +296,8 @@ struct SolverAlgorithm(Copyable, Movable):
         self.X_UNIT_GEV = XUG
         self.L_UNIT_CM = LUC
         self.T_UNIT_S = TUS
-        self.HALF_LIFE_S = HLS
         self.MASS_R = MR
         self.delta_t = Dt
-        self.step_counter = 0
         self.process_sy = process_sy
         self.process_quantum_syn_cooling = process_quantum_syn_cooling
         self.process_ic = process_ic
@@ -273,16 +308,17 @@ struct SolverAlgorithm(Copyable, Movable):
         self.simpleqintegration = simpleqintegration
         self.verbose = verbose
         self.alpha_decay = zeros(NB)
+        self.gam = zeros(NB)
         self.Asy = zeros(NB)
         self.Aic = zeros(NB)
         self.cooling_on = False
         self.ker_status = 0
         self.N_PHOT = NB - PGO
         self.ker_ic_t = Vec()
-        var mass_e = 0.511e-3
-        var mass = MR * mass_e
+        var mass = MR * MASS_E
         for i in range(NB):
             var gamma = c_exp(DX * Float64(i)) * XUG / mass
+            self.gam[i] = gamma
             self.alpha_decay[i] = TUS / HLS / gamma
         var nw = NB + 40
         self.w_a = zeros(nw)
@@ -345,10 +381,14 @@ struct SolverAlgorithm(Copyable, Movable):
     # ------------------------------------------------------------------
     # cooling rates (synchrotron + inverse Compton)
     # ------------------------------------------------------------------
-    def update_cooling(mut self, b_gauss: Float64, n_phot: Vec) raises:
-        """Compute Asy and Aic for this step. They depend only on the field,
-        the target photons and the species, so solvers of one species share
-        them (`share_cooling`)."""
+    def start_cooling(
+        mut self, b_gauss: Float64, n_phot: Vec, nthreads: Int
+    ) raises -> Bool:
+        """Whether this step has cooling (`cooling_on`), and the IC cooling
+        kernel if it is still missing: what compute_syn_ic needs before it
+        computes Asy and Aic (run_cooling). The rates depend only on the
+        field, the target photons and the species, so solvers of one species
+        share them (`share_cooling`)."""
         var sum_nphot = 0.0
         var npp = pd(n_phot)
         for i in range(len(n_phot)):
@@ -356,8 +396,9 @@ struct SolverAlgorithm(Copyable, Movable):
         self.cooling_on = (self.process_sy and b_gauss > 1.0e-12) or (
             self.process_ic and sum_nphot > 1e-100
         )
-        if self.cooling_on:
-            self.compute_syn_ic(b_gauss, n_phot)
+        if self.cooling_on and self.process_ic and self.ker_status == 0:
+            self.compute_ic_ker(nthreads)
+        return self.cooling_on
 
     def share_cooling(mut self, Asy: Vec, Aic: Vec, cooling_on: Bool):
         """Take the cooling rates computed by a solver of the same species
@@ -377,7 +418,7 @@ struct SolverAlgorithm(Copyable, Movable):
     ) raises:
         """Advance density `n` by one time step in place, using the escape
         rates `a_esc_in`, cooling rates `A_cool_in` (plus the rates of the last
-        `update_cooling`/`share_cooling`) and the source `q_inj`."""
+        `compute_syn_ic`/`share_cooling`) and the source `q_inj`."""
         var NB = self.N_BINS
         var a_esc = pd(self.e_a)
         var A_cool = pd(self.e_A)
@@ -419,7 +460,7 @@ struct SolverAlgorithm(Copyable, Movable):
             sum_esc += a_esc[unsafe_offset=i] / self.T_UNIT_S
         var sum_A = 0.0
         for i in range(NB):
-            sum_A += c_fabs(A_cool[unsafe_offset=i]) / self.T_UNIT_S
+            sum_A += abs(A_cool[unsafe_offset=i]) / self.T_UNIT_S
         var sum_n = 0.0
         for i in range(NB):
             sum_n += n0p[unsafe_offset=i] * Lm3
@@ -462,21 +503,23 @@ struct SolverAlgorithm(Copyable, Movable):
                 sep="",
             )
 
-    def compute_syn_ic(mut self, b_gauss: Float64, n_phot: Vec) raises:
+    def compute_syn_ic(
+        mut self, b_gauss: Float64, n_phot: Vec, i0: Int, i1: Int
+    ):
+        """Asy and Aic of the bins [i0, i1), after start_cooling. Ranges that
+        start at a multiple of WD (and end at one, or at N_BINS) give every
+        bin the code path of the whole range, so they may be computed apart.
+        """
         if self.verbose:
             print("add syn and ic")
-        if self.process_ic and self.ker_status == 0:
-            self.compute_ic_ker()
         var T = self.T_UNIT_S
         var L = self.L_UNIT_CM
-        var c_light = 3.0e10 * T / L
-        var sigma_t = 0.665e-24 / L / L
-        var mass_e = 0.511e-3
-        var erg_to_gev = 624.0
-        var mass = self.MASS_R * mass_e
+        var c_light = C_LIGHT * T / L
+        var sigma_t = SIGMA_T / L / L
+        var mass = self.MASS_R * MASS_E
         var NB = self.N_BINS
         var ub_Edimless = (
-            b_gauss * b_gauss / (8.0 * 3.1416 * mass_e / erg_to_gev) * L * L * L
+            b_gauss * b_gauss / (8.0 * PI * MASS_E / GEV_PER_ERG) * L * L * L
         )
         var k_synch = (
             (4.0 / 3.0)
@@ -490,25 +533,17 @@ struct SolverAlgorithm(Copyable, Movable):
         var sy = fbool(self.process_sy)
         var Asy = pd(self.Asy)
         var Aic = pd(self.Aic)
-        for i in range(NB):
-            var gamma = (
-                c_exp(self.DELTA_X * Float64(i)) * self.X_UNIT_GEV / mass
-            )
+        # quantum parameter chi = gamma B / B_cr(m), B_cr ∝ m^2: AM3's value /
+        # MASS_R (AM3 divides by m only, overstating chi by m / m_e for the
+        # hadrons and muons: an AM3 bug)
+        var chi_g = 1.2 * c_pow(10.0, -8.0) * b_gauss / mass / c_pow(10.0, 9.0)
+        for i in range(i0, i1):
+            var gamma = self.gam[i]
             Asy[unsafe_offset=i] = -sy * k_synch * gamma
             if self.process_quantum_syn_cooling:
-                # quantum parameter chi = gamma B / B_cr(m), B_cr ∝ m^2: AM3's
-                # value / MASS_R (AM3 divides by m only, overstating chi by
-                # m / m_e for the hadrons and muons: an AM3 bug)
-                var x = (
-                    1.2
-                    * c_pow(10.0, -8.0)
-                    * b_gauss
-                    / mass
-                    / c_pow(10.0, 9.0)
-                    * gamma
-                ) / self.MASS_R
+                var x = (chi_g * gamma) / self.MASS_R
                 Asy[unsafe_offset=i] *= 1.0 / c_pow(
-                    1.0 + c_sqrt(2.0) * c_pow(x, 2.0 / 3.0), 2.0
+                    1.0 + sqrt(2.0) * c_pow(x, 2.0 / 3.0), 2.0
                 )
             Aic[unsafe_offset=i] = 0.0
         if self.process_ic:
@@ -517,53 +552,48 @@ struct SolverAlgorithm(Copyable, Movable):
             var kp = pd(self.ker_ic_t)
             var npp = pd(n_phot)
             var DX = self.DELTA_X
-            var i = 0
-            while i + WD <= NB:
+            var i = i0
+            while i + WD <= i1:
                 var acc = SIMD[DType.float64, WD](0)
                 for j in range(nj):
                     var k = kp.unsafe_offset(j * NB + i).unsafe_load[width=WD]()
                     acc += k * npp[unsafe_offset=j]
                 Aic.unsafe_offset(i).unsafe_store(-DX * acc)
                 i += WD
-            while i < NB:
+            while i < i1:
                 var acc = 0.0
                 for j in range(nj):
                     acc += kp[unsafe_offset=j * NB + i] * npp[unsafe_offset=j]
                 Aic[unsafe_offset=i] = -DX * acc
                 i += 1
 
-    def compute_ic_ker(mut self) raises:
+    def compute_ic_ker(mut self, nthreads: Int) raises:
+        """The IC cooling kernel, on up to nthreads threads (the particle bins
+        i = t, t + nt, ...)."""
         if self.verbose:
             print("calc ic kernel")
-        var mass_e = 0.511e-3
-        var mass = self.MASS_R * mass_e
-        var NB = self.N_BINS
-        var NP = self.N_PHOT
-        var T = self.T_UNIT_S
-        var L = self.L_UNIT_CM
-        var c_light = 3.0e10 * T / L
-        var sigma_t = 0.665e-24 / L / L
-        var coeff = 3.0 / 16.0 * c_light * sigma_t * mass_e * mass_e
-        self.ker_ic_t = zeros(NB * NP)
-        var kp = pd(self.ker_ic_t)
-        for i in range(NB):
-            var gm = c_exp(self.DELTA_X * Float64(i)) * self.X_UNIT_GEV / mass
-            for j in range(NP):
-                var eph = (
-                    c_exp(Float64(self.PHOT_GRID_ORIGIN + j) * self.DELTA_X)
-                    * self.X_UNIT_GEV
-                )
-                kp[unsafe_offset=j * NB + i] = (
-                    coeff * self.Fic(gm, eph) / eph / eph / gm / gm / gm
-                )
+        self.ker_ic_t = zeros(self.N_BINS * self.N_PHOT)
+        var eph = zeros(self.N_PHOT)
+        for j in range(self.N_PHOT):
+            eph[j] = (
+                c_exp(Float64(self.PHOT_GRID_ORIGIN + j) * self.DELTA_X)
+                * self.X_UNIT_GEV
+            )
+        var job = ICKerJob(
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](), pd(eph)
+        )
+        parallel_run[ic_ker_work](job, max(1, min(nthreads, self.N_BINS)))
+        _ = eph^  # (read by the workers through a pointer)
+        if job.failed:
+            raise Error("error in SolverAlgorithm.compute_ic_ker")
         self.ker_status = 1
 
     def Fic(self, gamma: Float64, Eph_GeV: Float64) raises -> Float64:
         """Inverse-Compton cooling kernel of a particle with Lorentz factor
         gamma on photons of energy Eph_GeV, F(z+) - F(z-) with
         z+- = (Eph / m) * (gamma + sqrt(gamma^2 - 1))^(+-1)."""
-        var w = Eph_GeV / (self.MASS_R * 0.511e-3)
-        var gamma_bar = gamma + c_sqrt(gamma * gamma - 1.0 + 1.0e-10)
+        var w = Eph_GeV / (self.MASS_R * MASS_E)
+        var gamma_bar = gamma + sqrt(gamma * gamma - 1.0 + 1.0e-10)
         var za = w * gamma_bar
         var zb = w / gamma_bar
         var d1 = self.Fic_1(za) - self.Fic_1(zb)
@@ -661,7 +691,7 @@ struct SolverAlgorithm(Copyable, Movable):
         var lx = c_log(x)
         return (
             -0.5 * lx * lx
-            - mathpi * mathpi / 6.0
+            - PI * PI / 6.0
             + 1.0 / x
             - 1.0 / (4.0 * x * x)
             + 1.0 / (9.0 * x * x * x)
@@ -867,11 +897,10 @@ struct SolverAlgorithm(Copyable, Movable):
             i -= 1
         n1[unsafe_offset=0] = 0.0
         n1[unsafe_offset=1] = 0.0
-        self.step_counter += 1
         if self.verbose:
             print("finished evolving ", self.particle_name)
 
-    @no_inline
+    @inline(.never)
     def cells_reached(self, A_cool: FPtr, imax: Int, itop: Int) -> Int:
         """Number of cells above imax (at least 10) from which particles
         cooling at A_cool reach imax within the step (one more as margin), up
@@ -883,7 +912,7 @@ struct SolverAlgorithm(Copyable, Movable):
             g += 1
         return max(10, g - imax + 1)
 
-    @no_inline
+    @inline(.never)
     def crossing_count(
         self,
         a_esc: FPtr,
@@ -947,11 +976,11 @@ struct SolverAlgorithm(Copyable, Movable):
                 # the part of the interval within reach: tau(send) = dt
                 var r = (dt - tau) / hL
                 send = h * (
-                    r if c_fabs(dL * r) < 1e-12 else c_log1p(dL * r) / dL
+                    r if abs(dL * r) < 1e-12 else c_log1p(dL * r) / dL
                 )
                 last = True
             var dS = hM * _phi1(dM * send / h) * send / h
-            var npiece = 1 if dS <= 1.0 else min(64, Int(c_ceil(dS)))
+            var npiece = 1 if dS <= 1.0 else min(64, Int(ceil(dS)))
             var ds = send / Float64(npiece)
             for p in range(npiece):
                 var s0 = ds * Float64(p)
@@ -1014,7 +1043,7 @@ struct SolverAlgorithm(Copyable, Movable):
     # ------------------------------------------------------------------
     # regime 2: Chang & Cooper tridiagonal matrix solver
     # ------------------------------------------------------------------
-    @always_inline
+    @inline(.always)
     def chc_delta(self, k: Int, p: Float64, q: Float64) -> Float64:
         if k == 0:
             return 0.5
@@ -1028,7 +1057,7 @@ struct SolverAlgorithm(Copyable, Movable):
         else:
             return 1.0 / w - 1.0 / (c_exp(w) - 1.0)
 
-    @always_inline
+    @inline(.always)
     def A_w(
         self, i: Int, j: Int, p: Float64, q: Float64, A_total: FPtr
     ) -> Float64:
@@ -1087,10 +1116,9 @@ struct SolverAlgorithm(Copyable, Movable):
             var rA = self.A_w(i, 0, 1.0, 1.0, A_cool)
             var rB = B
             # two Chang & Cooper iterations of A (B stays constant), delta from
-            # the last (written out: a `for _ in range(2)` loop here sends the
-            # Mojo 1.1 optimizer into a very long compile)
-            rA = self.A_w(i, 1, rA, rB, A_cool)
-            rA = self.A_w(i, 1, rA, rB, A_cool)
+            # the last
+            for _ in range(2):
+                rA = self.A_w(i, 1, rA, rB, A_cool)
             DA[unsafe_offset=i] = rA
             DB[unsafe_offset=i] = rB
             DD[unsafe_offset=i] = self.chc_delta(1, rA, rB)
@@ -1176,14 +1204,22 @@ struct SolverAlgorithm(Copyable, Movable):
         var x = lower
         var y = 0.0
         var diff_x = (upper - lower) / Float64(N_INTG)
+        # a step that leaves [x_min, x_max] ends the sum (x stops); the
+        # integrand at the end of a step is the one at the start of the next
+        # (the same x). The sum (k1 + k4) / 6 + 2 k2 / 3 is written with the
+        # fused multiply-adds the compiler makes of it.
+        if x < x_min or x + 1.0 * diff_x > x_max:
+            return y
+        var f1 = c_exp(spl_lnmivA.eval(x))
         for _ in range(N_INTG):
             if x < x_min or x + 1.0 * diff_x > x_max:
-                continue
-            var k1 = diff_x * c_exp(spl_lnmivA.eval(x))
+                break
             var k2 = diff_x * c_exp(spl_lnmivA.eval(x + 0.5 * diff_x))
-            var k4 = diff_x * c_exp(spl_lnmivA.eval(x + 1.0 * diff_x))
-            y += (1.0 / 6.0) * (k1 + k4) + (2.0 / 3.0) * k2
+            var f4 = c_exp(spl_lnmivA.eval(x + 1.0 * diff_x))
+            var k14 = fma(diff_x, f4, diff_x * f1)
+            y += fma(k2, 2.0 / 3.0, (1.0 / 6.0) * k14)
             x += diff_x
+            f1 = f4
         return y
 
     def compute_y(
@@ -1210,7 +1246,7 @@ struct SolverAlgorithm(Copyable, Movable):
             if not (b_lin[unsafe_offset=i] > b_lin[unsafe_offset=i - 1]):
                 var prev = b_lin[unsafe_offset=i - 1]
                 var dir = max(prev + 1.0, prev * 1.0)
-                b_lin[unsafe_offset=i] = c_nextafter(prev, dir)
+                b_lin[unsafe_offset=i] = nextafter(prev, dir)
         if spl_lnmivA.error:
             raise Error("interpolation error (gsl_spline_eval out of range)")
         for i in range(1, N):
@@ -1248,18 +1284,22 @@ struct SolverAlgorithm(Copyable, Movable):
         var diff_x = (upper - lower) / Float64(N_INTG)
         var x = lower
         var y = 0.0
+        # the integrand at the end of a step is the one at the start of the
+        # next (the same x). The sum (k1 + k4) / 6 + 2 k2 / 3, with
+        # k = -diff_x * loss, is written with the fused multiply-adds the
+        # compiler makes of it.
+        var k1_lnloss = spl_lna.eval(x)
+        var k1_loss = 0.0 if k1_lnloss < -200.0 else c_exp(k1_lnloss)
         for _ in range(N_INTG):
-            var k1_lnloss = spl_lna.eval(x)
             var k2_lnloss = spl_lna.eval(x + 0.5 * diff_x)
             var k4_lnloss = spl_lna.eval(x + 1.0 * diff_x)
-            var k1_loss = 0.0 if k1_lnloss < -200.0 else c_exp(k1_lnloss)
             var k2_loss = 0.0 if k2_lnloss < -200.0 else c_exp(k2_lnloss)
             var k4_loss = 0.0 if k4_lnloss < -200.0 else c_exp(k4_lnloss)
-            var k1 = -diff_x * k1_loss
             var k2 = -diff_x * k2_loss
             var k4 = -diff_x * k4_loss
-            y += (1.0 / 6.0) * (k1 + k4) + (2.0 / 3.0) * k2
+            y += fma(fma(-diff_x, k1_loss, k4), 1.0 / 6.0, (2.0 / 3.0) * k2)
             x += diff_x
+            k1_loss = k4_loss
         return y
 
     def rk4_gslspl_q(
@@ -1288,7 +1328,7 @@ struct SolverAlgorithm(Copyable, Movable):
         var I_alpha_ivA = (upper - lower) * abs_alpha_ivA
         if I_alpha_ivA < 1.0e-3:
             var N_min = 10
-            var N_eff = to_int((upper - lower) / 0.1)
+            var N_eff = Int((upper - lower) / 0.1)
             var N_pts = N_min if N_min > N_eff else N_eff
             var diff_x = (upper - lower) / Float64(N_pts)
             var x_prime = lower
@@ -1342,7 +1382,7 @@ struct SolverAlgorithm(Copyable, Movable):
                     range_ = upper_eff - lower
                     diff_x = range_ / Float64(N_OUTER_INIT)
             var N_min = 10
-            var N_eff = to_int((upper_eff - lower) / 0.1)
+            var N_eff = Int((upper_eff - lower) / 0.1)
             var N_pts = N_min if N_min > N_eff else N_eff
             diff_x = (upper_eff - lower) / Float64(N_pts)
             var x_prime = lower
@@ -1440,7 +1480,7 @@ struct SolverAlgorithm(Copyable, Movable):
             var xi = x_ln[unsafe_offset=i]
             var yi = y_ln[unsafe_offset=i]
             # the cell that holds y: x_ln[m] <= y < x_ln[m + 1]
-            var m = min(N - 2, i + max(0, to_int((yi - xi) / DX)))
+            var m = min(N - 2, i + max(0, Int((yi - xi) / DX)))
             while m > i and x_ln[unsafe_offset=m] > yi:
                 m -= 1
             while m < N - 2 and x_ln[unsafe_offset=m + 1] <= yi:
@@ -1541,6 +1581,7 @@ struct SolverAlgorithm(Copyable, Movable):
                 var ny = spl_n.eval(yi)
                 var ivAy = -c_exp(spl_lnmivA.eval(yi))
                 var Aratio = 1.0 / A_cool[unsafe_offset=i] / ivAy
+                spl_lna.hint(i)  # (x_i is grid point i)
                 var lnloss = self.rk4_gslspl_a(xi, yi, 5, x0, xN, spl_lna)
                 var loss = 0.0 if lnloss < -100.0 else c_exp(lnloss)
                 var injection: Float64
@@ -1595,6 +1636,9 @@ struct SolverAlgorithm(Copyable, Movable):
             k -= 1
         var spl_lnmivA = LinearSpline(x_ln, mivA_ln, N)
         var spl_q_intg = LinearSpline(x_ln, q_intg, N)
+        # (q_intg at x and at y: one spline for each, so that both searches
+        # move up the grid)
+        var spl_q_intg_x = LinearSpline(x_ln, q_intg, N)
         var spl_n = LinearSpline(x_ln, n0, N)
         self.compute_y(N, x_ln, y_ln, spl_lnmivA)
         if self.verbose:
@@ -1612,11 +1656,18 @@ struct SolverAlgorithm(Copyable, Movable):
             else:
                 var ny = spl_n.eval(yi)
                 var mivAy = -c_exp(spl_lnmivA.eval(yi))
-                var intgd_injection = spl_q_intg.eval(yi) - spl_q_intg.eval(xi)
+                var intgd_injection = spl_q_intg.eval(yi) - spl_q_intg_x.eval(
+                    xi
+                )
                 var Ai = A_cool[unsafe_offset=i]
                 # A(y)/A(x) n(y) = (1/A(x)) n(y) / (1/A(y)) (AM3 had the
                 # opposite sign of this term)
                 n1[unsafe_offset=i] = ny / Ai / mivAy - intgd_injection / Ai
         n1[unsafe_offset=N - 1] = 0.0
-        if spl_lnmivA.error or spl_q_intg.error or spl_n.error:
+        if (
+            spl_lnmivA.error
+            or spl_q_intg.error
+            or spl_q_intg_x.error
+            or spl_n.error
+        ):
             raise Error("interpolation error (gsl_spline_eval out of range)")

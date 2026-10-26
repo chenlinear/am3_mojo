@@ -1,15 +1,16 @@
 """Ports of Syn (electron/positron synchrotron, Synchrotron.cc) and SynP
 (proton/pion/muon synchrotron, HadronicSynchrotron.cc)."""
 
-from am3_mojo.utils.parallel import parallel_run
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.utils.specfun import gsl_bessel_Knu, int_bessel_k53
-from am3_mojo.model.runparams import RunParams
+from std.math import sqrt
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.particles import *
+from am3_mojo.model.runparams import RunParams
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
 from am3_mojo.utils.linalg import MatD, gemv_d
+from am3_mojo.utils.parallel import parallel_run
+from am3_mojo.utils.specfun import gsl_bessel_Knu, int_bessel_k53
 
 
 def _syn_fdb_approx(norm: Float64, xbar: Float64, low_cut: Float64) -> Float64:
@@ -37,7 +38,7 @@ def _syn_fdb_approx(norm: Float64, xbar: Float64, low_cut: Float64) -> Float64:
     elif 2.0 * xbar >= 10.0 and 2.0 * xbar < 100.0:
         return (
             norm
-            * mathpi
+            * PI
             / 4.0
             * c_exp(-2.0 * xbar)
             * (1.0 - 99.0 / 162.0 / 2.0 / xbar)
@@ -52,7 +53,7 @@ def _I_Qsyn_mu_1(
     var ksi0 = 1.5 * b_ratio * gamma_e
     var epsilon_c = 1.5 * b_ratio * gamma_e * gamma_e
     var x0 = epsilon / epsilon_c
-    var s = c_sqrt(1.0 - mu * mu)
+    var s = sqrt(1.0 - mu * mu)
     var x = x0 / s
     var ksi = ksi0 * s
     var z = x / (1.0 - x * ksi)
@@ -68,7 +69,7 @@ def _I_Qsyn_mu_2(
     var ksi0 = 1.5 * b_ratio * gamma_e
     var epsilon_c = 1.5 * b_ratio * gamma_e * gamma_e
     var x0 = epsilon / epsilon_c
-    var s = c_sqrt(1.0 - mu * mu)
+    var s = sqrt(1.0 - mu * mu)
     var x = x0 / s
     var ksi = ksi0 * s
     var z = x / (1.0 - x * ksi)
@@ -134,7 +135,7 @@ def qsyn_init_work(job: Pointer[QSynJob, MutUntrackedOrigin], t: Int, nt: Int):
                 i,
                 j,
                 S.Q_Qsyn_avg(dat.egrid_lep[j], dat.egrid_pho[i], dat.dlnE, 6)
-                * T_SSC_CGS,
+                * T_SSC,
             )
         i += nt
 
@@ -155,10 +156,8 @@ struct Syn(Copyable, Movable):
         self.KER_PsyU = MatD()
         self.w_epx = Vec()
         self.b_gauss = rp.mag_field
-        var mass_GeV = masse
-        var h_GeVs = 4.131870326679899e-24
-        var lambC = h_GeVs * c0 / mass_GeV / L_SSC_CGS
-        self.coeff_abs = c_pow(lambC, 3.0) / 8.0 / mathpi
+        var lambC = H_PLANCK * C_LIGHT / MASS_E / L_SSC
+        self.coeff_abs = c_pow(lambC, 3.0) / 8.0 / PI
         self.clear_internal_arrays(dat)
 
     def clear_internal_arrays(mut self, dat: AM3Arrays):
@@ -192,10 +191,11 @@ struct Syn(Copyable, Movable):
                     )
 
     def syn_kernel_ultrarel(self, x: Float64, g: Float64) -> Float64:
-        var b_crit = 4.41e13
-        var b_dimless = self.b_gauss / b_crit
-        var b_nat = 8.14e-16 * self.b_gauss
-        var b_ub_nat = b_nat * b_nat / (8.0 * mathpi)
+        var b_dimless = self.b_gauss / B_CRIT
+        # the magnetic energy density B^2 / (8 pi) in the code units
+        var b_ub_nat = (
+            self.b_gauss * self.b_gauss / (8.0 * PI) / (MEC2_ERG * N_SSC)
+        )
         var norm = (1.65399 / b_dimless) * b_ub_nat
         var xbar = x / (3.0 * g * g * b_dimless)
         return _syn_fdb_approx(norm, xbar, 4e-3)
@@ -236,14 +236,12 @@ struct Syn(Copyable, Movable):
         bin_width: Float64,
         N_INTG: Int,
     ) -> Float64:
-        var b_crit = 4.41e13
-        var b_dimless = self.b_gauss / b_crit
-        var nu_0 = 1.235e20
-        var alpha_0 = 1.0 / 137.0
+        var b_dimless = self.b_gauss / B_CRIT
+        var nu_0 = MASS_E / H_PLANCK  # m_e c^2 / h [Hz]
         return (
-            c_sqrt(3.0)
+            sqrt(3.0)
             * nu_0
-            * alpha_0
+            * ALPHA
             * b_dimless
             * self.I_Qsyn_avg(b_dimless, gamma_e, epsilon, bin_width, N_INTG)
         )
@@ -301,7 +299,7 @@ struct Syn(Copyable, Movable):
         only_first: Bool,
     ):
         """V_phot_out_rate[m][i] = dlnE * sum_j K(i,j) V_elec_in[m][j]."""
-        comptime assert N_LEP_IN == 8, "the register block below has 8 inputs"
+        comptime assert N_LEP_IN <= 8, "the register blocks have up to 8 inputs"
         if self.verbose:
             print("computing pair syn emission")
         var npho = dat.nbins_pho
@@ -331,46 +329,101 @@ struct Syn(Copyable, Movable):
                 o0[unsafe_offset=i] = dl * y
                 i += 1
             return
-        comptime W = 4
-        var i = 0
-        while i + W <= npho:
-            var y0 = SIMD[DType.float64, W](0)
-            var y1 = SIMD[DType.float64, W](0)
-            var y2 = SIMD[DType.float64, W](0)
-            var y3 = SIMD[DType.float64, W](0)
-            var y4 = SIMD[DType.float64, W](0)
-            var y5 = SIMD[DType.float64, W](0)
-            var y6 = SIMD[DType.float64, W](0)
-            var y7 = SIMD[DType.float64, W](0)
+        # inputs that are zero everywhere, and electron bins where every input
+        # is zero, only add exact zeros: they are left out (the outputs of
+        # those inputs stay zero)
+        var nz_ins = ins.copy()
+        var nz_outs = outs.copy()
+        var n = 0
+        var jlo = nl - 1
+        var jhi = 1
+        for m in range(N_LEP_IN):
+            var nonzero = False
             for j in range(1, nl - 1):
-                var z = K.unsafe_offset(j * npho + i).unsafe_load[width=W]()
-                y0 += z * ins[0][unsafe_offset=j]
-                y1 += z * ins[1][unsafe_offset=j]
-                y2 += z * ins[2][unsafe_offset=j]
-                y3 += z * ins[3][unsafe_offset=j]
-                y4 += z * ins[4][unsafe_offset=j]
-                y5 += z * ins[5][unsafe_offset=j]
-                y6 += z * ins[6][unsafe_offset=j]
-                y7 += z * ins[7][unsafe_offset=j]
-            outs[0].unsafe_offset(i).unsafe_store(dl * y0)
-            outs[1].unsafe_offset(i).unsafe_store(dl * y1)
-            outs[2].unsafe_offset(i).unsafe_store(dl * y2)
-            outs[3].unsafe_offset(i).unsafe_store(dl * y3)
-            outs[4].unsafe_offset(i).unsafe_store(dl * y4)
-            outs[5].unsafe_offset(i).unsafe_store(dl * y5)
-            outs[6].unsafe_offset(i).unsafe_store(dl * y6)
-            outs[7].unsafe_offset(i).unsafe_store(dl * y7)
-            i += W
-        while i < npho:
-            for m in range(N_LEP_IN):
-                var y = 0.0
-                for j in range(1, nl - 1):
-                    y += K[unsafe_offset=j * npho + i] * ins[m][unsafe_offset=j]
-                outs[m][unsafe_offset=i] = dl * y
-            i += 1
+                if ins[m][unsafe_offset=j] != 0.0:
+                    jlo = min(jlo, j)
+                    jhi = max(jhi, j + 1)
+                    nonzero = True
+            if nonzero:
+                nz_ins[n] = ins[m]
+                nz_outs[n] = outs[m]
+                n += 1
+        if n == 1:
+            _sy_emit[1](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+        elif n == 2:
+            _sy_emit[2](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+        elif n == 3:
+            _sy_emit[3](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+        elif n == 4:
+            _sy_emit[4](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+        elif n == 5:
+            _sy_emit[5](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+        elif n == 6:
+            _sy_emit[6](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+        elif n == 7:
+            _sy_emit[7](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+        elif n == 8:
+            _sy_emit[8](K, npho, jlo, jhi, dl, nz_ins, nz_outs)
+
+
+def _sy_emit[
+    n: Int
+](
+    K: FPtr,
+    npho: Int,
+    jlo: Int,
+    jhi: Int,
+    dl: Float64,
+    ins: Array[FPtr, N_LEP_IN],
+    outs: Array[FPtr, N_LEP_IN],
+):
+    """outs[m][i] = dl sum_j K[j * npho + i] ins[m][j] over the electron bins
+    [jlo, jhi) for the first n inputs: 8 photon bins at a time (a cache line
+    of each kernel row; 4 for more than 6 inputs), the inputs in registers.
+    """
+    comptime W = 8 if n <= 6 else 4
+    var i = 0
+    while i + W <= npho:
+        var y = Array[SIMD[DType.float64, W], n](fill=SIMD[DType.float64, W](0))
+        for j in range(jlo, jhi):
+            var z = K.unsafe_offset(j * npho + i).unsafe_load[width=W]()
+            comptime for m in range(n):
+                y[m] += z * ins[m][unsafe_offset=j]
+        comptime for m in range(n):
+            outs[m].unsafe_offset(i).unsafe_store(dl * y[m])
+        i += W
+    while i < npho:
+        comptime for m in range(n):
+            var y = 0.0
+            for j in range(jlo, jhi):
+                y += K[unsafe_offset=j * npho + i] * ins[m][unsafe_offset=j]
+            outs[m][unsafe_offset=i] = dl * y
+        i += 1
+
+
+struct SynCJob(Movable):
+    """The charm-hadron synchrotron emission of the masses t, t + nt, ...
+    (sync_work)."""
+
+    var S: Pointer[SynP, MutUntrackedOrigin]
+    var dlnE: Float64
+
+    def __init__(out self, S: Pointer[SynP, MutUntrackedOrigin], dlnE: Float64):
+        self.S = S
+        self.dlnE = dlnE
+
+
+def sync_work(job: Pointer[SynCJob, MutUntrackedOrigin], t: Int, nt: Int):
+    """Mass k = t, t + nt, ...: its emission into its own buffer."""
+    ref S = job[].S[]
+    var k = t
+    while k < 3:
+        gemv_d(S.KER_PsyC[k], pd(S.w_inC[k]), job[].dlnE, pd(S.tmpC[k]))
+        k += nt
 
 
 struct SynP(Copyable, Movable):
+    var nthreads: Int
     var verbose: Bool
     var b_gauss: Float64
     var epsilonsyP: Vec
@@ -381,9 +434,17 @@ struct SynP(Copyable, Movable):
     var KER_PsyPi: MatD
     var KER_PsyMu: MatD
     var KER_PsyK: MatD  # kaons (am3_mojo addition), allocated when needed
+    # charged charm hadrons (am3_mojo addition): one kernel per mass (D+-;
+    # Ds+-; Lambda_c+ and anti-Lambda_c-), allocated when needed, and their
+    # emission
+    var KER_PsyC: List[MatD]
+    var epsilonsyC: Vec
     var w_in: Vec
+    var w_inC: List[Vec]  # per mass: the summed charges, and the emission
+    var tmpC: List[Vec]
 
     def __init__(out self, rp: RunParams, dat: AM3Arrays, verbose: Bool):
+        self.nthreads = 1
         self.verbose = verbose
         self.epsilonsyP = Vec()
         self.epsilonsyPi = Vec()
@@ -393,7 +454,11 @@ struct SynP(Copyable, Movable):
         self.KER_PsyPi = MatD()
         self.KER_PsyMu = MatD()
         self.KER_PsyK = MatD()
+        self.KER_PsyC = [MatD(), MatD(), MatD()]
+        self.epsilonsyC = Vec()
         self.w_in = Vec()
+        self.w_inC = [Vec(), Vec(), Vec()]
+        self.tmpC = [Vec(), Vec(), Vec()]
         self.b_gauss = rp.mag_field
         self.clear_internal_arrays(dat)
         self.reinitialize_empty_kernels(dat)
@@ -403,12 +468,15 @@ struct SynP(Copyable, Movable):
         resize_zero(self.epsilonsyPi, dat.nbins_pho)
         resize_zero(self.epsilonsyMu, dat.nbins_pho)
         resize_zero(self.epsilonsyK, dat.nbins_pho)
+        resize_zero(self.epsilonsyC, dat.nbins_pho)
 
     def reinitialize_empty_kernels(mut self, dat: AM3Arrays):
         self.KER_PsyP = MatD(dat.nbins_pho, dat.nbins_had)
         self.KER_PsyPi = MatD(dat.nbins_pho, dat.nbins_had)
         self.KER_PsyMu = MatD(dat.nbins_pho, dat.nbins_had)
         self.KER_PsyK = MatD()
+        for k in range(3):
+            self.KER_PsyC[k] = MatD()
 
     def initialize_kernels(
         mut self,
@@ -417,6 +485,7 @@ struct SynP(Copyable, Movable):
         rad_Pi: Bool,
         rad_Mu: Bool,
         rad_K: Bool,
+        rad_C: Bool,
     ):
         if rad_P:
             if self.verbose:
@@ -427,7 +496,7 @@ struct SynP(Copyable, Movable):
                         i,
                         j,
                         self.syn_kernel_ultrarel(
-                            dat.egrid_had_photons[i], dat.egrid_had[j], massp
+                            dat.egrid_had_photons[i], dat.egrid_had[j], MASS_P
                         ),
                     )
         if rad_Pi:
@@ -439,7 +508,7 @@ struct SynP(Copyable, Movable):
                         i,
                         j,
                         self.syn_kernel_ultrarel(
-                            dat.egrid_had_photons[i], dat.egrid_had[j], masspip
+                            dat.egrid_had_photons[i], dat.egrid_had[j], MASS_PI
                         ),
                     )
         if rad_Mu:
@@ -451,7 +520,7 @@ struct SynP(Copyable, Movable):
                         i,
                         j,
                         self.syn_kernel_ultrarel(
-                            dat.egrid_had_photons[i], dat.egrid_had[j], massmu
+                            dat.egrid_had_photons[i], dat.egrid_had[j], MASS_MU
                         ),
                     )
         if rad_K:
@@ -464,27 +533,45 @@ struct SynP(Copyable, Movable):
                         i,
                         j,
                         self.syn_kernel_ultrarel(
-                            dat.egrid_had_photons[i], dat.egrid_had[j], massK
+                            dat.egrid_had_photons[i], dat.egrid_had[j], MASS_K
                         ),
                     )
+        if rad_C:
+            if self.verbose:
+                print("computing charm-hadron syn. rad. kernels")
+            var masses: List[Float64] = [MASS_D, MASS_DS, MASS_LC]
+            for k in range(3):
+                self.KER_PsyC[k] = MatD(dat.nbins_pho, dat.nbins_had)
+                for i in range(dat.nbins_pho):
+                    for j in range(dat.nbins_had):
+                        self.KER_PsyC[k].set(
+                            i,
+                            j,
+                            self.syn_kernel_ultrarel(
+                                dat.egrid_had_photons[i],
+                                dat.egrid_had[j],
+                                masses[k],
+                            ),
+                        )
 
     def syn_kernel_ultrarel(
         self, x: Float64, pe: Float64, mass: Float64
     ) -> Float64:
-        var b_crit = 4.41e13
         var norm = (
-            (3.0 * 1.732 / mathpi)
-            * sigmaT
-            * c0
+            (3.0 * 1.732 / PI)
+            * SIGMA_T
+            * C_LIGHT
             * self.b_gauss
-            * b_crit
-            / (8.0 * mathpi)
-            * erg_GeV
+            * B_CRIT
+            / (8.0 * PI)
+            * GEV_PER_ERG
             / mass
         )
-        var b_dimless = self.b_gauss / b_crit
+        var b_dimless = self.b_gauss / B_CRIT
         var xbar = (
-            x * mass / (3.0 * pe * pe * b_dimless * masse / mass * masse / mass)
+            x
+            * mass
+            / (3.0 * pe * pe * b_dimless * MASS_E / mass * MASS_E / mass)
         )
         return _syn_fdb_approx(norm, xbar, 1e-2)
 
@@ -526,3 +613,29 @@ struct SynP(Copyable, Movable):
         for i in range(dat.nbins_had):
             self.w_in[i] = dat.n[P_kaon_plus][i] + dat.n[P_kaon_minus][i]
         gemv_d(self.KER_PsyK, pd(self.w_in), dat.dlnE, pd(self.epsilonsyK))
+
+    def Calc_SY_C(mut self, dat: AM3Arrays):
+        """Synchrotron emission of the charged charm hadrons (am3_mojo
+        addition): D+-, Ds+-, Lambda_c+ and anti-Lambda_c-, each with its mass.
+        The masses run in parallel, each into its own buffer; the sum keeps the
+        order D, Ds, Lambda_c, so the result does not depend on the threads."""
+        if self.verbose:
+            print("computing charm-hadron syn emission")
+        fill_zero(self.epsilonsyC)
+        if self.KER_PsyC[0].rows == 0:
+            return
+        for k in range(3):
+            var s0 = CDP if k == 0 else (CDSP if k == 1 else CLC)
+            resize_zero(self.w_inC[k], dat.nbins_had)
+            resize_zero(self.tmpC[k], dat.nbins_pho)
+            for i in range(dat.nbins_had):
+                self.w_inC[k][i] = (
+                    dat.n[P_charm + s0][i] + dat.n[P_charm + s0 + 1][i]
+                )
+        var job = SynCJob(
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](), dat.dlnE
+        )
+        parallel_run[sync_work](job, min(self.nthreads, 3))
+        for k in range(3):
+            for i in range(dat.nbins_pho):
+                self.epsilonsyC[i] += self.tmpC[k][i]

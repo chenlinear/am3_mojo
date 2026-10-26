@@ -1,4 +1,4 @@
-"""Array/pointer aliases, SIMD widths and small buffer helpers."""
+"""Array/pointer aliases, the SIMD width and small buffer helpers."""
 
 comptime FPtr = Pointer[Float64, MutUntrackedOrigin]
 comptime F32Ptr = Pointer[Float32, MutUntrackedOrigin]
@@ -8,32 +8,31 @@ comptime Vec = List[Float64]
 comptime VecF = List[Float32]
 comptime VecI = List[Int]
 
-# SIMD widths of the hot loops (NEON: 2 x f64 / 4 x f32 per register; LLVM
-# splits wider vectors, which gives extra instruction-level parallelism).
+# SIMD width of the hot loops (NEON: 2 x f64 per register; LLVM splits wider
+# vectors, which gives extra instruction-level parallelism).
 comptime WD = 8
-comptime WF = 16
 
 # ============================================================================
 # small array helpers
 # ============================================================================
 
 
-@always_inline
+@inline(.always)
 def zeros(n: Int) -> Vec:
     return Vec(length=n, fill=0.0)
 
 
-@always_inline
+@inline(.always)
 def zerosf(n: Int) -> VecF:
     return VecF(length=n, fill=Float32(0.0))
 
 
-@always_inline
+@inline(.always)
 def zerosi(n: Int) -> VecI:
     return VecI(length=n, fill=0)
 
 
-@always_inline
+@inline(.always)
 def pd(ref v: Vec) -> FPtr:
     """Raw (unchecked, untracked) pointer to the storage of a Float64 list."""
     return (
@@ -43,7 +42,7 @@ def pd(ref v: Vec) -> FPtr:
     )
 
 
-@always_inline
+@inline(.always)
 def pf(ref v: VecF) -> F32Ptr:
     return (
         v.unsafe_ptr()
@@ -52,7 +51,7 @@ def pf(ref v: VecF) -> F32Ptr:
     )
 
 
-@always_inline
+@inline(.always)
 def pi_(ref v: VecI) -> IPtr:
     return (
         v.unsafe_ptr()

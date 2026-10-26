@@ -1,7 +1,7 @@
 # Harness: am3_mojo's gsl_bessel_Knu and int_bessel_k53 on the grid of specfun_cpp.cc
-from am3_mojo.utils.specfun import gsl_bessel_Knu, int_bessel_k53
-from am3_mojo.utils.libm import c_exp
 from std.math import fma
+from am3_mojo.utils.libm import c_exp
+from am3_mojo.utils.specfun import gsl_bessel_Knu, int_bessel_k53
 
 
 def main() raises:

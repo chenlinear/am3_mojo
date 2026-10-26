@@ -1,22 +1,21 @@
-"""Production of the triplet tables. For each photon energy k (electron rest frame): the total
-cross section and the per-interaction distributions of the products' lab energy fractions,
+"""Production of the triplet tables. For each photon energy k (electron rest frame): the total cross section and the
+per-interaction distributions of the products' lab energy fractions,
   role 0: positron, y = x_+ k
   role 1: lower-energy electron, y = x_low k
   role 2: higher-energy (recoil) electron through its energy loss xi = 1 - x_high = x_+ + x_low,
           y = xi k
-on a grid of ln y (step DLY from LY0). Each k has four VEGAS maps (Lepage 1978, J. Comput. Phys.
-27, 192; the package vegas, Lepage 2021, arXiv:2009.05112), adapted to the rate and to the rate
-weighted by x_+, x_low and xi. Each bin combines, by inverse variance, the estimates from the
-rate's map and from its role's map.
+on a grid of ln y (step DLY from LY0). Each k has four VEGAS maps (Lepage 1978, J. Comput. Phys. 27, 192; the package
+vegas, Lepage 2021, arXiv:2009.05112), adapted to the rate and to the rate weighted by x_+, x_low and xi. Each bin
+combines, by inverse variance, the estimates from the rate's map and from its role's map.
 
-The photon energies are the 60 of K_NODES, from 4.02 to 1e10 (m_e c^2), or those given. Every k
-and map seeds gvar's generator, which vegas draws from, so a run is reproducible. The tables in
-src/ come from an unseeded run: a new run reproduces them within their Monte Carlo errors (the
-cross sections to 3e-4), not bit for bit.
+The photon energies are the 60 of K_NODES, from 4.02 to 1e10 (m_e c^2), or those given. Every k and map seeds gvar's
+generator, which vegas draws from, so a run is reproducible. The tables in src/ come from an unseeded run: a new run
+reproduces them within their Monte Carlo errors (the cross sections to 3e-4), not bit for bit.
 
-usage: produce.py OUT_DIR [k ...]   (one file OUT_DIR/k_<k>.npz per k)
-A k whose file exists is skipped, so a run can be resumed and processes given different k values
-can share the work: all 60 take about 40 minutes with 8 processes.
+usage: produce.py OUT_DIR [k ...]   (one file OUT_DIR/k_<k>.npz per k; OUT_DIR results/tools/triplet, as the README
+runs it: the tools' outputs go to results/tools/)
+A k whose file exists is skipped, so a run can be resumed and processes given different k values can share the work:
+all 60 take about 40 minutes with 8 processes.
 """
 import os, sys, time
 import numpy as np
@@ -44,7 +43,7 @@ def events(u, k):
     x = np.zeros((3, u.shape[0]))
     if ok.any():
         d = {key: val[ok] for key, val in inv.items()}
-        w[ok] = jac[ok] * amplitude_sq_fast(p1[ok], kv[ok], p2[ok], p3[ok], p4[ok], None, d)
+        w[ok] = jac[ok] * amplitude_sq_fast(p1[ok], kv[ok], p2[ok], p3[ok], p4[ok], d)
         x2, x3, x4 = p2[ok, 1], p3[ok, 1], p4[ok, 1]
         xl = np.minimum(x2, x3)
         x[0, ok], x[1, ok], x[2, ok] = x4, xl, x4 + xl
@@ -89,7 +88,8 @@ def run_k(k, neval_adapt=100000, nitn_adapt=10, neval=250000, npass=16, seed=0):
                     b = np.floor((np.log(x[r] * k) - LY0) / DLY).astype(int)
                     ok = (b >= 0) & (b < NB)
                     if not np.all(ok):
-                        raise RuntimeError(f'k={k}: y outside the table ({np.min(np.log(x[r]*k)):.3f}, {np.max(np.log(x[r]*k)):.3f})')
+                        raise RuntimeError(f'k={k}: y outside the table '
+                                           f'({np.min(np.log(x[r]*k)):.3f}, {np.max(np.log(x[r]*k)):.3f})')
                     H[p, r] += np.bincount(b, weights=w, minlength=NB)
         est[role] = (S, H, M)
     # total cross section and means: inverse-variance combination over the four maps
@@ -104,9 +104,9 @@ def run_k(k, neval_adapt=100000, nitn_adapt=10, neval=250000, npass=16, seed=0):
     for r in range(3):
         # mean lab fraction: per-pass ratios <x> = sum(w x)/sum(w)
         means[r], dmeans[r] = comb([est[q][2][:, r] / est[q][0] for q in (-1, r)])
-        # per-bin distributions dN/dln y = H / (sigma DLY), each map's histogram normalised to 1.
-        # The two maps are combined with weights from variances smoothed over +-5 bins: weights
-        # from each bin's own variance estimate would favour downward fluctuations.
+        # per-bin distributions dN/dln y = H / (sigma DLY), each map's histogram normalised to 1. The two maps are
+        # combined with weights from variances smoothed over +-5 bins: weights from each bin's own variance estimate
+        # would favour downward fluctuations.
         vals, var = [], []
         for q in (-1, r):
             S, H, M = est[q]

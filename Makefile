@@ -11,25 +11,26 @@ ASSERT_MODULE := build-asserts/am3_mojo.so
 BINDINGS := src/am3_mojo_module.mojo
 
 .PHONY: help build bindings install reference test test-unit test-reference \
-        test-asserts benchmark plots checks all clean distclean
+        test-asserts benchmark plots literature_checks all clean distclean
 
 help:
-	@echo "make build           build the am3_mojo Python module (build/am3_mojo.so)"
-	@echo "make install         make 'import am3_mojo' work anywhere in the .venv"
-	@echo "make test-unit       am3_mojo tests (no C++ needed)"
-	@echo "make reference       download and build the original C++ AM3 (reference)"
-	@echo "make test-reference  compare am3_mojo with the C++ reference"
-	@echo "make test            all tests (reference tests are skipped if not built)"
-	@echo "make test-asserts    the unit tests on a build with bounds checks (slower)"
-	@echo "make benchmark       am3_mojo vs C++ AM3 timings and per-stage profiles"
-	@echo "make plots           comparison, kernel-reuse and added-process figures"
-	@echo "make checks          the literature and solver checks of tests/ (outputs in build/checks/)"
-	@echo "make all             build + reference + test + benchmark + plots + checks"
+	@echo "make build              build the am3_mojo Python module (build/am3_mojo.so)"
+	@echo "make install            make 'import am3_mojo' work anywhere in the .venv"
+	@echo "make test-unit          am3_mojo tests (no C++ needed)"
+	@echo "make reference          download and build the original C++ AM3 (reference)"
+	@echo "make test-reference     compare am3_mojo with the C++ reference"
+	@echo "make test               all tests (reference tests are skipped if not built)"
+	@echo "make test-asserts       the unit tests on a build with bounds checks (slower)"
+	@echo "make benchmark          am3_mojo vs C++ AM3 timings and per-stage profiles"
+	@echo "make plots              comparison, kernel-reuse and added-process figures"
+	@echo "make literature_checks  the checks of tests/literature_checks/ (outputs in results/literature_checks/)"
+	@echo "make all                build + reference + test + benchmark + plots + literature_checks"
 	@echo "results go to results/"
 
 build: $(MODULE)
 
-$(MODULE): $(SRC) $(BINDINGS)
+# also rebuilt when `uv sync` installs another Mojo (it rewrites $(MOJO))
+$(MODULE): $(SRC) $(BINDINGS) $(MOJO)
 	@mkdir -p build
 	$(MOJO) build -D ASSERT=none --emit shared-lib -I src \
 		src/am3_mojo_module.mojo -o $(MODULE)
@@ -60,7 +61,7 @@ test-reference: build
 test: build
 	$(PY) -m pytest tests
 
-$(ASSERT_MODULE): $(SRC) $(BINDINGS)
+$(ASSERT_MODULE): $(SRC) $(BINDINGS) $(MOJO)
 	@mkdir -p build-asserts
 	$(MOJO) build -D ASSERT=all --emit shared-lib -I src \
 		src/am3_mojo_module.mojo -o $(ASSERT_MODULE)
@@ -78,14 +79,16 @@ plots: build
 	$(PY) tests/plots/plot_reuse.py
 	$(PY) tests/plots/plot_added_processes.py
 
-# every script of tests/literature_checks and tests/solver_checks (tests/run_checks.py)
-checks: build
-	$(PY) tests/run_checks.py
+# the derivation checks, the inventory and every script of tests/literature_checks/
+# (tests/literature_checks/run_literature_checks.py); outputs in results/literature_checks/ and, of the tool it
+# runs, in results/tools/
+literature_checks: build
+	$(PY) tests/literature_checks/run_literature_checks.py
 
-all: build reference test benchmark plots checks
+all: build reference test benchmark plots literature_checks
 
 clean:
-	rm -rf build build-asserts results/runs* results/reuse* .pytest_cache
+	rm -rf build build-asserts results/runs* results/reuse* results/literature_checks .pytest_cache
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
 distclean: clean

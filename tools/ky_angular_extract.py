@@ -1,27 +1,25 @@
-"""Regenerate DATA of tests/support/measured/ky_angular.py: per energy bin, the
-cross section and the mean CM angle <cos theta_K> of the kaon of every two-body
-reaction gamma N -> K Y, from the published differential cross sections.
+"""Regenerate DATA of tests/support/measured/ky_angular.py: per energy bin, the cross section and the mean CM angle
+<cos theta_K> of the kaon of every two-body reaction gamma N -> K Y, from the published differential cross sections.
 
-usage: python tools/ky_angular_extract.py [workdir]
-Takes the HEPData records (CSV) and the arXiv source of Compton et al. (2017)
-from local copies if present, else downloads them into workdir (default: a
-temporary directory; needs network access). Prints the DATA block.
+usage: .venv/bin/python tools/ky_angular_extract.py [workdir]
+       > results/tools/ky_angular_extract.txt
+Takes the HEPData records (CSV) and the arXiv source of Compton et al. (2017) from local copies if present, else
+downloads them into workdir (default: a temporary directory; needs network access). Prints the DATA block, which
+`make literature_checks` saves to results/tools/ky_angular_extract.txt.
 
-sigma and <cos theta> integrate dsigma/dcos theta over the measured bins, the
-gaps and the edges (moments()). Only bins with data reaching cos theta <= -0.6
-and >= 0.6 are kept (A2: -0.7, 0.7; CLAS K0 Lambda: -0.5, 0.6; CLAS K+ Sigma-:
--0.1, 0.6, which keeps its bins above 2.85 GeV, measured forward of
-cos theta = -0.4 ... -0.1), so that the edges hold a small part of the cross
-section. They hold more at high energies: the CLAS K0 Lambda tables reach
-forward only to cos theta = 0.7-0.8, and above 3 GeV the CLAS K+ Lambda data
-only to 0.87-0.89.
+sigma and <cos theta> integrate dsigma/dcos theta over the measured bins, the gaps and the edges (moments()). Only bins
+with data reaching cos theta <= -0.6 and >= 0.6 are kept (A2: -0.7, 0.7; CLAS K0 Lambda: -0.5, 0.6; CLAS K+ Sigma-:
+-0.1, 0.6, which keeps its bins above 2.85 GeV, measured forward of cos theta = -0.4 ... -0.1), so that the edges hold a
+small part of the cross section. They hold more at high energies: the CLAS K0 Lambda tables reach forward only to
+cos theta = 0.7-0.8, and above 3 GeV the CLAS K+ Lambda data only to 0.87-0.89.
 """
 import csv, glob, io, os, re, shutil, subprocess, sys, tarfile, tempfile, urllib.request
 import numpy as np
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tests', 'literature_checks', 'derivations'))
-import kaon_production as derivation  # noqa: E402  (the README's s)
+sys.path.insert(1, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tests'))   # tests/
+from support.paths import load_derivation
+derivation = load_derivation('kaon_production')  # the s of tests/literature_checks/kaons/README.md
 
-MP, MN = derivation.MASS["p"], derivation.MASS["n"]   # PDG 2026 (derivations/kaon_production.py)
+MP, MN = derivation.MASS["p"], derivation.MASS["n"]   # the code's (PDG 2026; kaons/kaon_production.py)
 HEPDATA = 'https://www.hepdata.net/download/submission/ins{}/1/csv'
 ARXIV_COMPTON = 'https://arxiv.org/e-print/1706.04748'
 # reaction: [(label, source, selector, target mass, coverage cuts)]
@@ -48,8 +46,8 @@ def local_copy(pattern):
 
 
 def fetch(url, path):
-    """Download url to path, with curl if available (HEPData refuses the
-    user agents of Python and of browsers without JavaScript)."""
+    """Download url to path, with curl if available (HEPData refuses the user agents of Python and of browsers without
+    JavaScript)."""
     if shutil.which('curl'):
         subprocess.run(['curl', '-sSfL', '-m', '300', '-o', path, url], check=True)
         return
@@ -58,14 +56,13 @@ def fetch(url, path):
 
 
 def e_from_w(w, m):
-    """The photon energy on a nucleon m at rest that gives the invariant mass w (the README's s)."""
+    """The photon energy on a nucleon m at rest that gives the invariant mass w (the s of kaons/README.md)."""
     return derivation.threshold(m, w)
 
 
 def moments(c, y, lo, hi):
-    """(sigma, <cos>) of dsigma/dcos theta given in bins [lo, hi] (bin centres c): the bins,
-    the gaps between them (linear between the two bin values) and the edges
-    to cos theta = -1 and +1 (the mean of the two nearest bins)."""
+    """(sigma, <cos>) of dsigma/dcos theta given in bins [lo, hi] (bin centres c): the bins, the gaps between them
+    (linear between the two bin values) and the edges to cos theta = -1 and +1 (the mean of the two nearest bins)."""
     o = np.argsort(c)
     y, lo, hi = (np.asarray(v, float)[o] for v in (y, lo, hi))
     y = np.maximum(y, 0.0)

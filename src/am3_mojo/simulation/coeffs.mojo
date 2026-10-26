@@ -136,7 +136,7 @@ comptime C_PHO_END = 117
 
 # Coefficients of the processes am3_mojo adds to AM3 (after AM3's, which keep
 # their indices), one block per grid, each in the order e+e- annihilation,
-# triplet pair production, neutron decay, kaons.
+# triplet pair production, neutron decay, kaons, charm hadrons.
 comptime C_EXT_LEP_BEGIN = 117
 comptime C_ae_ele = 117  # electron sink: escape + e+e- annihilation
 comptime C_ae_pos = 118  # positron sink
@@ -150,53 +150,112 @@ comptime C_qe_K = 123  # e-, e+ from kaon decay (hadron-anchored lepton grid)
 comptime C_qp_K = 124
 comptime C_qe_Kpp = 125  # the same from kaons from pp collisions
 comptime C_qp_Kpp = 126
-comptime C_EXT_LEP_END = 127
-comptime C_EXT_PHO_BEGIN = 127
-comptime C_qgma_pann = 127  # photons from e+e- annihilation
-comptime C_qgma_tppsy = 128  # synchrotron photons of the triplet pairs
-comptime C_qgma_tppic = 129  # inverse-Compton photons of the triplet pairs
-comptime C_qgma_ndecsy = 130  # synchrotron photons of the neutron-decay e-
-comptime C_qgma_ndecic = 131  # inverse-Compton photons of the neutron-decay e-
-comptime C_qgma_ksy = 132  # kaon synchrotron photons
-comptime C_qgma_kic = 133  # kaon inverse-Compton photons
-comptime C_EXT_PHO_END = 134
-comptime C_EXT_HAD_BEGIN = 134
-comptime C_qpro_ndec = 134  # protons from neutron decay
-comptime C_aK = 135  # escape of the charged kaons
-comptime C_AK = 136  # cooling of the charged kaons, except synchrotron / IC
+# e-, e+ from the decays of the photo-hadronic charm hadrons and of their
+# kaons (hadron-anchored lepton grid); the same for those of pp collisions
+comptime C_qe_C = 127
+comptime C_qp_C = 128
+comptime C_qe_Cpp = 129
+comptime C_qp_Cpp = 130
+comptime C_EXT_LEP_END = 131
+comptime C_EXT_PHO_BEGIN = 131
+comptime C_qgma_pann = 131  # photons from e+e- annihilation
+comptime C_qgma_tppsy = 132  # synchrotron photons of the triplet pairs
+comptime C_qgma_tppic = 133  # inverse-Compton photons of the triplet pairs
+comptime C_qgma_ndecsy = 134  # synchrotron photons of the neutron-decay e-
+comptime C_qgma_ndecic = 135  # inverse-Compton photons of the neutron-decay e-
+comptime C_qgma_ksy = 136  # kaon synchrotron photons
+comptime C_qgma_kic = 137  # kaon inverse-Compton photons
+comptime C_qgma_csy = 138  # charm-hadron synchrotron photons
+comptime C_qgma_cic = 139  # charm-hadron inverse-Compton photons
+# photons of the decays of the photo-hadronic / pp charm hadrons (eta ->
+# gamma gamma, ...; hadron-anchored photon grid)
+comptime C_qgma_C = 140
+comptime C_qgma_Cpp = 141
+comptime C_EXT_PHO_END = 142
+comptime C_EXT_HAD_BEGIN = 142
+comptime C_qpro_ndec = 142  # protons from neutron decay
+comptime C_aK = 143  # escape of the charged kaons
+comptime C_AK = 144  # cooling of the charged kaons, except synchrotron / IC
 # kaon sources of species s: C_qK + s from photo-hadronic interactions,
 # C_qKpp + s from pp collisions
-comptime C_qK = 137
-comptime C_qpip_K = 141  # pi+, pi-, pi0 from the decay of photo-hadronic kaons
-comptime C_qpim_K = 142
-comptime C_qpi0_K = 143
-comptime C_qmupl_K = 144  # mu+ left / right, mu- left / right from kaon decay
-comptime C_qmupr_K = 145
-comptime C_qmuml_K = 146
-comptime C_qmumr_K = 147
-comptime C_aK0 = 148  # escape of the neutral kaons (as for neutrons)
-comptime C_AK0 = 149  # cooling of the neutral kaons (as for neutrons)
-comptime C_qKpp = 150
-comptime C_qpip_Kpp = 154  # the same from the decay of kaons from pp collisions
-comptime C_qpim_Kpp = 155
-comptime C_qpi0_Kpp = 156
-comptime C_qmupl_Kpp = 157
+comptime C_qK = 145
+comptime C_qpip_K = 149  # pi+, pi-, pi0 from the decay of photo-hadronic kaons
+comptime C_qpim_K = 150
+comptime C_qpi0_K = 151
+comptime C_qmupl_K = 152  # mu+ left / right, mu- left / right from kaon decay
+comptime C_qmupr_K = 153
+comptime C_qmuml_K = 154
+comptime C_qmumr_K = 155
+comptime C_aK0 = 156  # escape of the neutral kaons (as for neutrons)
+comptime C_AK0 = 157  # cooling of the neutral kaons (as for neutrons)
+comptime C_qKpp = 158
+comptime C_qpip_Kpp = 162  # the same from the decay of kaons from pp collisions
+comptime C_qpim_Kpp = 163
+comptime C_qpi0_Kpp = 164
+comptime C_qmupl_Kpp = 165
 # the sources of the muons P_muon_plus_left_Kpg / _Kpp + 0 .. 3: from the decay
 # of the kaons and of the pions they decay into
-comptime C_qmu_Kpg = 161
-comptime C_qmu_Kpp = 165
-comptime C_EXT_HAD_END = 169
-comptime C_EXT_NU_BEGIN = 169
-comptime C_qnuea_ndec = 169  # anti-nu_e from neutron decay
-comptime C_qnue_K = 170  # nu_e, anti-nu_e, nu_mu, anti-nu_mu from kaon decay
-comptime C_qnuea_K = 171
-comptime C_qnum_K = 172
-comptime C_qnuma_K = 173
-comptime C_qnue_Kpp = 174  # the same from kaons from pp collisions
+comptime C_qmu_Kpg = 169
+comptime C_qmu_Kpp = 173
+# charm hadrons: escape and cooling (except synchrotron / IC) of the charged
+# ones (as for the charged kaons) and of the neutral ones (as for neutrons);
+# sources of species s, C_qC + s from photo-hadronic interactions, C_qCpp + s
+# from pp collisions
+comptime C_aC = 177
+comptime C_AC = 178
+comptime C_aC0 = 179
+comptime C_AC0 = 180
+comptime C_qC = 181
+comptime C_qCpp = 189
+# per charm origin (photo-hadronic, then pp): the hadron-grid products of the
+# charm decays, in the order of physics/decays.mojo (pi+, pi-, pi0, mu+ left,
+# mu+ right, mu- left, mu- right, K+, K-, K0_S, K0_L, p, n): the kaons are the
+# sources of the chain's kaons P_kaon_plus_Cpg / _Cpp
+comptime C_qpip_C = 197  # + 0 .. 12
+comptime C_qpip_Cpp = 210  # + 0 .. 12
+comptime N_CPROD_HAD = 13
+# per charm origin: pi+, pi-, pi0, mu+ left, mu+ right, mu- left, mu- right
+# from the decays of the chain's kaons
+comptime C_qpip_KC = 223  # + 0 .. 6
+comptime C_qpip_KCpp = 230  # + 0 .. 6
+# per charm origin: the sources of the chain's pions (pi+, pi-: of the charm
+# decays and of their kaons' decays) and muons (also of the pion decays)
+comptime C_qpi_Cpg = 237  # + 0 .. 1
+comptime C_qpi_Cpp = 239
+comptime C_qmu_Cpg = 241  # + 0 .. 3
+comptime C_qmu_Cpp = 245
+# protons and neutrons of the charm decays (both origins; Lambda_c), sources of
+# the nucleons in the next step
+comptime C_qpro_C = 249
+comptime C_qntr_C = 250
+comptime C_EXT_HAD_END = 251
+comptime C_EXT_NU_BEGIN = 251
+comptime C_qnuea_ndec = 251  # anti-nu_e from neutron decay
+comptime C_qnue_K = 252  # nu_e, anti-nu_e, nu_mu, anti-nu_mu from kaon decay
+comptime C_qnuea_K = 253
+comptime C_qnum_K = 254
+comptime C_qnuma_K = 255
+comptime C_qnue_Kpp = 256  # the same from kaons from pp collisions
 # the sources of the neutrinos P_neutrino_el_Kpg / _Kpp + 0 .. 3: from the decay
 # of the kaons and of the pions and muons above
-comptime C_qnu_Kpg = 178
-comptime C_qnu_Kpp = 182
-comptime C_EXT_NU_END = 186
+comptime C_qnu_Kpg = 260
+comptime C_qnu_Kpp = 264
+# the sources of P_neutrino_mu_pidec_pg / _pp + 0 .. 1: nu_mu and anti-nu_mu
+# from the decay of the pions made in the interactions (C_qnue_pg ... and
+# C_qnue_pp ... take the neutrinos of the decay of their muons)
+comptime C_qnum_pidec_pg = 268
+comptime C_qnum_pidec_pp = 270
+# per charm origin: nu_e, anti-nu_e, nu_mu, anti-nu_mu, nu_tau, anti-nu_tau of
+# the charm decays (the last two are the sources of P_neutrino_tau_Cpg / _Cpp)
+comptime C_qnue_C = 272  # + 0 .. 5
+comptime C_qnue_Cpp = 278  # + 0 .. 5
+# per charm origin: the neutrinos of the decays of the chain's kaons
+comptime C_qnue_KC = 284  # + 0 .. 3
+comptime C_qnue_KCpp = 288  # + 0 .. 3
+# the sources of P_neutrino_el_Cpg / _Cpp + 0 .. 3: from the charm decays and
+# the decays of the chain's kaons, pions and muons
+comptime C_qnu_Cpg = 292
+comptime C_qnu_Cpp = 296
+comptime C_EXT_NU_END = 300
 
-comptime C_COUNT = 186
+comptime C_COUNT = 300

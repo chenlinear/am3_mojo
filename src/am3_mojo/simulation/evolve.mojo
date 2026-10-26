@@ -5,15 +5,15 @@ coefficient arrays it uses. The rows of a group are independent (distinct
 solvers and densities), so they run in parallel on the Mojo worker pool.
 """
 
-from am3_mojo.utils.parallel import parallel_run
-from am3_mojo.utils.buffers import Vec
 from am3_mojo.solver.solver import SolverAlgorithm
+from am3_mojo.utils.buffers import WD, Vec
+from am3_mojo.utils.parallel import parallel_tasks
 
 comptime VPtr = Pointer[Vec, MutUntrackedOrigin]
 comptime SPtr = Pointer[SolverAlgorithm, MutUntrackedOrigin]
 
 
-@always_inline
+@inline(.always)
 def vp(ref v: Vec) -> VPtr:
     return (
         Pointer(to=v)
@@ -54,22 +54,88 @@ struct EvolveJob(Copyable, Movable):
         self.failed = False
 
 
-def _work(jobs: Pointer[List[EvolveJob], MutUntrackedOrigin], t: Int, nt: Int):
-    var k = t
-    while k < len(jobs[]):
-        ref J = jobs[][k]
-        try:
-            J.sa[].evolve(J.a[], J.A[], J.q[], J.n[])
-        except:
-            J.failed = True
-        k += nt
+def _work(jobs: Pointer[List[EvolveJob], MutUntrackedOrigin], k: Int):
+    ref J = jobs[][k]
+    try:
+        J.sa[].evolve(J.a[], J.A[], J.q[], J.n[])
+    except:
+        J.failed = True
 
 
 def run_jobs(mut jobs: List[EvolveJob], nthreads: Int) raises:
     """Run independent jobs, in parallel when more than one thread is allowed.
     """
-    var nt = min(nthreads, len(jobs))
-    parallel_run[_work](jobs, nt)
+    parallel_tasks[_work](jobs, len(jobs), nthreads)
     for i in range(len(jobs)):
         if jobs[i].failed:
             raise Error("error in SolverAlgorithm.evolve")
+
+
+struct CoolJob(Copyable, Movable):
+    """A solver whose synchrotron and inverse-Compton cooling rates are
+    computed for this step, with the target photons `n` and the field `b`."""
+
+    var sa: SPtr
+    var n: VPtr
+    var b: Float64
+    var failed: Bool
+
+    def __init__(out self, sa: SPtr, n: VPtr, b: Float64):
+        self.sa = sa
+        self.n = n
+        self.b = b
+        self.failed = False
+
+
+struct CoolTasks(Movable):
+    """The cooling rates of `jobs` in `nch` bin ranges each: task k is range
+    k % nch of job k // nch (the jobs whose cooling is on)."""
+
+    var jobs: Pointer[List[CoolJob], MutUntrackedOrigin]
+    var on: List[Int]
+    var nch: Int
+
+    def __init__(
+        out self,
+        jobs: Pointer[List[CoolJob], MutUntrackedOrigin],
+        var on: List[Int],
+        nch: Int,
+    ):
+        self.jobs = jobs
+        self.on = on^
+        self.nch = nch
+
+
+def _cool_work(tasks: Pointer[CoolTasks, MutUntrackedOrigin], k: Int):
+    ref T = tasks[]
+    ref J = T.jobs[][T.on[k // T.nch]]
+    var nb8 = J.sa[].N_BINS // WD
+    var c = k % T.nch
+    # ranges of whole SIMD blocks, the last one up to N_BINS
+    var i0 = c * nb8 // T.nch * WD
+    var i1 = (c + 1) * nb8 // T.nch * WD if c + 1 < T.nch else J.sa[].N_BINS
+    J.sa[].compute_syn_ic(J.b, J.n[], i0, i1)
+
+
+def run_cooling(mut jobs: List[CoolJob], nthreads: Int) raises:
+    """Compute the cooling rates of distinct solvers, in parallel when more
+    than one thread is allowed: each solver's bins in up to nthreads ranges
+    (each task writes only its own bins' rates)."""
+    var on = List[Int]()
+    for i in range(len(jobs)):
+        try:
+            if jobs[i].sa[].start_cooling(jobs[i].b, jobs[i].n[], nthreads):
+                on.append(i)
+        except:
+            jobs[i].failed = True
+    for i in range(len(jobs)):
+        if jobs[i].failed:
+            raise Error("error in SolverAlgorithm.update_cooling")
+    if len(on) == 0:
+        return
+    var nch = max(1, nthreads // len(on))
+    var ntasks = len(on) * nch
+    var tasks = CoolTasks(
+        Pointer(to=jobs).unsafe_origin_cast[MutUntrackedOrigin](), on^, nch
+    )
+    parallel_tasks[_cool_work](tasks, ntasks, nthreads)

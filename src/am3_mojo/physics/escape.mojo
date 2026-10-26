@@ -1,10 +1,9 @@
 """Escape physics module (port of the AM3 C++ class)."""
 
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.model.runparams import RunParams
 from am3_mojo.model.arrays import AM3Arrays
+from am3_mojo.model.runparams import RunParams
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
 
 
 struct Escape(Copyable, Movable):
@@ -42,7 +41,7 @@ struct Escape(Copyable, Movable):
             print("computing pair escape term")
         for i in range(dat.nbins_lep):
             self.afescE[i] = (
-                T_SSC_CGS * rp.escape_fraction_pairs / rp.escape_timescale
+                T_SSC * rp.escape_fraction_pairs / rp.escape_timescale
             )
 
     def Calc_Escape_Phot(mut self, rp: RunParams, dat: AM3Arrays):
@@ -50,7 +49,7 @@ struct Escape(Copyable, Movable):
             print("computing photon escape term")
         for i in range(dat.nbins_pho):
             self.afescG[i] = (
-                T_SSC_CGS * rp.escape_fraction_photons / rp.escape_timescale
+                T_SSC * rp.escape_fraction_photons / rp.escape_timescale
             )
 
     def Calc_Escape_Proton(mut self, rp: RunParams, dat: AM3Arrays):

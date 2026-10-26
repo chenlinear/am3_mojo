@@ -12,13 +12,26 @@ def scaled(v: Vec, factor: Float64) -> Vec:
     return res^
 
 
-# fixed arities: Mojo 1.1.0 miscompiles a variadic pack of list references in
-# builds with assertions enabled
+# fixed arities: Mojo 1.1.0 and 1.2.0 miscompile a variadic pack of list
+# references in builds with assertions enabled
 def summed(factor: Float64, a: Vec, b: Vec) -> Vec:
     """Element-wise sum of the arrays, multiplied by `factor`."""
     var res = a.copy()
     for i in range(len(res)):
         res[i] += b[i]
+    if factor != 1.0:
+        for i in range(len(res)):
+            res[i] *= factor
+    return res^
+
+
+def summed(factor: Float64, a: Vec, b: Vec, c: Vec) -> Vec:
+    """Element-wise sum of the arrays, multiplied by `factor`."""
+    var res = a.copy()
+    for i in range(len(res)):
+        res[i] += b[i]
+    for i in range(len(res)):
+        res[i] += c[i]
     if factor != 1.0:
         for i in range(len(res)):
             res[i] *= factor

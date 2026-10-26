@@ -1,12 +1,11 @@
-"""Triplet pair production gamma + e- -> e- + e- + e+ at lowest order in QED, from the
-full matrix element (8 Feynman diagrams: the photon attached to the target line or to the
-produced pair line, and the exchange of the two outgoing electrons).
+"""Triplet pair production gamma + e- -> e- + e- + e+ at lowest order in QED, from the full matrix element
+(8 Feynman diagrams: the photon attached to the target line or to the produced pair line, and the exchange of the two
+outgoing electrons).
 
-Frame: rest frame of the incoming electron (ERF), units m_e = c = 1, photon of energy k along
-+z. Four-vectors are kept in light-cone components (p+, p-, px, py), p+- = E +- pz, so that
-small invariants (p.k = p- k+/2, momentum transfers) never come from cancellations. The spinors
-are Lepage-Brodsky light-front spinors in the chiral representation, whose components are
-bounded by sqrt(p+) or m/sqrt(p+).
+Frame: rest frame of the incoming electron (ERF), units m_e = c = 1, photon of energy k along +z. Four-vectors are kept
+in light-cone components (p+, p-, px, py), p+- = E +- pz, so that small invariants (p.k = p- k+/2, momentum transfers)
+never come from cancellations. The spinors are Lepage-Brodsky light-front spinors in the chiral representation, whose
+components are bounded by sqrt(p+) or m/sqrt(p+).
 
 For an ultra-relativistic incoming electron in the lab, a product's lab energy fraction is the
 invariant x = (p.k)/(p1.k) = p-/m (independent of the photon direction).
@@ -44,8 +43,8 @@ def slash(a):
 
 
 def u_spinors(p, m=1.0):
-    """Light-front spinors u(p, +-1/2), shape (..., 2, 4): u+ = (m, 0, p+, pc)/sqrt(p+),
-    u- = (-conj(pc), p+, 0, m)/sqrt(p+), pc = px + i py."""
+    """Light-front spinors u(p, +-1/2), shape (..., 2, 4): u+ = (m, 0, p+, pc)/sqrt(p+), u- = (-conj(pc), p+, 0,
+    m)/sqrt(p+), pc = px + i py."""
     sp = np.sqrt(p[..., 0])
     pc = p[..., 2] + 1j * p[..., 3]
     zero = np.zeros_like(pc)
@@ -66,8 +65,8 @@ def bar(u):
 
 
 def current(ub, w):
-    """J^mu = ubar gamma^mu w in light-cone components (J+, J-, Jx, Jy); ub is the bar spinor
-    (index order of bar(): (R1*, R2*, L1*, L2*)) and w a column spinor (L1, L2, R1, R2)."""
+    """J^mu = ubar gamma^mu w in light-cone components (J+, J-, Jx, Jy); ub is the bar spinor (index order of bar():
+    (R1*, R2*, L1*, L2*)) and w a column spinor (L1, L2, R1, R2)."""
     # recover u_L*, u_R* from the bar ordering
     uR1, uR2, uL1, uL2 = ub[..., 0], ub[..., 1], ub[..., 2], ub[..., 3]
     wL1, wL2, wR1, wR2 = w[..., 0], w[..., 1], w[..., 2], w[..., 3]
@@ -88,9 +87,9 @@ ID4 = np.eye(4, dtype=complex)
 # ---------------------------------------------------------------------------
 # matrix element
 # ---------------------------------------------------------------------------
-def amplitude_sq(p1, k, p2, p3, p4, kp, d, check_gauge=False):
-    """Sum over all spins and photon polarisations of |M|^2 (couplings e^3 removed),
-    for events given as light-cone arrays (N, 4). `d` holds accurate invariants:
+def amplitude_sq(p1, k, p2, p3, p4, d, check_gauge=False):
+    """Sum over all spins and photon polarisations of |M|^2 (couplings e^3 removed), for events given as light-cone
+    arrays (N, 4). `d` holds accurate invariants:
       t23 = (p1-p2)^2, t32 = (p1-p3)^2, s34 = (p3+p4)^2, s24 = (p2+p4)^2,
       kp1 = k.p1, kp2 = k.p2, kp3 = k.p3, kp4 = k.p4,
     and the light-cone differences used in the propagator numerators:
@@ -101,7 +100,6 @@ def amplitude_sq(p1, k, p2, p3, p4, kp, d, check_gauge=False):
     u2 = u_spinors(p2)
     u3 = u_spinors(p3)
     v4 = v_spinors(p4)
-    b2, b3 = bar(u2), bar(u3)
     if check_gauge:
         pols = [k]
     else:
@@ -121,9 +119,7 @@ def amplitude_sq(p1, k, p2, p3, p4, kp, d, check_gauge=False):
         E = slash(eps)
         # direct (2 = target-line electron, 3 = pair electron) and exchanged (2 <-> 3) amplitudes
         amp = np.zeros((N, 2, 2, 2, 2), dtype=complex)  # [s1, s2, s3, s4]
-        for (ia, ib, ta, sab, PAk, DA) in (
-                (2, 3, d['t23'], d['s34'], None, None),
-                (3, 2, d['t32'], d['s24'], None, None)):
+        for (ia, ta, sab) in ((2, d['t23'], d['s34']), (3, d['t32'], d['s24'])):
             sign = 1.0 if ia == 2 else -1.0
             ua = u2 if ia == 2 else u3      # target-line outgoing electron
             ub_ = u3 if ia == 2 else u2      # pair-line outgoing electron
@@ -165,7 +161,7 @@ def amplitude_sq(p1, k, p2, p3, p4, kp, d, check_gauge=False):
     return total
 
 
-def amplitude_sq_fast(p1, k, p2, p3, p4, kp, d):
+def amplitude_sq_fast(p1, k, p2, p3, p4, d):
     """Same as amplitude_sq, with the spin sums vectorised (all helicity combinations at once)."""
     N = p1.shape[0]
     u1 = u_spinors(p1)            # (N, 2, 4)
@@ -194,7 +190,6 @@ def amplitude_sq_fast(p1, k, p2, p3, p4, kp, d):
         E = slash(eps)
         EP3, EP2 = E @ P3k / D3, E @ P2k / D2          # photon on the outgoing electron (3 or 2)
         K4E, P1E = K4 @ E / D4, P1k @ E / D1
-        nd = (None, None)
         # direct: B (pair line 3-4, target current J21), A (target line 2, pair current J34)
         XB23 = EP3[:, None, None] @ S21 + S21 @ K4E[:, None, None]       # [s2, s1]
         XA23 = S34 @ P1E[:, None, None] + EP2[:, None, None] @ S34       # [s3, s4]

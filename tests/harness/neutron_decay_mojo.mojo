@@ -1,12 +1,12 @@
 """Prints am3_mojo's neutron decay kernels on the default grid: the numbers of
 hadron, lepton and neutrino bins, the three grids [GeV] (the lepton grid
-converted from AM3's unit, 0.511 MeV), the kernels K_e and K_nu (column-major:
-for every hadron bin, the products at every grid point per decay) and the
-proton shares ps0, ps1 (tests/unit/test_added_processes.py)."""
+converted from its unit, m_e c^2), the kernels K_e and K_nu (column-major:
+per hadron bin, the products at each grid point per decay) and the proton
+shares ps0, ps1 (tests/unit/test_added_processes.py)."""
 
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.physics.decays import NeutronDecay
-from am3_mojo.utils.constants import masse
+from am3_mojo.utils.constants import MASS_E
 
 
 def main() raises:
@@ -17,7 +17,7 @@ def main() raises:
     for v in dat.egrid_had:
         print(v)
     for v in dat.egrid_lep:
-        print(masse * v)
+        print(MASS_E * v)
     for v in dat.egrid_nu:
         print(v)
     for v in nd.K_e.data:

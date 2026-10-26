@@ -86,12 +86,40 @@ comptime SA_MpL_Kpg = 83  # + 0 .. 3
 comptime SA_MpL_Kpp = 87
 comptime SA_nue_Kpg = 91  # + 0 .. 3
 comptime SA_nue_Kpp = 95
-comptime N_SOLVERS = 99
+# nu_mu and anti-nu_mu from the decays of the pions made in photo-hadronic
+# interactions and pp collisions (P_neutrino_mu_pidec_pg ...)
+comptime SA_num_pidec_pg = 99  # + 0 .. 1
+comptime SA_num_pidec_pp = 101
+comptime SA_C = 103  # charm hadrons from photo-hadronic interactions, SA_C + s
+comptime SA_gcsy = 111  # charm-hadron synchrotron photon component
+comptime SA_gcic = 112  # charm-hadron inverse-Compton photon component
+comptime SA_Cpp = 113  # charm hadrons from pp collisions, SA_Cpp + s
+# the decay chain of the photo-hadronic and the pp charm hadrons
+# (model/particles.mojo, P_kaon_plus_Cpg ...): kaons, pions, muons, neutrinos
+comptime SA_K_Cpg = 121  # + 0 .. 3
+comptime SA_K_Cpp = 125
+comptime SA_Pip_Cpg = 129  # pi+, pi-
+comptime SA_Pip_Cpp = 131
+comptime SA_MpL_Cpg = 133  # + 0 .. 3
+comptime SA_MpL_Cpp = 137
+comptime SA_nue_Cpg = 141  # + 0 .. 3
+comptime SA_nue_Cpp = 145
+comptime SA_nutau_Cpg = 149  # nu_tau, anti-nu_tau
+comptime SA_nutau_Cpp = 151
+comptime N_SOLVERS = 153
 
 
-@always_inline
+@inline(.always)
 def kaon_solver(s: Int, pp: Bool = False) -> Int:
     """Solver of kaon species s (model/particles.mojo: K+, K-, K0_S, K0_L), of
     the photo-hadronic or (pp) the pp component; both are configured the same.
     """
     return (SA_Kpp if pp else SA_K) + s
+
+
+@inline(.always)
+def charm_solver(s: Int, pp: Bool = False) -> Int:
+    """Solver of charm species s (model/particles.mojo: D+, D-, D0, anti-D0,
+    Ds+, Ds-, Lambda_c+, anti-Lambda_c-), of the photo-hadronic or (pp) the pp
+    component; both are configured the same."""
+    return (SA_Cpp if pp else SA_C) + s

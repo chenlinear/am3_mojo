@@ -1,7 +1,5 @@
-"""The Mojo harnesses of tests/harness/: small Mojo programs that print what the code computes (kernels and tables).
-They are built against src/ with the project's Mojo (at the assertion level of `make test-asserts` when it is set)
-and run by the unit tests and the scripts of tests/literature_checks and tests/solver_checks. This module also
-builds the Mojo halves of the reference harnesses (tests/reference/harness/)."""
+"""Builds against src/ (at the assertion level MOJO_ASSERT) and runs the Mojo harnesses of tests/harness/, small
+programs that print what the code computes (kernels, tables), and the Mojo halves of tests/reference/harness/."""
 import os
 import subprocess
 import tempfile
@@ -11,12 +9,11 @@ import numpy as np
 from support.paths import MOJO_ASSERT, ROOT, TESTS
 
 MOJO = os.path.join(ROOT, '.venv', 'bin', 'mojo')
-HARNESSES = os.path.join(TESTS, 'harness')
 
 
 def build(source, out_dir):
-    """Builds a harness (its name in tests/harness/, or the path of a .mojo file) into out_dir; returns the executable."""
-    path = source if source.endswith('.mojo') else os.path.join(HARNESSES, source + '.mojo')
+    """Builds a harness (a name in tests/harness/ or the path of a .mojo file) into out_dir; returns the executable."""
+    path = source if source.endswith('.mojo') else os.path.join(TESTS, 'harness', source + '.mojo')
     exe = os.path.join(str(out_dir), os.path.basename(path)[:-len('.mojo')])
     subprocess.run([MOJO, 'build', '-D', 'ASSERT=' + MOJO_ASSERT, '-I', os.path.join(ROOT, 'src'), path, '-o', exe],
                    check=True, capture_output=True)
@@ -30,33 +27,23 @@ def output(exe, *args, text=False):
 
 
 def run(name, out_dir, *args, text=False):
-    """Builds the harness `name` into out_dir and returns what it prints with these arguments (output)."""
+    """Builds the harness `name` into out_dir and returns its output() with these arguments."""
     return output(build(name, out_dir), *args, text=text)
 
 
 def neutron_decay_kernels(out_dir):
-    """The neutron decay kernels of the default grid (neutron_decay_mojo): the grids [GeV] Eh, El, En, the kernels
-    Ke[j, i], Knu[j, i] (products at grid point j per decay of a neutron of hadron bin i) and the proton shares ps0, ps1."""
+    """The neutron decay kernels of the default grid (neutron_decay_mojo): grids Eh, El, En [GeV], kernels Ke[j, i],
+    Knu[j, i] (products at grid point j per decay of a neutron in hadron bin i) and the proton shares ps0, ps1."""
     v = run('neutron_decay_mojo', out_dir)
     nh, nl, nn = (int(x) for x in v[:3])
-    parts, o = {}, 3
-    for name, n in [('Eh', nh), ('El', nl), ('En', nn), ('Ke', nl * nh), ('Knu', nn * nh), ('ps0', nh), ('ps1', nh)]:
-        parts[name] = v[o:o + n]
-        o += n
-    assert o == len(v)
-    parts['Ke'] = parts['Ke'].reshape(nh, nl).T
-    parts['Knu'] = parts['Knu'].reshape(nh, nn).T
-    return parts
-
-
-def kaon_decay_tables(out_dir, dlne, kmax):
-    """The kaon decay tables T[kaon, product, k] (kaon_decay_mojo) on the grid x_k = e^(-k dlne), k = 0 .. kmax."""
-    return run('kaon_decay_mojo', out_dir, repr(dlne), kmax).reshape(4, 13, kmax + 1)
+    Eh, El, En, Ke, Knu, ps0, ps1 = np.split(v[3:], np.cumsum([nh, nl, nn, nl * nh, nn * nh, nh]))
+    assert ps1.size == nh
+    return dict(Eh=Eh, El=El, En=En, Ke=Ke.reshape(nh, nl).T, Knu=Knu.reshape(nh, nn).T, ps0=ps0, ps1=ps1)
 
 
 class Triplet:
     """am3_mojo's triplet pair production (triplet_mojo), built once into out_dir (a temporary directory if None).
-    It holds the table nodes k, sig (sigma / (alpha r_e^2)) and dist[n]: dN/dln y of the positron, the lower-energy
+    Holds the table nodes k, sig (sigma / (alpha r_e^2)) and dist[n]: dN/dln y of the positron, the lower-energy
     electron and the recoil, shape (3, nb), on the ln y bins ly0 + (b + 1/2) dly."""
 
     def __init__(self, out_dir=None):

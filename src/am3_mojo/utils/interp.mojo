@@ -2,8 +2,6 @@
 with an acceleration cache) and `gsl_linalg_solve_tridiag`."""
 
 from std.utils.numerics import nan
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
 from am3_mojo.utils.buffers import *
 
 
@@ -32,7 +30,7 @@ struct LinearSpline(Copyable, Movable):
         self.cache = 0
         self.error = False
 
-    @always_inline
+    @inline(.always)
     def _bsearch(self, x: Float64, index_lo: Int, index_hi: Int) -> Int:
         var ilo = index_lo
         var ihi = index_hi
@@ -44,16 +42,43 @@ struct LinearSpline(Copyable, Movable):
                 ilo = i
         return ilo
 
-    @always_inline
+    @inline(.always)
     def _find(mut self, x: Float64) -> Int:
-        var x_index = self.cache
-        if x < self.xa[unsafe_offset=x_index]:
-            self.cache = self._bsearch(x, 0, x_index)
-        elif x >= self.xa[unsafe_offset=x_index + 1]:
-            self.cache = self._bsearch(x, x_index, self.size - 1)
+        """The cell [xa[i], xa[i + 1]) that holds x (the last cell for
+        x = xmax), as GSL's accelerator finds it. GSL bisects the whole range
+        above or below the cached cell; here the search starts next to it,
+        with steps that double, as the callers' x mostly move by a few cells
+        (the cell found is the same)."""
+        var c = self.cache
+        if x < self.xa[unsafe_offset=c]:
+            # xa[lo] <= x < xa[hi] (x >= xa[0] = xmin)
+            var hi = c
+            var step = 1
+            var lo = max(hi - step, 0)
+            while lo > 0 and self.xa[unsafe_offset=lo] > x:
+                hi = lo
+                step *= 2
+                lo = max(hi - step, 0)
+            self.cache = self._bsearch(x, lo, hi)
+        elif x >= self.xa[unsafe_offset=c + 1]:
+            # xa[lo] <= x < xa[hi], or hi = size - 1 (x <= xmax); x = xmax in
+            # the last cell stays there
+            var lo = min(c + 1, self.size - 2)
+            var step = 1
+            var hi = min(lo + step, self.size - 1)
+            while hi < self.size - 1 and self.xa[unsafe_offset=hi] <= x:
+                lo = hi
+                step *= 2
+                hi = min(lo + step, self.size - 1)
+            self.cache = self._bsearch(x, lo, hi)
         return self.cache
 
-    @always_inline
+    @inline(.always)
+    def hint(mut self, i: Int):
+        """Start the next search at cell i (any cell gives the same result)."""
+        self.cache = min(max(i, 0), self.size - 2)
+
+    @inline(.always)
     def eval(mut self, x: Float64) -> Float64:
         """gsl_spline_eval. Out-of-range input is a GSL domain error (which
         aborts the C++ program); here it sets `error` and returns NaN."""

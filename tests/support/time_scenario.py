@@ -6,35 +6,30 @@ prints one JSON line: {"init": [...], "evolve": [...], "steps": n, "max_rss": by
 import argparse, gc, json, os, resource, sys, time
 
 sys.path.insert(1, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # tests/
-from support.output import silenced  # noqa: E402
-from support.paths import new_am3  # noqa: E402
-from support.scenarios import SCENARIOS  # noqa: E402
+from support.output import silenced
+from support.paths import new_am3
+from support.scenarios import SCENARIOS
 
 
 class Timed:
-    """Forwarding proxy that accumulates the time spent in init_kernels and
-    evolve_step."""
+    """Forwarding proxy that adds up the time spent in init_kernels and evolve_step."""
 
     def __init__(self, obj):
-        object.__setattr__(self, '_o', obj)
-        object.__setattr__(self, 't_init', 0.0)
-        object.__setattr__(self, 't_evolve', 0.0)
-        object.__setattr__(self, 'steps', 0)
+        self._o, self.t_init, self.t_evolve, self.steps = obj, 0.0, 0.0, 0
 
     def __getattr__(self, name):
-        attr = getattr(self._o, name)
-        if name == 'init_kernels':
-            def f():
-                t = time.perf_counter(); attr()
-                object.__setattr__(self, 't_init', self.t_init + time.perf_counter() - t)
-            return f
-        if name == 'evolve_step':
-            def g():
-                t = time.perf_counter(); attr()
-                object.__setattr__(self, 't_evolve', self.t_evolve + time.perf_counter() - t)
-                object.__setattr__(self, 'steps', self.steps + 1)
-            return g
-        return attr
+        return getattr(self._o, name)
+
+    def init_kernels(self):
+        t = time.perf_counter()
+        self._o.init_kernels()
+        self.t_init += time.perf_counter() - t
+
+    def evolve_step(self):
+        t = time.perf_counter()
+        self._o.evolve_step()
+        self.t_evolve += time.perf_counter() - t
+        self.steps += 1
 
 
 def main():
@@ -52,8 +47,7 @@ def main():
         res['init'].append(obj.t_init)
         res['evolve'].append(obj.t_evolve)
         res['steps'] = obj.steps
-        # release this simulation before the next one is built, so that the
-        # peak memory is that of one simulation
+        # free this simulation before the next is built, so the peak memory is one simulation's
         obj = None
         gc.collect()
     rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss

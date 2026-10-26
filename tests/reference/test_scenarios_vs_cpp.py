@@ -1,14 +1,11 @@
-"""am3_mojo against the C++ AM3 on the four simulation scenarios of
-tests/support/scenarios.py: every getter at every checkpoint (5,126 arrays).
-The C++ has the fixes of tests/reference/am3_fixes.patch (the AM3 bugs am3_mojo
-fixes, tests/reference/README.md), so both codes compute the same equations.
+"""am3_mojo against the C++ AM3 on the four scenarios of tests/support/scenarios.py: every getter at every checkpoint
+(5,126 arrays). The C++ has am3_mojo's fixes of AM3's bugs and its constants (tests/reference/am3_fixes.patch), so both
+codes compute the same equations.
 
-Criterion (tests/support/compare.py): fluxes agree to 1e-2 relative on every bin
-above 1e-12 of the array's peak, and grids exactly. Timescales are only
-reported (on the bins where their rate is above 1e-12 of its largest). Most
-bins agree to 1e-7; the largest differences come from two places where the C++
-result depends on floating-point rounding (tests/reference/README.md). A
-summary is written to results/reference/summary.md.
+Criterion (tests/support/compare.py): fluxes agree to 1e-2 relative on every bin above 1e-12 of the array's peak, grids
+exactly. Timescales are only reported (on bins whose rate is above 1e-12 of its largest). Most bins agree to 1e-7; the
+largest differences come from two places where the C++ result depends on rounding (tests/reference/README.md). A summary
+goes to results/reference/summary.md.
 """
 import os
 import pytest

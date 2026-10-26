@@ -8,10 +8,8 @@
 """
 
 from std.math import fma
-from std.sys import size_of
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
 from am3_mojo.utils.buffers import *
+from am3_mojo.utils.parallel import parallel_run, parallel_tasks
 
 
 struct MatD(Copyable, Movable):
@@ -106,9 +104,7 @@ struct MatD(Copyable, Movable):
                     if seen[m] == 0:
                         t[m] = v
                         seen[m] = 1
-                    elif c_fabs(v - t[m]) > 1e-12 * max(
-                        c_fabs(v), c_fabs(t[m])
-                    ):
+                    elif abs(v - t[m]) > 1e-12 * max(abs(v), abs(t[m])):
                         ok = False
                         break
                 if not ok:
@@ -150,26 +146,17 @@ struct MatD(Copyable, Movable):
         self._detect_structure()
         self.sp_valid = True
 
-    @always_inline
+    @inline(.always)
     def ptr(ref self) -> FPtr:
         return pd(self.data)
 
-    @always_inline
-    def col(ref self, j: Int) -> FPtr:
-        return pd(self.data).unsafe_offset(j * self.rows)
-
-    @always_inline
+    @inline(.always)
     def get(self, i: Int, j: Int) -> Float64:
         return self.data[j * self.rows + i]
 
-    @always_inline
+    @inline(.always)
     def set(mut self, i: Int, j: Int, v: Float64):
         self.data[j * self.rows + i] = v
-        self.sp_valid = False
-
-    @always_inline
-    def add(mut self, i: Int, j: Int, v: Float64):
-        self.data[j * self.rows + i] += v
         self.sp_valid = False
 
 
@@ -190,11 +177,11 @@ struct MatI(Copyable, Movable):
         self.cols = cols
         self.data = zerosi(rows * cols)
 
-    @always_inline
+    @inline(.always)
     def get(self, i: Int, j: Int) -> Int:
         return self.data[j * self.rows + i]
 
-    @always_inline
+    @inline(.always)
     def set(mut self, i: Int, j: Int, v: Int):
         self.data[j * self.rows + i] = v
 
@@ -220,21 +207,16 @@ struct Mat3F(Copyable, Movable):
         self.cols = cols
         self.data = zerosf(nmat * rows * cols)
 
-    @always_inline
+    @inline(.always)
     def mat(ref self, k: Int) -> F32Ptr:
         return pf(self.data).unsafe_offset(k * self.rows * self.cols)
 
-    @always_inline
-    def get(self, k: Int, i: Int, j: Int) -> Float32:
-        return self.data[(k * self.cols + j) * self.rows + i]
-
-    @always_inline
+    @inline(.always)
     def set(mut self, k: Int, i: Int, j: Int, v: Float32):
         self.data[(k * self.cols + j) * self.rows + i] = v
 
-    @always_inline
-    def add(mut self, k: Int, i: Int, j: Int, v: Float32):
-        self.data[(k * self.cols + j) * self.rows + i] += v
+
+comptime DOT_BLOCK = 4 * WD  # elements per step of `dot`'s main loop
 
 
 def dot(a: FPtr, b: FPtr, n: Int) -> Float64:
@@ -280,7 +262,54 @@ def dot(a: FPtr, b: FPtr, n: Int) -> Float64:
     return s
 
 
-@always_inline
+def dot_nonzero(a: FPtr, b: FPtr, n: Int, lo: Int, hi: Int) -> Float64:
+    """`dot(a, b, n)` for an `a` that is zero outside [lo, hi), bitwise: the
+    blocks of `dot` (32 elements, then 8, then single ones) that lie outside
+    would add exact zeros to its partial sums, so they are skipped."""
+    comptime W = WD
+    var s0 = SIMD[DType.float64, W](0)
+    var s1 = SIMD[DType.float64, W](0)
+    var s2 = SIMD[DType.float64, W](0)
+    var s3 = SIMD[DType.float64, W](0)
+    var nb = n - n % (4 * W)  # end of the 32-element blocks
+    var i = max(lo, 0) // (4 * W) * (4 * W)
+    var iend = min(nb, hi)
+    while i < iend:
+        var pa = a.unsafe_offset(i)
+        var pb = b.unsafe_offset(i)
+        s0 = pa.unsafe_load[width=W]().fma(pb.unsafe_load[width=W](), s0)
+        s1 = (
+            pa.unsafe_offset(W)
+            .unsafe_load[width=W]()
+            .fma(pb.unsafe_offset(W).unsafe_load[width=W](), s1)
+        )
+        s2 = (
+            pa.unsafe_offset(2 * W)
+            .unsafe_load[width=W]()
+            .fma(pb.unsafe_offset(2 * W).unsafe_load[width=W](), s2)
+        )
+        s3 = (
+            pa.unsafe_offset(3 * W)
+            .unsafe_load[width=W]()
+            .fma(pb.unsafe_offset(3 * W).unsafe_load[width=W](), s3)
+        )
+        i += 4 * W
+    i = nb
+    while i + W <= n:
+        if i + W > lo and i < hi:
+            s0 = (
+                a.unsafe_offset(i)
+                .unsafe_load[width=W]()
+                .fma(b.unsafe_offset(i).unsafe_load[width=W](), s0)
+            )
+        i += W
+    var s = ((s0 + s1) + (s2 + s3)).reduce_add()
+    for k in range(max(i, lo), min(n, hi)):
+        s += a[unsafe_offset=k] * b[unsafe_offset=k]
+    return s
+
+
+@inline(.always)
 def gemv_block_cols[elt_size: Int](rows: Int, cols: Int) -> Int:
     """Column-block width of the blocked GEMV: narrow matrices form one block;
     otherwise 16 columns, or 4 when a block of 16 would not stay in cache."""
@@ -332,7 +361,7 @@ def gemv_block_rows[
         i += 1
 
 
-@always_inline
+@inline(.always)
 def _diag_cols[
     hankel: Bool
 ](tlo: Int, thi: Int, C: Int, c1: Int, i0: Int, nb: Int) -> Tuple[Int, Int]:
@@ -413,6 +442,80 @@ def diagonal_gemv[
         res[unsafe_offset=i] = acc * alpha
 
 
+def diagonal_gemv2[
+    hankel: Bool
+](
+    t: FPtr,
+    tlo: Int,
+    thi: Int,
+    R: Int,
+    C: Int,
+    x0: FPtr,
+    x1: FPtr,
+    alpha: Float64,
+    res0: FPtr,
+    res1: FPtr,
+):
+    """`diagonal_gemv` for two vectors in one pass over t: res0 = alpha A x0
+    and res1 = alpha A x1. Each result is bitwise that of `diagonal_gemv`:
+    every row adds the same products in the same order (the columns a row
+    block reaches beyond a row's own band add exact zeros, so the blocks may
+    differ). Output rows go in blocks of 2 x W, then W, then single rows."""
+    comptime W = WD
+    comptime sgn = 1 if hankel else -1
+    var c1 = 0 if hankel else C - 1
+    var av = SIMD[DType.float64, W](alpha)
+    var i0 = 0
+    while i0 + 2 * W <= R:
+        var jlo: Int
+        var jhi: Int
+        jlo, jhi = _diag_cols[hankel](tlo, thi, C, c1, i0, 2 * W)
+        var a0 = SIMD[DType.float64, W](0)
+        var a1 = SIMD[DType.float64, W](0)
+        var b0 = SIMD[DType.float64, W](0)
+        var b1 = SIMD[DType.float64, W](0)
+        for j in range(jlo, jhi):
+            var xv = SIMD[DType.float64, W](x0[unsafe_offset=j])
+            var yv = SIMD[DType.float64, W](x1[unsafe_offset=j])
+            var base = t.unsafe_offset(i0 + sgn * j + c1)
+            var t0 = base.unsafe_load[width=W]()
+            var t1 = base.unsafe_offset(W).unsafe_load[width=W]()
+            a0 = t0.fma(xv, a0)
+            a1 = t1.fma(xv, a1)
+            b0 = t0.fma(yv, b0)
+            b1 = t1.fma(yv, b1)
+        res0.unsafe_offset(i0).unsafe_store(a0 * av)
+        res0.unsafe_offset(i0 + W).unsafe_store(a1 * av)
+        res1.unsafe_offset(i0).unsafe_store(b0 * av)
+        res1.unsafe_offset(i0 + W).unsafe_store(b1 * av)
+        i0 += 2 * W
+    while i0 + W <= R:
+        var jlo: Int
+        var jhi: Int
+        jlo, jhi = _diag_cols[hankel](tlo, thi, C, c1, i0, W)
+        var a0 = SIMD[DType.float64, W](0)
+        var b0 = SIMD[DType.float64, W](0)
+        for j in range(jlo, jhi):
+            var t0 = t.unsafe_offset(i0 + sgn * j + c1).unsafe_load[width=W]()
+            a0 = t0.fma(SIMD[DType.float64, W](x0[unsafe_offset=j]), a0)
+            b0 = t0.fma(SIMD[DType.float64, W](x1[unsafe_offset=j]), b0)
+        res0.unsafe_offset(i0).unsafe_store(a0 * av)
+        res1.unsafe_offset(i0).unsafe_store(b0 * av)
+        i0 += W
+    for i in range(i0, R):
+        var jlo: Int
+        var jhi: Int
+        jlo, jhi = _diag_cols[hankel](tlo, thi, C, c1, i, 1)
+        var acc0 = 0.0
+        var acc1 = 0.0
+        for j in range(jlo, jhi):
+            var tv = t[unsafe_offset=i + sgn * j + c1]
+            acc0 = fma(tv, x0[unsafe_offset=j], acc0)
+            acc1 = fma(tv, x1[unsafe_offset=j], acc1)
+        res0[unsafe_offset=i] = acc0 * alpha
+        res1[unsafe_offset=i] = acc1 * alpha
+
+
 def gemv_d(mut A: MatD, x: FPtr, alpha: Float64, res: FPtr):
     """res = alpha * A x, skipping all-zero row ranges of each column block
     (the structure is analysed lazily and cached); Toeplitz and Hankel
@@ -444,9 +547,190 @@ def gemv_d(mut A: MatD, x: FPtr, alpha: Float64, res: FPtr):
         )
 
 
+def gemv_rows(A: MatD, x: FPtr, alpha: Float64, res: FPtr, r0: Int, r1: Int):
+    """Rows [r0, r1) of `gemv_d` (A analysed), bitwise: every row adds the
+    same products in the same order, in whichever block of rows it falls
+    (the columns a block reaches beyond a row's own band add exact zeros)."""
+    if r1 <= r0:
+        return
+    if A.is_toeplitz or A.is_hankel:
+        # A[r0 + i, j] = t'[i -+ j ...] with t' = t + r0
+        var t = pd(A.toe).unsafe_offset(r0)
+        var lo = A.toe_lo - r0
+        var hi = A.toe_hi - r0
+        if A.is_toeplitz:
+            diagonal_gemv[False](
+                t, lo, hi, r1 - r0, A.cols, x, alpha, res.unsafe_offset(r0)
+            )
+        else:
+            diagonal_gemv[True](
+                t, lo, hi, r1 - r0, A.cols, x, alpha, res.unsafe_offset(r0)
+            )
+        return
+    for i in range(r0, r1):
+        res[unsafe_offset=i] = 0
+    var block = gemv_block_cols[8](A.rows, A.cols)
+    var Ap = pd(A.data)
+    for b in range(len(A.sp_lo)):
+        var lo = max(A.sp_lo[b], r0)
+        var hi = min(A.sp_hi[b], r1)
+        if hi <= lo:
+            continue
+        var j2 = b * block
+        gemv_block_rows[DType.float64, WD](
+            Ap, A.rows, j2, min(j2 + block, A.cols), x, alpha, res, lo, hi
+        )
+
+
+struct _GemvRowsJob(Movable):
+    var A: Pointer[MatD, MutUntrackedOrigin]
+    var x: FPtr
+    var alpha: Float64
+    var res: FPtr
+
+    def __init__(
+        out self,
+        A: Pointer[MatD, MutUntrackedOrigin],
+        x: FPtr,
+        alpha: Float64,
+        res: FPtr,
+    ):
+        self.A = A
+        self.x = x
+        self.alpha = alpha
+        self.res = res
+
+
+def _gemv_rows_work(
+    job: Pointer[_GemvRowsJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    ref J = job[]
+    # chunks of whole 4 x WD row blocks
+    var nb = (J.A[].rows + 4 * WD - 1) // (4 * WD)
+    var r0 = t * nb // nt * 4 * WD
+    var r1 = min((t + 1) * nb // nt * 4 * WD, J.A[].rows)
+    gemv_rows(J.A[], J.x, J.alpha, J.res, r0, r1)
+
+
+def gemv_d_par(mut A: MatD, x: FPtr, alpha: Float64, res: FPtr, nthreads: Int):
+    """`gemv_d` on up to nthreads threads, each taking a range of rows: the
+    same values (gemv_rows)."""
+    if not A.sp_valid:
+        A.analyze()
+    var job = _GemvRowsJob(
+        Pointer(to=A).unsafe_origin_cast[MutUntrackedOrigin](), x, alpha, res
+    )
+    var nb = (A.rows + 4 * WD - 1) // (4 * WD)
+    parallel_run[_gemv_rows_work](job, max(1, min(nthreads, nb)))
+
+
+def gemv_pair(
+    mut A: MatD, x0: FPtr, x1: FPtr, alpha: Float64, res0: FPtr, res1: FPtr
+):
+    """res0 = alpha A x0 and res1 = alpha A x1, each bitwise that of gemv_d.
+    Toeplitz and Hankel matrices take one pass over their diagonals for both
+    vectors (`diagonal_gemv2`)."""
+    if not A.sp_valid:
+        A.analyze()
+    if A.is_toeplitz:
+        diagonal_gemv2[False](
+            pd(A.toe),
+            A.toe_lo,
+            A.toe_hi,
+            A.rows,
+            A.cols,
+            x0,
+            x1,
+            alpha,
+            res0,
+            res1,
+        )
+    elif A.is_hankel:
+        diagonal_gemv2[True](
+            pd(A.toe),
+            A.toe_lo,
+            A.toe_hi,
+            A.rows,
+            A.cols,
+            x0,
+            x1,
+            alpha,
+            res0,
+            res1,
+        )
+    else:
+        gemv_d(A, x0, alpha, res0)
+        gemv_d(A, x1, alpha, res1)
+
+
+struct GemvPair(Copyable, Movable):
+    """res0 = alpha A x0 and, for a pair, res1 = alpha A x1 (run_gemv_pairs)."""
+
+    var A: Pointer[MatD, MutUntrackedOrigin]
+    var x0: FPtr
+    var x1: FPtr
+    var alpha: Float64
+    var res0: FPtr
+    var res1: FPtr
+    var two: Bool
+
+    def __init__(out self, ref A: MatD, x0: FPtr, alpha: Float64, res0: FPtr):
+        self.A = (
+            Pointer(to=A)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin]()
+        )
+        self.x0 = x0
+        self.x1 = x0
+        self.alpha = alpha
+        self.res0 = res0
+        self.res1 = res0
+        self.two = False
+
+    def __init__(
+        out self,
+        ref A: MatD,
+        x0: FPtr,
+        x1: FPtr,
+        alpha: Float64,
+        res0: FPtr,
+        res1: FPtr,
+    ):
+        self.A = (
+            Pointer(to=A)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin]()
+        )
+        self.x0 = x0
+        self.x1 = x1
+        self.alpha = alpha
+        self.res0 = res0
+        self.res1 = res1
+        self.two = True
+
+
+def _gemv_pairs_work(jobs: Pointer[List[GemvPair], MutUntrackedOrigin], k: Int):
+    ref J = jobs[][k]
+    if J.two:
+        gemv_pair(J.A[], J.x0, J.x1, J.alpha, J.res0, J.res1)
+    else:
+        gemv_d(J.A[], J.x0, J.alpha, J.res0)
+
+
+def run_gemv_pairs(mut jobs: List[GemvPair], nthreads: Int):
+    """Every product of `jobs` on up to nthreads workers. The matrices are
+    analysed first, so that the workers only read them. Each product writes
+    its own outputs: the results do not depend on the threads."""
+    for k in range(len(jobs)):
+        if not jobs[k].A[].sp_valid:
+            jobs[k].A[].analyze()
+    parallel_tasks[_gemv_pairs_work](jobs, len(jobs), nthreads)
+
+
 struct SparseGemvF(Copyable, Movable):
-    """Non-zero structure of a stack of float matrices, so that the blocked
-    GEMV skips the all-zero rows of every column block.
+    """Non-zero structure of a stack of float matrices, which PackedGemvF
+    packs so that the blocked GEMV skips the all-zero rows of every column
+    block.
 
     `lo[k*nb+b]`..`hi[k*nb+b]` is the row range holding all non-zeros of
     column block b of matrix k (within the rows the caller needs). Skipped
@@ -461,17 +745,9 @@ struct SparseGemvF(Copyable, Movable):
     var lo: VecI
     var hi: VecI
 
-    def __init__(out self):
-        self.nmat = 0
-        self.rows = 0
-        self.cols = 0
-        self.block = 1
-        self.nb = 0
-        self.lo = VecI()
-        self.hi = VecI()
-
-    def __init__(out self, K: Mat3F, row_min: VecI):
-        """`row_min[k]`: rows below it are never read for matrix k."""
+    def __init__(out self, K: Mat3F, row_min: VecI, nthreads: Int):
+        """`row_min[k]`: rows below it are never read for matrix k. The
+        matrices are scanned on up to nthreads threads."""
         self.nmat = K.nmat
         self.rows = K.rows
         self.cols = K.cols
@@ -479,55 +755,110 @@ struct SparseGemvF(Copyable, Movable):
         self.nb = (K.cols + self.block - 1) // self.block if K.cols > 0 else 0
         self.lo = zerosi(self.nmat * self.nb)
         self.hi = zerosi(self.nmat * self.nb)
-        for k in range(self.nmat):
-            var A = K.mat(k)
-            for b in range(self.nb):
-                var j2 = b * self.block
-                var jend = min(j2 + self.block, self.cols)
-                var lo = self.rows
-                var hi = 0
-                for j in range(j2, jend):
-                    var colp = A.unsafe_offset(j * self.rows)
-                    for i in range(row_min[k], self.rows):
-                        if colp[unsafe_offset=i] != 0.0:
-                            if i < lo:
-                                lo = i
-                            if i + 1 > hi:
-                                hi = i + 1
-                if hi <= lo:
-                    lo = 0
-                    hi = 0
-                self.lo[k * self.nb + b] = lo
-                self.hi[k * self.nb + b] = hi
+        var job = _PackJob(
+            Pointer(to=K)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=row_min)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+        )
+        parallel_run[_sparse_scan_work](job, max(1, min(nthreads, K.nmat)))
 
-    def nnz_fraction(self) -> Float64:
-        var tot = 0
-        for t in range(len(self.lo)):
-            var b = t % self.nb if self.nb > 0 else 0
-            var w = min(self.block, self.cols - b * self.block)
-            tot += (self.hi[t] - self.lo[t]) * w
-        var full = self.nmat * self.rows * self.cols
-        return Float64(tot) / Float64(full) if full > 0 else 0.0
 
-    def apply(self, K: Mat3F, k: Int, x: F32Ptr, alpha: Float32, res: F32Ptr):
-        """res[0:rows] = alpha * K[k] x (rows outside the recorded ranges are 0).
-        """
-        for i in range(self.rows):
-            res[unsafe_offset=i] = 0
+struct _PackJob(Movable):
+    """SparseGemvF's scan and PackedGemvF's copy of the matrices k = t,
+    t + nt, ... of K."""
+
+    var K: Pointer[Mat3F, MutUntrackedOrigin]
+    var row_min: Pointer[VecI, MutUntrackedOrigin]
+    var sp: Pointer[SparseGemvF, MutUntrackedOrigin]
+
+    def __init__(
+        out self,
+        K: Pointer[Mat3F, MutUntrackedOrigin],
+        row_min: Pointer[VecI, MutUntrackedOrigin],
+        sp: Pointer[SparseGemvF, MutUntrackedOrigin],
+    ):
+        self.K = K
+        self.row_min = row_min
+        self.sp = sp
+
+
+def _sparse_scan_work(
+    job: Pointer[_PackJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    ref K = job[].K[]
+    ref S = job[].sp[]
+    var k = t
+    while k < S.nmat:
         var A = K.mat(k)
-        for b in range(self.nb):
-            var lo = self.lo[k * self.nb + b]
-            var hi = self.hi[k * self.nb + b]
+        var rmin = job[].row_min[][k]
+        for b in range(S.nb):
+            var j2 = b * S.block
+            var jend = min(j2 + S.block, S.cols)
+            var lo = S.rows
+            var hi = 0
+            for j in range(j2, jend):
+                var colp = A.unsafe_offset(j * S.rows)
+                for i in range(rmin, S.rows):
+                    if colp[unsafe_offset=i] != 0.0:
+                        if i < lo:
+                            lo = i
+                        if i + 1 > hi:
+                            hi = i + 1
             if hi <= lo:
-                continue
-            var j2 = b * self.block
-            var jend = min(j2 + self.block, self.cols)
-            gemv_block_rows[DType.float32, WF](
-                A, self.rows, j2, jend, x, alpha, res, lo, hi
-            )
+                lo = 0
+                hi = 0
+            S.lo[k * S.nb + b] = lo
+            S.hi[k * S.nb + b] = hi
+        k += nt
 
 
 comptime PW = 16  # rows per packed SIMD chunk
+
+
+struct _PackedCopyJob(Movable):
+    var job: Pointer[_PackJob, MutUntrackedOrigin]
+    var P: Pointer[PackedGemvF, MutUntrackedOrigin]
+
+    def __init__(
+        out self,
+        job: Pointer[_PackJob, MutUntrackedOrigin],
+        P: Pointer[PackedGemvF, MutUntrackedOrigin],
+    ):
+        self.job = job
+        self.P = P
+
+
+def _packed_copy_work(
+    job: Pointer[_PackedCopyJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    """PackedGemvF's chunks of the matrices k = t, t + nt, ... (each matrix
+    has its own range of the data)."""
+    ref K = job[].job[].K[]
+    ref sp = job[].job[].sp[]
+    ref P = job[].P[]
+    var dp = pf(P.data)
+    var k = t
+    while k < P.nmat:
+        var A = K.mat(k)
+        for b in range(P.nb):
+            var t2 = k * P.nb + b
+            var j2 = b * P.block
+            var bw = min(P.block, P.cols - j2)
+            var hi = sp.hi[t2]
+            for c in range(P.nch[t2]):
+                for j in range(bw):
+                    var colp = A.unsafe_offset((j2 + j) * P.rows)
+                    var dst = dp.unsafe_offset(P.off[t2] + (c * bw + j) * PW)
+                    for l in range(PW):
+                        var r = P.lo[t2] + c * PW + l
+                        dst[unsafe_offset=l] = colp[
+                            unsafe_offset=r
+                        ] if r < hi else Float32(0.0)
+        k += nt
 
 
 struct PackedGemvF(Copyable, Movable):
@@ -561,8 +892,9 @@ struct PackedGemvF(Copyable, Movable):
         self.off = VecI()
         self.data = VecF()
 
-    def __init__(out self, K: Mat3F, row_min: VecI):
-        var sp = SparseGemvF(K, row_min)
+    def __init__(out self, K: Mat3F, row_min: VecI, nthreads: Int):
+        """Pack K (on up to nthreads threads)."""
+        var sp = SparseGemvF(K, row_min, nthreads)
         self.nmat = K.nmat
         self.rows = K.rows
         self.cols = K.cols
@@ -582,27 +914,25 @@ struct PackedGemvF(Copyable, Movable):
             self.off[t] = total
             total += nc * bw * PW
         self.data = zerosf(total)
-        var dp = pf(self.data)
-        for k in range(self.nmat):
-            var A = K.mat(k)
-            for b in range(self.nb):
-                var t = k * self.nb + b
-                var j2 = b * self.block
-                var bw = min(self.block, self.cols - j2)
-                var hi = sp.hi[t]
-                for c in range(self.nch[t]):
-                    for j in range(bw):
-                        var colp = A.unsafe_offset((j2 + j) * self.rows)
-                        var dst = dp.unsafe_offset(
-                            self.off[t] + (c * bw + j) * PW
-                        )
-                        for l in range(PW):
-                            var r = self.lo[t] + c * PW + l
-                            dst[unsafe_offset=l] = colp[
-                                unsafe_offset=r
-                            ] if r < hi else Float32(0.0)
+        var job = _PackJob(
+            Pointer(to=K)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=row_min)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=sp).unsafe_origin_cast[MutUntrackedOrigin](),
+        )
+        var pj = _PackedCopyJob(
+            Pointer(to=job).unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+        )
+        parallel_run[_packed_copy_work](pj, max(1, min(nthreads, K.nmat)))
+        # (read by the workers through pointers)
+        _ = job^
+        _ = sp^
 
-    @always_inline
+    @inline(.always)
     def res_len(self) -> Int:
         """Length the result buffer must have (rows + padding)."""
         return self.rows + PW

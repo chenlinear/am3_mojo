@@ -891,221 +891,221 @@ comptime _IT3MnNTR: Array[Float64, 14] = [
 ]
 
 
-@always_inline
+@inline(.always)
 def IT1Er(i: Int) -> Float64:
     return global_constant[_IT1Er]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1Bout(i: Int) -> Float64:
     return global_constant[_IT1Bout]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1G(i: Int) -> Float64:
     return global_constant[_IT1G]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1kai(i: Int) -> Float64:
     return global_constant[_IT1kai]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1kaiPN(i: Int) -> Float64:
     return global_constant[_IT1kaiPN]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MpPi0(i: Int) -> Float64:
     return global_constant[_IT1MpPi0]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MpPip(i: Int) -> Float64:
     return global_constant[_IT1MpPip]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MpPim(i: Int) -> Float64:
     return global_constant[_IT1MpPim]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MnPi0(i: Int) -> Float64:
     return global_constant[_IT1MnPi0]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MnPip(i: Int) -> Float64:
     return global_constant[_IT1MnPip]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MnPim(i: Int) -> Float64:
     return global_constant[_IT1MnPim]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MpPRO(i: Int) -> Float64:
     return global_constant[_IT1MpPRO]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MpNTR(i: Int) -> Float64:
     return global_constant[_IT1MpNTR]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MnPRO(i: Int) -> Float64:
     return global_constant[_IT1MnPRO]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT1MnNTR(i: Int) -> Float64:
     return global_constant[_IT1MnNTR]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2Em(i: Int) -> Float64:
     return global_constant[_IT2Em]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2Ex(i: Int) -> Float64:
     return global_constant[_IT2Ex]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2kai(i: Int) -> Float64:
     return global_constant[_IT2kai]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2kaiPN(i: Int) -> Float64:
     return global_constant[_IT2kaiPN]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MpPi0(i: Int) -> Float64:
     return global_constant[_IT2MpPi0]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MpPip(i: Int) -> Float64:
     return global_constant[_IT2MpPip]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MpPim(i: Int) -> Float64:
     return global_constant[_IT2MpPim]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MnPi0(i: Int) -> Float64:
     return global_constant[_IT2MnPi0]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MnPip(i: Int) -> Float64:
     return global_constant[_IT2MnPip]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MnPim(i: Int) -> Float64:
     return global_constant[_IT2MnPim]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MpPRO(i: Int) -> Float64:
     return global_constant[_IT2MpPRO]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MpNTR(i: Int) -> Float64:
     return global_constant[_IT2MpNTR]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MnPRO(i: Int) -> Float64:
     return global_constant[_IT2MnPRO]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT2MnNTR(i: Int) -> Float64:
     return global_constant[_IT2MnNTR]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3sig(i: Int) -> Float64:
     return global_constant[_IT3sig]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3Em(i: Int) -> Float64:
     return global_constant[_IT3Em]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3Ex(i: Int) -> Float64:
     return global_constant[_IT3Ex]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3kai(i: Int) -> Float64:
     return global_constant[_IT3kai]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3kaiPN(i: Int) -> Float64:
     return global_constant[_IT3kaiPN]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MpPi0(i: Int) -> Float64:
     return global_constant[_IT3MpPi0]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MpPip(i: Int) -> Float64:
     return global_constant[_IT3MpPip]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MpPim(i: Int) -> Float64:
     return global_constant[_IT3MpPim]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MnPi0(i: Int) -> Float64:
     return global_constant[_IT3MnPi0]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MnPip(i: Int) -> Float64:
     return global_constant[_IT3MnPip]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MnPim(i: Int) -> Float64:
     return global_constant[_IT3MnPim]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MpPRO(i: Int) -> Float64:
     return global_constant[_IT3MpPRO]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MpNTR(i: Int) -> Float64:
     return global_constant[_IT3MpNTR]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MnPRO(i: Int) -> Float64:
     return global_constant[_IT3MnPRO]()[i]
 
 
-@always_inline
+@inline(.always)
 def IT3MnNTR(i: Int) -> Float64:
     return global_constant[_IT3MnNTR]()[i]

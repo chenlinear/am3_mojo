@@ -1,6 +1,5 @@
-"""Every scenario of tests/support/scenarios.py runs, and the results are
-physically sane: all fluxes finite and non-negative, the main spectra
-populated, and the densities changing between checkpoints."""
+"""Every scenario of tests/support/scenarios.py runs, and its results are sane: all fluxes finite and non-negative,
+the main spectra populated, the densities changing between checkpoints."""
 import numpy as np
 import pytest
 
@@ -24,7 +23,6 @@ def test_fluxes_finite_and_non_negative(run):
 def test_spectra_populated_and_evolving(run):
     name, npz = run
     steps = checkpoints(npz)
-    assert len(steps) >= 2
     first, last = steps[0], steps[-1]
     for getter in ('get_photons', 'get_pairs'):
         assert np.max(npz[f'{last:06d}/{getter}']) > 0, f'{name}: {getter} empty'

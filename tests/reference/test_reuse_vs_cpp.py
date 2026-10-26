@@ -1,12 +1,9 @@
-"""Reusing kernels (tests/unit/test_reuse.py) against the original C++ AM3:
-am3_mojo's reused runs match the C++ reused runs (fluxes to 1e-2, see
-tests/support/compare.py).
+"""Reusing kernels (tests/unit/test_reuse.py) against the original C++ AM3: am3_mojo's reused runs match the C++ ones
+(fluxes to 1e-2, tests/support/compare.py).
 
-The C++ has the fixes of tests/reference/am3_fixes.patch
-(tests/reference/README.md). Without them, it reads memory past the photon grid
-in the hadron inverse-Compton cooling: about 1 in 10 fresh init_kernels() calls
-gives garbage cooling times in the top 30 hadron bins (and wrong spectra where
-protons reach them), so comparisons would fail at random.
+The C++ has the fixes of tests/reference/am3_fixes.patch. Without them, its hadron inverse-Compton cooling reads memory
+past the photon grid: about 1 in 10 fresh init_kernels() calls gives garbage cooling times in the top 30 hadron bins
+(and wrong spectra where protons reach them), so comparisons would fail at random.
 """
 import pytest
 
@@ -17,9 +14,8 @@ from support.runs import config, run_reuse
 
 @pytest.fixture(scope='module')
 def runs():
-    r = {(s, 'cpp'): run_reuse('cpp-fixed', s, 'reused', rerun=True) for s in SETUPS}
-    r.update({(s, 'mojo'): run_reuse('mojo-am3', s, 'reused', rerun=True) for s in SETUPS})
-    return r
+    return {(s, code): run_reuse(impl, s, 'reused', rerun=True)
+            for code, impl in (('cpp', 'cpp-fixed'), ('mojo', 'mojo-am3')) for s in SETUPS}
 
 
 @pytest.mark.parametrize('setup', list(SETUPS))

@@ -1,110 +1,65 @@
-"""Thin wrappers around the platform libm (for the transcendental functions)
-and C conversion semantics."""
+"""The transcendental functions, from the platform libm, and a switch as a
+factor."""
 
 from std.ffi import external_call
-from std.math import sqrt as _sqrt, floor as _floor, ceil as _ceil
-
-# ============================================================================
-# libm wrappers
-# ============================================================================
 
 
-@always_inline
+@inline(.always)
 def c_exp(x: Float64) -> Float64:
     return external_call["exp", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_log(x: Float64) -> Float64:
     return external_call["log", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_log10(x: Float64) -> Float64:
     return external_call["log10", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_pow(x: Float64, y: Float64) -> Float64:
     return external_call["pow", Float64](x, y)
 
 
-@always_inline
+@inline(.always)
 def c_log1p(x: Float64) -> Float64:
     return external_call["log1p", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_expm1(x: Float64) -> Float64:
     return external_call["expm1", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_cos(x: Float64) -> Float64:
     return external_call["cos", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_sin(x: Float64) -> Float64:
     return external_call["sin", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_sinh(x: Float64) -> Float64:
     return external_call["sinh", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_cosh(x: Float64) -> Float64:
     return external_call["cosh", Float64](x)
 
 
-@always_inline
+@inline(.always)
 def c_asin(x: Float64) -> Float64:
     return external_call["asin", Float64](x)
 
 
-@always_inline
-def c_nextafter(x: Float64, y: Float64) -> Float64:
-    return external_call["nextafter", Float64](x, y)
-
-
-@always_inline
-def c_sqrt(x: Float64) -> Float64:
-    # IEEE-754 square root is correctly rounded everywhere.
-    return _sqrt(x)
-
-
-@always_inline
-def c_floor(x: Float64) -> Float64:
-    return _floor(x)
-
-
-@always_inline
-def c_ceil(x: Float64) -> Float64:
-    return _ceil(x)
-
-
-@always_inline
-def c_fabs(x: Float64) -> Float64:
-    return x if x >= 0.0 else -x
-
-
-@always_inline
-def to_int(x: Float64) -> Int:
-    """C-style truncating double -> int conversion."""
-    return Int(x)
-
-
-@always_inline
-def c_mod(a: Int, b: Int) -> Int:
-    """C-style `%` (sign follows the dividend)."""
-    var r = a - (a // b) * b
-    if r != 0 and ((r < 0) != (a < 0)):
-        r -= b
-    return r
-
-
-@always_inline
+@inline(.always)
 def fbool(b: Bool) -> Float64:
+    """A process switch as the factor 1 or 0 of its term."""
     return 1.0 if b else 0.0

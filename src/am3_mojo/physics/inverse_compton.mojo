@@ -1,14 +1,18 @@
 """Port of Comp (InverseCompton.cc): IC photon emission/loss by e+/-."""
 
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.utils.specfun import polylog
-from am3_mojo.model.runparams import RunParams
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.particles import *
-from am3_mojo.utils.parallel import parallel_run
-from am3_mojo.utils.linalg import MatD, gemv_d, diagonal_gemv, dot
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.libm import *
+from am3_mojo.utils.linalg import MatD, gemv_d
+from am3_mojo.utils.parallel import parallel_run, parallel_tasks
+from am3_mojo.utils.specfun import polylog
+
+comptime QD = 8  # rows d of an emission block (the SIMD lanes)
+comptime LJ = 4  # electron bins of an emission block
+comptime QK = 4  # emitted photon bins of an output block (the SIMD lanes)
+comptime UPAD = 8  # zeros on either side of the reversed target photons
+comptime RAMP0 = 32  # Comp.ramp[x] = 1 for x > RAMP0, else 0
 
 
 struct ICKernel2D(Copyable, Movable):
@@ -24,8 +28,11 @@ struct ICKernel2D(Copyable, Movable):
     The small table makes the emission a cache-resident SIMD computation
     instead of a memory-bandwidth-bound stream.
 
-    On the default grids phi has 860 x 620 Float64 values (4.27 MB). With the
-    exceptions and index arrays, the kernel takes 4,357,888 bytes, against
+    The table keeps the rows d <= ipho, where bin k is not above the energy
+    of bin j (the others are zero). They are stored in groups of 8 rows
+    interleaved by s, the order in which ic_rows_work reads them. On the
+    default grids that is 528 x 620 Float64 values (2.62 MB). With the
+    exceptions and index arrays, the kernel takes 2,705,744 bytes, against
     236,096,000 for the C++ kernel (one dense 340 x 280 float32 matrix per
     outgoing photon bin). Of the 49.5 million entries of the 520 matrices of
     the emitted bins, 2,745 are exceptions: 2,487 on the i == k diagonal,
@@ -42,9 +49,9 @@ struct ICKernel2D(Copyable, Movable):
     var inmax: Int
     var outmin: Int
     var ns: Int  # s = i + j in [0, ns)
-    var d0: Int  # d = k - j in [d0, d0 + nd)
+    var d0: Int  # d = k - j in [d0, d0 + nd), up to ipho
     var nd: Int
-    var phi: Vec  # phi[(d - d0) * ns + s]
+    var phi: Vec  # phi(d0 + 8 g + q, s) at [(g * ns + s) * 8 + q]
     var slo: VecI  # phi(d, s) is zero outside s in [slo[d - d0], shi[d - d0])
     var shi: VecI
     var w: Vec  # 1 / gamma_j^2
@@ -82,17 +89,20 @@ struct ICJob(Movable):
 
     1. rows: for every d = k - j (outgoing photon minus electron bin)
            RT[d][j] = sum_i U[i] * phi(d, i + j)       (U_i = v_i / eps_i)
-       over the allowed i. Where neither kinematic mask (i < k, i < ihi[j])
-       cuts into the non-zero band, this is a Hankel product over j
-       (diagonal_gemv, register-blocked); the few other rows use masked dot
-       products.
+       over the allowed i, in increasing i. With s = i + j this is
+       sum_s phi(d, s) U[s - j], a matrix product: ic_rows_work takes blocks
+       of 8 rows d and 4 electron bins j, which reuse each loaded value of
+       phi for 4 products and each of U for 8.
     2. outputs: out_m[k] = pref_k * (sum_j RT[k - j][j] * w_j * E_m[j]
-                                     + exception terms)."""
+                                     + exception terms), in increasing j."""
 
     var K: Pointer[ICKernel2D, MutUntrackedOrigin]
-    var U: FPtr  # v_i * u_i
+    var Ur: FPtr  # U[i] at ur0 - i, zero outside [ulo, uhi)
+    var ur0: Int
+    var ramp: FPtr
     var v: FPtr  # normalised target photons
-    var RT: FPtr  # [(d - d0) * nl + j]
+    var RT: FPtr  # RT[d][j] at j * ndp + (d - d0)
+    var ndp: Int
     var outs: Array[FPtr, N_LEP_IN]
     var ins: Array[FPtr, N_LEP_IN]
     var N_calc: Int
@@ -108,9 +118,12 @@ struct ICJob(Movable):
     def __init__(
         out self,
         K: Pointer[ICKernel2D, MutUntrackedOrigin],
-        U: FPtr,
+        Ur: FPtr,
+        ur0: Int,
+        ramp: FPtr,
         v: FPtr,
         RT: FPtr,
+        ndp: Int,
         outs: Array[FPtr, N_LEP_IN],
         ins: Array[FPtr, N_LEP_IN],
         N_calc: Int,
@@ -124,9 +137,12 @@ struct ICJob(Movable):
         outmin: Int,
     ):
         self.K = K
-        self.U = U
+        self.Ur = Ur
+        self.ur0 = ur0
+        self.ramp = ramp
         self.v = v
         self.RT = RT
+        self.ndp = ndp
         self.outs = outs.copy()
         self.ins = ins.copy()
         self.N_calc = N_calc
@@ -140,79 +156,272 @@ struct ICJob(Movable):
         self.outmin = outmin
 
 
-def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], t: Int, nt: Int):
+def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], g: Int):
+    """RT of the rows d = d0 + 8 g + q (q < 8), in blocks of 4 electron bins.
+
+    The 8 x 4 sums of a block run over the union s of their ranges; outside
+    its own range a sum adds exact zeros (phi or U is zero there) except
+    where the masks i < k and i < ihi[j] cut, at the end of the range. There
+    the ramp table zeroes the cut lanes."""
     ref J = job[]
     ref K = J.K[]
-    var phi = pd(K.phi)
-    var dd = t
-    while dd < K.nd:
-        var d = dd + K.d0
-        # electrons whose outgoing bin k = d + j is emitted
-        var jA = max(max(J.elo, J.outmin - d), 0)
-        var jB = min(J.ehi, K.npho - d)
-        var row = phi.unsafe_offset(dd * K.ns)
-        var rt = J.RT.unsafe_offset(dd * K.nl)
-        if d > K.ipho or jB <= jA:
-            dd += nt
-            continue
-        var slo = K.slo[dd]
-        var shi = K.shi[dd]
-        # first electron from which neither mask cuts into the band
-        var jstar = jA
-        while jstar < jB:
-            var iu = min(J.uhi, shi - jstar)
-            if d + jstar >= iu and K.ihi[jstar] >= iu:
-                break
-            jstar += 1
-        for j in range(jA, jstar):
-            var i0 = max(J.ulo, slo - j)
-            var i1 = min(min(min(d + j, K.ihi[j]), J.uhi), shi - j)
-            rt[unsafe_offset=j] = 0.0
-            if i1 > i0:
-                rt[unsafe_offset=j] = dot(
-                    J.U.unsafe_offset(i0), row.unsafe_offset(j + i0), i1 - i0
+    var dd0 = g * QD
+    var jA = Array[Int, QD](fill=0)
+    var jB = Array[Int, QD](fill=0)
+    var nrow = min(QD, K.nd - dd0)
+    # electrons whose outgoing bin k = d + j is emitted
+    var jlo = K.nl
+    var jhi = 0
+    for q in range(nrow):
+        var d = K.d0 + dd0 + q
+        jA[q] = max(max(J.elo, J.outmin - d), 0)
+        jB[q] = min(J.ehi, K.npho - d)
+        if jB[q] > jA[q]:
+            jlo = min(jlo, jA[q])
+            jhi = max(jhi, jB[q])
+    var zero = SIMD[DType.float64, QD](0)
+    var lane = SIMD[DType.int64, QD](0, 1, 2, 3, 4, 5, 6, 7)
+    # rows past the table stay zero: the outputs read them as zeros
+    var inrow = lane.lt(SIMD[DType.int64, QD](nrow))
+    var pg = pd(K.phi).unsafe_offset(g * K.ns * QD)
+    var j0 = jlo
+    while j0 < jhi:
+        # the s ranges of the block's sums; from s_m on, masks cut
+        var s_lo = K.ns
+        var s_hi = 0
+        var s_m = K.ns
+        for q in range(nrow):
+            var d = K.d0 + dd0 + q
+            for j in range(max(j0, jA[q]), min(j0 + LJ, jB[q])):
+                var i0 = max(J.ulo, K.slo[dd0 + q] - j)
+                var mb = min(d + j, K.ihi[j])
+                var i1 = min(min(J.uhi, K.shi[dd0 + q] - j), mb)
+                s_m = min(s_m, mb + j)
+                if i1 > i0:
+                    s_lo = min(s_lo, i0 + j)
+                    s_hi = max(s_hi, i1 + j)
+        var a = Array[SIMD[DType.float64, QD], LJ](fill=zero)
+        # U[s - j0 - l] at ub[l - s]
+        var ub = J.Ur.unsafe_offset(J.ur0 + j0)
+        var s = s_lo
+        var s_end = min(s_m, s_hi)
+        while s < s_end:
+            var p = pg.unsafe_offset(s * QD).unsafe_load[width=QD]()
+            var u = ub.unsafe_offset(-s)
+            comptime for l in range(LJ):
+                a[l] = p.fma(SIMD[DType.float64, QD](u[unsafe_offset=l]), a[l])
+            s += 1
+        if s < s_hi:
+            # lane q of bin j = j0 + l takes phi while s < d + 2 j (i < k),
+            # the ramp at d0 + dd0 + q + 2 j - s + RAMP0, and U while
+            # s < ihi[j] + j
+            var ihs = Array[Int, LJ](fill=0)
+            comptime for l in range(LJ):
+                ihs[l] = K.ihi[min(j0 + l, K.nl - 1)] + j0 + l
+            var r0 = K.d0 + dd0 + 2 * j0 + RAMP0
+            while s < s_hi:
+                var p = pg.unsafe_offset(s * QD).unsafe_load[width=QD]()
+                var u = ub.unsafe_offset(-s)
+                comptime for l in range(LJ):
+                    var x = min(max(r0 + 2 * l - s, 0), 2 * RAMP0 - QD)
+                    var m = J.ramp.unsafe_offset(x).unsafe_load[width=QD]()
+                    var ul = u[unsafe_offset=l] if s < ihs[l] else 0.0
+                    a[l] = (p * m).fma(SIMD[DType.float64, QD](ul), a[l])
+                s += 1
+        var rt = J.RT.unsafe_offset(j0 * J.ndp + dd0)
+        comptime for l in range(LJ):
+            if j0 + l < jhi:
+                rt.unsafe_offset(l * J.ndp).unsafe_store(
+                    inrow.select(a[l], zero)
                 )
-        if jB > jstar and J.uhi > J.ulo:
-            # rows r = j - jstar, columns c = i - ulo:
-            # A[r, c] = phi(d, r + c + jstar + ulo)
-            var off = jstar + J.ulo
-            diagonal_gemv[True](
-                row.unsafe_offset(off),
-                slo - off,
-                shi - off,
-                jB - jstar,
-                J.uhi - J.ulo,
-                J.U.unsafe_offset(J.ulo),
-                1.0,
-                rt.unsafe_offset(jstar),
+        j0 += LJ
+
+
+def _ic_out_block[n: Int](job: Pointer[ICJob, MutUntrackedOrigin], kb: Int):
+    """Outputs k0 .. k0 + 3 of the first n inputs, k0 = outmin + 4 kb. The
+    lanes start at the first electron bin of k0; for a later lane those
+    below its own first bin read rows d > ipho, which are zero."""
+    ref J = job[]
+    ref K = J.K[]
+    var k0 = J.outmin + kb * QK
+    var jlo = max(max(k0 - K.ipho, 0), J.elo)
+    var acc = Array[SIMD[DType.float64, QK], n](fill=SIMD[DType.float64, QK](0))
+    # RT[k0 - j][j] at rk + j * (ndp - 1)
+    var rk = J.RT.unsafe_offset(k0 - K.d0)
+    for j in range(jlo, J.ehi):
+        var r = (
+            rk.unsafe_offset(j * (J.ndp - 1)).unsafe_load[width=QK]() * K.w[j]
+        )
+        comptime for m in range(n):
+            acc[m] = r.fma(
+                SIMD[DType.float64, QK](J.ins[m][unsafe_offset=j]), acc[m]
             )
-        else:
-            for j in range(jstar, jB):
-                rt[unsafe_offset=j] = 0.0
-        dd += nt
+    for l in range(min(QK, K.npho - k0)):
+        var k = k0 + l
+        var jl = max(max(k - K.ipho, 0), J.elo)
+        var pref = J.HaRN * J.dl2 * J.egrid_pho[unsafe_offset=k]
+        var s = Array[Float64, n](fill=0.0)
+        comptime for m in range(n):
+            s[m] = acc[m][l]
+        for x in range(K.ex_start[k], K.ex_start[k + 1]):
+            var j = K.ex_j[x]
+            if j >= jl and j < J.ehi:
+                var r = K.ex_v[x] * J.v[unsafe_offset=K.ex_i[x]]
+                comptime for m in range(n):
+                    s[m] += r * J.ins[m][unsafe_offset=j]
+        comptime for m in range(n):
+            J.outs[m][unsafe_offset=k] = s[m] * pref
 
 
 def ic_out_work(job: Pointer[ICJob, MutUntrackedOrigin], t: Int, nt: Int):
+    comptime assert N_LEP_IN <= 8, "the register blocks have up to 8 inputs"
+    var nkb = (job[].K[].npho - job[].outmin + QK - 1) // QK
+    var kb = t
+    while kb < nkb:
+        # the inputs' register block, sized at compile time
+        var n = job[].N_calc
+        if n == 1:
+            _ic_out_block[1](job, kb)
+        elif n == 2:
+            _ic_out_block[2](job, kb)
+        elif n == 3:
+            _ic_out_block[3](job, kb)
+        elif n == 4:
+            _ic_out_block[4](job, kb)
+        elif n == 5:
+            _ic_out_block[5](job, kb)
+        elif n == 6:
+            _ic_out_block[6](job, kb)
+        elif n == 7:
+            _ic_out_block[7](job, kb)
+        else:
+            _ic_out_block[8](job, kb)
+        kb += nt
+
+
+struct ICBuildJob(Movable):
+    """build_factorised_kernel's sweeps over the electron bins j = t, t + nt,
+    ...: per thread t, the first of its bins with a regular value of every
+    table entry (first: entry x at t * nx + x, -1 for none); the table
+    (written by that first bin of all threads, first[x]); per bin its
+    exceptions."""
+
+    var C: Pointer[Comp, MutUntrackedOrigin]
+    var dat: Pointer[AM3Arrays, MutUntrackedOrigin]
+    var K: Pointer[ICKernel2D, MutUntrackedOrigin]
+    var inmax: Int
+    var outmin: Int
+    var first: List[Int32]
+    var table: FPtr
+    var ex_k: List[VecI]
+    var ex_i: List[VecI]
+    var ex_v: List[Vec]
+
+    def __init__(
+        out self,
+        C: Pointer[Comp, MutUntrackedOrigin],
+        dat: Pointer[AM3Arrays, MutUntrackedOrigin],
+        K: Pointer[ICKernel2D, MutUntrackedOrigin],
+        inmax: Int,
+        outmin: Int,
+        nt: Int,
+        nl: Int,
+    ):
+        self.C = C
+        self.dat = dat
+        self.K = K
+        self.inmax = inmax
+        self.outmin = outmin
+        var nx = K[].nd * K[].ns
+        self.first = List[Int32](length=nt * nx, fill=-1)
+        self.table = pd(K[].w)  # (the table, set before it is filled)
+        self.ex_k = List[VecI](length=nl, fill=VecI())
+        self.ex_i = List[VecI](length=nl, fill=VecI())
+        self.ex_v = List[Vec](length=nl, fill=Vec())
+
+
+def ic_build_first_work(
+    job: Pointer[ICBuildJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    """Sweep 1: thread t's first bin of every table entry; on one thread,
+    that bin writes the entry too (sweep 2 is then not needed)."""
     ref J = job[]
     ref K = J.K[]
-    var k = J.outmin + t
-    while k < K.npho:
-        var jlo = max(max(k - K.ipho, 0), J.elo)
-        var pref = J.HaRN * J.dl2 * J.egrid_pho[unsafe_offset=k]
-        var s = Array[Float64, N_LEP_IN](fill=0.0)
-        for j in range(jlo, J.ehi):
-            var r = J.RT[unsafe_offset=(k - j - K.d0) * K.nl + j] * K.w[j]
-            for m in range(J.N_calc):
-                s[m] += r * J.ins[m][unsafe_offset=j]
-        for x in range(K.ex_start[k], K.ex_start[k + 1]):
-            var j = K.ex_j[x]
-            if j >= jlo and j < J.ehi:
-                var r = K.ex_v[x] * J.v[unsafe_offset=K.ex_i[x]]
-                for m in range(J.N_calc):
-                    s[m] += r * J.ins[m][unsafe_offset=j]
-        for m in range(J.N_calc):
-            J.outs[m][unsafe_offset=k] = s[m] * pref
-        k += nt
+    ref dat = J.dat[]
+    var npho = K.npho
+    var inmax = J.inmax
+    var first = J.first.unsafe_ptr().unsafe_offset(t * K.nd * K.ns)
+    var sl = zeros(npho * inmax)
+    var j = t
+    while j < K.nl:
+        J.C[].kernel_slice(dat, j, inmax, J.outmin, sl)
+        for k in range(J.outmin, min(npho, j + K.ipho + 1)):
+            var d = k - j
+            for i in range(min(min(k - 1, K.ihi[j]), inmax)):
+                var x = (d - K.d0) * K.ns + (i + j)
+                var v = sl[k * inmax + i]
+                if v != 0.0 and first[unsafe_offset=x] < 0:
+                    first[unsafe_offset=x] = Int32(j)
+                    if nt == 1:
+                        J.table[unsafe_offset=x] = v / (K.w[j] * K.u[i])
+        j += nt
+
+
+def ic_build_table_work(
+    job: Pointer[ICBuildJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    """Sweep 2: each table entry from its first bin, first[x] (one bin
+    writes it)."""
+    ref J = job[]
+    ref K = J.K[]
+    ref dat = J.dat[]
+    var npho = K.npho
+    var inmax = J.inmax
+    var sl = zeros(npho * inmax)
+    var j = t
+    while j < K.nl:
+        J.C[].kernel_slice(dat, j, inmax, J.outmin, sl)
+        for k in range(J.outmin, min(npho, j + K.ipho + 1)):
+            var d = k - j
+            for i in range(min(min(k - 1, K.ihi[j]), inmax)):
+                var x = (d - K.d0) * K.ns + (i + j)
+                if Int(J.first[x]) == j:
+                    J.table[unsafe_offset=x] = sl[k * inmax + i] / (
+                        K.w[j] * K.u[i]
+                    )
+        j += nt
+
+
+def ic_build_exceptions_work(
+    job: Pointer[ICBuildJob, MutUntrackedOrigin], t: Int, nt: Int
+):
+    ref J = job[]
+    ref K = J.K[]
+    ref dat = J.dat[]
+    var npho = K.npho
+    var inmax = J.inmax
+    var sl = zeros(npho * inmax)
+    var j = t
+    while j < K.nl:
+        J.C[].kernel_slice(dat, j, inmax, J.outmin, sl)
+        for k in range(J.outmin, npho):
+            var d = k - j
+            var n = min(min(k, K.ihi[j]), inmax) if d <= K.ipho else 0
+            for i in range(inmax):
+                var orig = sl[k * inmax + i]
+                var pred = 0.0
+                if i < n:
+                    pred = (
+                        K.w[j]
+                        * K.u[i]
+                        * J.table[unsafe_offset=(d - K.d0) * K.ns + (i + j)]
+                    )
+                var diff = orig - pred
+                if abs(diff) > 1e-12 * max(abs(orig), abs(pred)):
+                    J.ex_k[j].append(k)
+                    J.ex_i[j].append(i)
+                    J.ex_v[j].append(diff)
+        j += nt
 
 
 struct Comp(Copyable, Movable):
@@ -221,7 +430,8 @@ struct Comp(Copyable, Movable):
     var K2: ICKernel2D
     var nthreads: Int
     var KER_IC_s_tot: MatD  # (nbins_pho x nbins_lep)
-    var w_U: Vec
+    var ramp: Vec  # 0 up to RAMP0, then 1 (the masks of ic_rows_work)
+    var w_Ur: Vec
     var w_v: Vec
     var w_RT: Vec
 
@@ -231,7 +441,10 @@ struct Comp(Copyable, Movable):
         self.K2 = ICKernel2D()
         self.nthreads = 1
         self.KER_IC_s_tot = MatD()
-        self.w_U = Vec()
+        self.ramp = zeros(2 * RAMP0)
+        for x in range(RAMP0 + 1, 2 * RAMP0):
+            self.ramp[x] = 1.0
+        self.w_Ur = Vec()
         self.w_v = Vec()
         self.w_RT = Vec()
         self.clear_internal_arrays(dat)
@@ -349,9 +562,9 @@ struct Comp(Copyable, Movable):
         K.outmin = outmin
         K.ns = inmax + nl
         K.d0 = outmin - nl
-        K.nd = npho - K.d0
-        K.phi = zeros(K.nd * K.ns)
-        var have = zerosi(K.nd * K.ns)
+        K.nd = K.ipho - K.d0 + 1
+        # phi[(d - d0) * ns + s] while it is built
+        var phi = zeros(K.nd * K.ns)
         K.w = zeros(nl)
         K.u = zeros(inmax)
         K.ihi = zerosi(nl)
@@ -367,40 +580,46 @@ struct Comp(Copyable, Movable):
                     n = i
                     break
             K.ihi[j] = n
-        var sl = zeros(npho * inmax)
         # pass 1: phi(d, s) from the first regular entry (i <= k - 2, below the
-        # zeroed columns) of every (d, s)
-        for j in range(nl):
-            self.kernel_slice(dat, j, inmax, outmin, sl)
-            for k in range(outmin, npho):
-                var d = k - j
-                for i in range(min(min(k - 1, K.ihi[j]), inmax)):
-                    var v = sl[k * inmax + i]
-                    var x = (d - K.d0) * K.ns + (i + j)
-                    if v != 0.0 and have[x] == 0:
-                        K.phi[x] = v / (K.w[j] * K.u[i])
-                        have[x] = 1
+        # zeroed columns) of every (d, s). The electron bins run in parallel:
+        # each thread notes the first of its bins that has the entry, and the
+        # first of all bins then writes it
+        var nt = max(1, min(self.nthreads, nl))
+        var nx = K.nd * K.ns
+        var job = ICBuildJob(
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=dat)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=K).unsafe_origin_cast[MutUntrackedOrigin](),
+            inmax,
+            outmin,
+            nt,
+            nl,
+        )
+        job.table = pd(phi)
+        parallel_run[ic_build_first_work](job, nt)
+        if nt > 1:
+            for x in range(nx):
+                var first = -1
+                for t in range(nt):
+                    var j = Int(job.first[t * nx + x])
+                    if j >= 0 and (first < 0 or j < first):
+                        first = j
+                job.first[x] = Int32(first)
+            job.first.resize(nx, 0)
+            parallel_run[ic_build_table_work](job, nt)
+        job.first = List[Int32]()
         # pass 2: every entry the factorised form does not reproduce to 1e-12
-        # becomes an exception
+        # becomes an exception (in parallel, kept in the order of the bins)
+        parallel_run[ic_build_exceptions_work](job, nt)
         var ek = VecI()
         for j in range(nl):
-            self.kernel_slice(dat, j, inmax, outmin, sl)
-            for k in range(outmin, npho):
-                var d = k - j
-                var n = min(min(k, K.ihi[j]), inmax)
-                for i in range(inmax):
-                    var orig = sl[k * inmax + i]
-                    var pred = 0.0
-                    if i < n:
-                        pred = (
-                            K.w[j] * K.u[i] * K.phi[(d - K.d0) * K.ns + (i + j)]
-                        )
-                    var diff = orig - pred
-                    if c_fabs(diff) > 1e-12 * max(c_fabs(orig), c_fabs(pred)):
-                        ek.append(k)
-                        K.ex_j.append(j)
-                        K.ex_i.append(i)
-                        K.ex_v.append(diff)
+            for x in range(len(job.ex_k[j])):
+                ek.append(job.ex_k[j][x])
+                K.ex_j.append(j)
+                K.ex_i.append(job.ex_i[j][x])
+                K.ex_v.append(job.ex_v[j][x])
         # non-zero band of every phi(d, .)
         K.slo = zerosi(K.nd)
         K.shi = zerosi(K.nd)
@@ -408,11 +627,19 @@ struct Comp(Copyable, Movable):
             var lo = K.ns
             var hi = 0
             for x in range(K.ns):
-                if K.phi[dd * K.ns + x] != 0.0:
+                if phi[dd * K.ns + x] != 0.0:
                     lo = min(lo, x)
                     hi = x + 1
             K.slo[dd] = lo
             K.shi[dd] = hi
+        # groups of 8 rows interleaved by s (ic_rows_work), zero-padded
+        var ng = (K.nd + QD - 1) // QD
+        K.phi = zeros(ng * K.ns * QD)
+        for dd in range(K.nd):
+            for x in range(K.ns):
+                K.phi[((dd // QD) * K.ns + x) * QD + dd % QD] = phi[
+                    dd * K.ns + x
+                ]
         # bucket the exceptions by k
         var cnt = zerosi(npho + 1)
         for x in range(len(ek)):
@@ -434,6 +661,7 @@ struct Comp(Copyable, Movable):
         K.ex_i = ei^
         K.ex_v = ev^
         K.valid = True
+        self.w_RT = Vec()  # (rows past the table must start at zero)
         if self.verbose:
             print(
                 "IC kernel: factorised table ",
@@ -475,11 +703,19 @@ struct Comp(Copyable, Movable):
             RN += dat.n[P_photons][i]
         var inmax = self.K2.inmax
         var in_now = min(inmax, inmax_now)
-        resize_zero(self.w_U, inmax)
         resize_zero(self.w_v, inmax)
+        # U_i = v_i / eps_i, reversed (U[i] at ur0 - i) and padded with zeros
+        var ur0 = inmax + UPAD - 1
+        resize_zero(self.w_Ur, inmax + 2 * UPAD)
+        var ulo = inmax
+        var uhi = 0
         for i in range(in_now):
             self.w_v[i] = dat.n[P_photons][i] / RN
-            self.w_U[i] = self.w_v[i] * self.K2.u[i]
+            var U = self.w_v[i] * self.K2.u[i]
+            self.w_Ur[ur0 - i] = U
+            if U != 0.0:
+                ulo = min(ulo, i)
+                uhi = i + 1
         # electron bins where every input spectrum is zero contribute nothing,
         # and inputs that are zero everywhere are left out (their outputs stay
         # zero): the workers take the first n_in of ins_nz / outs_nz
@@ -500,18 +736,19 @@ struct Comp(Copyable, Movable):
                 ins_nz[n_in] = ins[m]
                 outs_nz[n_in] = outs[m]
                 n_in += 1
-        var ulo = inmax
-        var uhi = 0
-        for i in range(inmax):
-            if self.w_U[i] != 0.0:
-                ulo = min(ulo, i)
-                uhi = i + 1
-        resize_zero(self.w_RT, self.K2.nd * nl)
+        # RT of the rows d0 .. d0 + ndp - 1 (those past the table are zero)
+        var ng = (self.K2.nd + QD - 1) // QD
+        var ndp = (ng + 1) * QD
+        if len(self.w_RT) != nl * ndp:
+            self.w_RT = zeros(nl * ndp)
         var job = ICJob(
             Pointer(to=self.K2).unsafe_origin_cast[MutUntrackedOrigin](),
-            pd(self.w_U),
+            pd(self.w_Ur),
+            ur0,
+            pd(self.ramp),
             pd(self.w_v),
             pd(self.w_RT),
+            ndp,
             outs_nz,
             ins_nz,
             n_in,
@@ -524,7 +761,7 @@ struct Comp(Copyable, Movable):
             uhi,
             max(self.K2.outmin, outmin_now),
         )
-        parallel_run[ic_rows_work](job, self.nthreads)
+        parallel_tasks[ic_rows_work](job, ng, self.nthreads)
         parallel_run[ic_out_work](job, self.nthreads)
 
     def s_diff_th(self, e: Float64, z: Float64, g: Float64) -> Float64:

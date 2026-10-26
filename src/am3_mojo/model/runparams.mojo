@@ -2,7 +2,6 @@
 
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
 
 
 struct RunParams(Copyable, Movable):
@@ -56,7 +55,7 @@ struct RunParams(Copyable, Movable):
         self.estimated_electron_emax = 1e10
         self.estimated_proton_emax = 1e15
         self.pp_target_proton_density = 0.0
-        var vol = 4.0 / 3.0 * mathpi * c_pow(self.escape_timescale * c0, 3.0)
+        var vol = 4.0 / 3.0 * PI * c_pow(self.escape_timescale * C_LIGHT, 3.0)
         self.powerlaw_injection_electrons_volume = vol
         self.powerlaw_injection_electrons_luminosity = 0.0
         self.powerlaw_injection_electrons_emin = 1e7

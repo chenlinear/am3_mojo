@@ -1,9 +1,8 @@
-"""Simulation scenarios shared by the verification and benchmark scripts.
+"""Simulation scenarios shared by the tests, checks, figures and benchmark.
 
-Every scenario drives an `AM3()` object through the public Python API only,
-so the same code runs with am3_mojo and with the C++ AM3. A scenario function
-configures the object, initialises the kernels and returns a generator of
-checkpoints: after each yielded step count, the caller may dump the state.
+Each drives an `AM3()` object through the public Python API only, so the same code runs with am3_mojo and with the C++
+AM3. A scenario function configures the object, initialises the kernels and yields the step count at each checkpoint,
+where the caller may dump the state.
 """
 import numpy as np
 
@@ -29,42 +28,19 @@ def evolve(am3, n_steps, every, after=None):
         yield done
 
 
+def set_processes(am3, **switches):
+    """set_process_<name>(on) for every name=on, in this order."""
+    for name, on in switches.items():
+        getattr(am3, 'set_process_' + name)(on)
+
+
 def blazar_switches(am3):
     """The switches of the AM3 example notebook's blazar model (proton synchrotron, photo-hadronic)."""
     am3.set_verbosity_level(False)
-    am3.set_process_parse_sed(True)
-    am3.set_process_escape(True)
-    am3.set_process_adiabatic_cooling(False)
-    am3.set_process_expansion(False)
-    am3.set_process_electron_syn(True)
-    am3.set_process_ssa(True)
-    am3.set_process_proton_syn(True)
-    am3.set_process_pion_syn(False)
-    am3.set_process_muon_syn(False)
-    am3.set_process_electron_compton(True)
-    am3.set_process_proton_compton(True)
-    am3.set_process_pion_compton(False)
-    am3.set_process_muon_compton(False)
-    am3.set_process_pion_decay(True)
-    am3.set_process_muon_decay(True)
-    am3.set_process_annihilation(False)
-    am3.set_process_photopion(True)
-    am3.set_process_pp(False)
-    am3.set_process_bethe_heitler(True)
-
-
-def _blazar_params(am3, time_step_frac=1e-2, bfield=10.0):
-    radius = 1e15
-    volume = sphere_volume(radius)
-    injpower_e = 10.0 ** (-7.47) * 4 * np.pi * radius * (ME_G * C_CGS ** 3 / SIGMA_T)
-    injpower_p = 10 ** (-4.93) * 4 * np.pi * radius * (MP_G * C_CGS ** 3 / SIGMA_T)
-    am3.set_mag_field(bfield)
-    am3.set_escape_timescale(radius / C_CGS)
-    am3.set_solver_time_step(time_step_frac * radius / C_CGS)
-    am3.set_powerlaw_injection_parameters_electrons(
-        volume, injpower_e, 2.0 * ME_C2_EV, 2.0 * ME_C2_EV, 1e3 * ME_C2_EV, 1.9, 1.9, 1.0)
-    am3.set_powerlaw_injection_parameters_protons(
-        volume, injpower_p, 2.0 * MP_C2_EV, 2.0 * MP_C2_EV, 1e8 * MP_C2_EV, 1.9, 1.9, 1.0)
+    set_processes(am3, parse_sed=True, escape=True, adiabatic_cooling=False, expansion=False, electron_syn=True,
+                  ssa=True, proton_syn=True, pion_syn=False, muon_syn=False, electron_compton=True,
+                  proton_compton=True, pion_compton=False, muon_compton=False, pion_decay=True, muon_decay=True,
+                  annihilation=False, photopion=True, pp=False, bethe_heitler=True)
 
 
 def blazar_simple(am3, n_steps=800, every=100):
@@ -72,27 +48,31 @@ def blazar_simple(am3, n_steps=800, every=100):
     800 steps of dt = R/c/100, 8 light-crossing times."""
     blazar_switches(am3)
     am3.init_kernels()
-    _blazar_params(am3)
+    radius = 1e15
+    volume = sphere_volume(radius)
+    injpower_e = 10.0 ** (-7.47) * 4 * np.pi * radius * (ME_G * C_CGS ** 3 / SIGMA_T)
+    injpower_p = 10 ** (-4.93) * 4 * np.pi * radius * (MP_G * C_CGS ** 3 / SIGMA_T)
+    am3.set_mag_field(10.0)
+    am3.set_escape_timescale(radius / C_CGS)
+    am3.set_solver_time_step(1e-2 * radius / C_CGS)
+    am3.set_powerlaw_injection_parameters_electrons(
+        volume, injpower_e, 2.0 * ME_C2_EV, 2.0 * ME_C2_EV, 1e3 * ME_C2_EV, 1.9, 1.9, 1.0)
+    am3.set_powerlaw_injection_parameters_protons(
+        volume, injpower_p, 2.0 * MP_C2_EV, 2.0 * MP_C2_EV, 1e8 * MP_C2_EV, 1.9, 1.9, 1.0)
     yield from evolve(am3, n_steps, every)
 
 
 def leptohadronic_switches(am3):
-    """Every process switched on (pp with thermal target protons, pion/muon synchrotron and IC, gamma-gamma
-    annihilation, expansion + adiabatic cooling, quantum synchrotron, whose e+/- kernel depends on B and is rebuilt
-    by set_mag_field)."""
+    """Every process on: pp with thermal target protons, pion/muon synchrotron and IC, gamma-gamma annihilation,
+    expansion + adiabatic cooling, quantum synchrotron (its e+/- kernel depends on B; set_mag_field rebuilds it)."""
     am3.set_verbosity_level(False)
-    am3.set_process_parse_sed(True)
-    am3.set_process_escape(True)
-    am3.set_process_expansion(True)
-    am3.set_process_adiabatic_cooling(True)
-    am3.set_process_quantum_syn(True)
-    am3.set_process_quantum_syn_cooling(True)
-    am3.set_process_pp(True)
-    am3.set_process_annihilation(True)
+    set_processes(am3, parse_sed=True, escape=True, expansion=True, adiabatic_cooling=True, quantum_syn=True,
+                  quantum_syn_cooling=True, pp=True, annihilation=True)
 
 
-def leptohadronic_params(am3, radius=3e14, bfield=300.0, time_step_frac=3e-3):
+def leptohadronic_params(am3, bfield=300.0, time_step_frac=3e-3):
     """A dense source in a strong field, in which every hadronic process matters; returns the time step."""
+    radius = 3e14
     volume = sphere_volume(radius)
     am3.set_mag_field(bfield)
     am3.set_escape_timescale(radius / C_CGS)
@@ -108,8 +88,8 @@ def leptohadronic_params(am3, radius=3e14, bfield=300.0, time_step_frac=3e-3):
 
 def leptohadronic_all(am3, n_steps=300, every=50):
     """leptohadronic_switches with leptohadronic_params: every process on (pp, quantum synchrotron, pion and muon
-    synchrotron and IC, expansion), 300 steps. Its time step (3e-3 R/c) is too long for converged spectra (a tenth of
-    it gives 1.9 times the e+- at 0.6 MeV and 17 % fewer photons at 1e16 eV). The comparison with the C++ AM3 only
+    synchrotron and IC, expansion), 300 steps. Its time step (3e-3 R/c) is too long for converged spectra: a tenth of
+    it gives 1.9 times the e+- at 0.6 MeV and 17 % fewer photons at 1e16 eV. The comparison with the C++ AM3 only
     checks that both codes solve the same equations."""
     leptohadronic_switches(am3)
     am3.init_kernels()
@@ -118,15 +98,11 @@ def leptohadronic_all(am3, n_steps=300, every=50):
 
 
 def ssc_external(am3, n_steps=400, every=100):
-    """Leptonic SSC + external black-body photon field (as in the TDE example):
-    no hadronic processes, merged e+/-, no SED parsing, max-energy estimate,
-    user escape/extra-cooling arrays, reduced energy grid."""
+    """Leptonic SSC + external black-body photon field (as in the TDE example): no hadronic processes, merged e+/-,
+    no SED parsing, max-energy estimate, user escape/extra-cooling arrays, reduced energy grid."""
     am3.set_verbosity_level(False)
     am3.update_energy_grid(1e-6, 1e2, 1e17)
-    am3.set_process_hadronic(False)
-    am3.set_process_parse_sed(False)
-    am3.set_process_merge_positrons_into_electrons(True)
-    am3.set_process_annihilation(True)
+    set_processes(am3, hadronic=False, parse_sed=False, merge_positrons_into_electrons=True, annihilation=True)
     am3.set_estimate_max_energies(True)
     am3.set_lep_optimizer_on()
     am3.init_kernels()
@@ -142,22 +118,18 @@ def ssc_external(am3, n_steps=400, every=100):
     kT = 10.0  # eV
     bb = eg ** 3 / np.expm1(np.minimum(eg / kT, 700.0)) / 1e30
     am3.set_injection_rate_photons(bb * 1e-8)
-    ne = am3.get_grid_size_lep()
-    am3.set_t_pair_extra_cooling(np.full(ne, 1e9))
+    am3.set_t_pair_extra_cooling(np.full(am3.get_grid_size_lep(), 1e9))
     am3.set_t_photon_escape(np.full(am3.get_grid_size_photons(), 2 * radius / C_CGS))
     yield from evolve(am3, n_steps, every)
 
 
 def exotic(am3, n_steps=200, every=50):
-    """Rarely used code paths: full gamma-gamma pair kernel, pp QGSJET/Geant4
-    models with pi0 into the cascade, RK4 source integration in the solver,
-    user-set arrays (densities of protons and photons, injection of pi+,
-    mu-_L and nu_e, escape of muons, extra cooling of protons and photons)
-    and a field change mid-run."""
+    """Rarely used code paths: full gamma-gamma pair kernel, pp QGSJET/Geant4 models with pi0 into the cascade, RK4
+    source integration in the solver, user-set arrays (densities of protons and photons, injection of pi+, mu-_L and
+    nu_e, escape of muons, extra cooling of protons and photons) and a field change mid-run."""
     am3.set_verbosity_level(False)
     am3.update_energy_grid(1e-2, 1e3, 3e14)
-    am3.set_process_parse_sed(True)
-    am3.set_process_annihilation(True)
+    set_processes(am3, parse_sed=True, annihilation=True)
     am3.set_optimize_annihilation_pair_emission(False)
     am3.set_process_pp(True)
     am3.set_pp_model_charged_pions(1)
@@ -165,9 +137,8 @@ def exotic(am3, n_steps=200, every=50):
     am3.set_pp_transition_energy_to_delta_approx(3e11)
     am3.set_process_pp_emission_pi0_into_cascade(True)
     am3.set_solver_simpleqintegration(True)
-    am3.set_process_bethe_heitler_cooling(True)
     am3.set_had_optimizer_on()
-    am3.set_process_bethe_heitler_cooling(True)
+    am3.set_process_bethe_heitler_cooling(True)   # (set_had_optimizer_on switches it off)
     am3.init_kernels()
     radius = 1e14
     volume = sphere_volume(radius)
@@ -181,8 +152,7 @@ def exotic(am3, n_steps=200, every=50):
         volume, 1e41, 3 * ME_C2_EV, 3e2 * ME_C2_EV, 1e4 * ME_C2_EV, 1.5, 3.0, 2.0)
     am3.set_powerlaw_injection_parameters_protons(
         volume, 1e44, 2 * MP_C2_EV, 1e2 * MP_C2_EV, 1e5 * MP_C2_EV, 1.5, 2.5, 1.0)
-    nh, nl, ng, nn = (am3.get_grid_size_had(), am3.get_grid_size_lep(),
-                      am3.get_grid_size_photons(), am3.get_grid_size_neutrinos())
+    nh, ng, nn = am3.get_grid_size_had(), am3.get_grid_size_photons(), am3.get_grid_size_neutrinos()
     eh = am3.get_egrid_had()
     bump = np.exp(-0.5 * ((np.log(eh) - np.log(1e12)) / 1.0) ** 2)
     am3.set_injection_rate_pion_plus(1e-8 * bump)
@@ -201,26 +171,17 @@ def exotic(am3, n_steps=200, every=50):
 
 
 def dump_state(am3):
-    """Every public array/scalar getter that does not modify state."""
+    """Every public array/scalar getter that does not modify state, but the profiler's."""
     out = {}
     for name in sorted(dir(am3)):
-        if not name.startswith('get_'):
-            continue
-        if name in ('get_profiled_times', 'get_profiled_time_labels', 'get_profile_timing'):
+        if not name.startswith('get_') or name.startswith('get_profile'):
             continue
         try:
             v = getattr(am3, name)()
         except TypeError:
             continue
-        if isinstance(v, tuple):
-            v = np.array(v, dtype=float)
         out[name] = np.asarray(v, dtype=float)
     return out
 
 
-SCENARIOS = {
-    'blazar_simple': blazar_simple,
-    'leptohadronic_all': leptohadronic_all,
-    'ssc_external': ssc_external,
-    'exotic': exotic,
-}
+SCENARIOS = {f.__name__: f for f in (blazar_simple, leptohadronic_all, ssc_external, exotic)}

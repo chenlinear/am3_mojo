@@ -1,14 +1,15 @@
 """Port of Pair (PairProduction.cc): gamma-gamma annihilation into e+/-."""
 
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.utils.specfun import beta, signf
-from am3_mojo.model.runparams import RunParams
+from std.math import sqrt
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.particles import *
+from am3_mojo.model.runparams import RunParams
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
+from am3_mojo.utils.linalg import DOT_BLOCK, MatD, MatI, dot_nonzero, gemv_d
 from am3_mojo.utils.parallel import parallel_run
-from am3_mojo.utils.linalg import MatD, MatI, gemv_d, dot
+from am3_mojo.utils.specfun import beta, signf
 
 
 struct PairInitJob(Movable):
@@ -27,17 +28,40 @@ struct PairInitJob(Movable):
 def pair_init_work(
     job: Pointer[PairInitJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
+    """The rows of KER_RggD1 that pair_lep_work reads, for the lepton bins
+    i = t, t + nt, ...: k from KER_innerPP(i, j) for j from KER_outerPP[i],
+    each cut to the blocks of `dot_nonzero` that reach its non-zero values."""
     ref P = job[].P[]
     ref dat = job[].dat[]
     var n = dat.nbins_pho
+    var row = zeros(n)
     var i = t
     while i < dat.nbins_lep:
-        var Kp = P.KER_RggD1pair[i].ptr()
-        for j in range(n):
-            for k in range(n):
-                Kp[unsafe_offset=j * n + k] = P.RggD1(
+        var seg = Vec()
+        for j in range(P.KER_outerPP[i], n):
+            var k0 = P.KER_innerPP.get(i, j)
+            var lo = n
+            var hi = 0
+            for k in range(k0, n):
+                var v = P.RggD1(
                     dat.egrid_lep[i], dat.egrid_pho[j], dat.egrid_pho[k]
                 )
+                row[k] = v
+                if v != 0.0:
+                    lo = min(lo, k)
+                    hi = k + 1
+            var r = i * n + j
+            P.KER_nzlo[r] = lo
+            P.KER_nzhi[r] = hi
+            if hi > lo:
+                var ks = k0 + (lo - k0) // DOT_BLOCK * DOT_BLOCK
+                var ke = min(
+                    n, k0 + (hi - k0 + DOT_BLOCK - 1) // DOT_BLOCK * DOT_BLOCK
+                )
+                P.KER_start[r] = len(seg) - ks
+                for k in range(ks, ke):
+                    seg.append(row[k])
+        P.KER_RggD1[i] = seg^
         i += nt
 
 
@@ -61,7 +85,8 @@ def pair_lep_work(
     job: Pointer[PairLepJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
     """epspairL(i) = sum_j n(j) sum_k K_i(j, k) n(k) for i = 1 + t,
-    1 + t + nt, ..."""
+    1 + t + nt, ...: the sums over k skip the blocks of `dot` that hold only
+    zeros of the kernel (outside the kinematic limits, most of the range)."""
     ref P = job[].P[]
     ref dat = job[].dat[]
     var png = pd(P.PP_NG)
@@ -69,13 +94,18 @@ def pair_lep_work(
     var i = 1 + t
     while i < dat.nbins_lep - 1:
         var x = 0.0
-        var Kp = P.KER_RggD1pair[i].ptr()
+        var Kp = pd(P.KER_RggD1[i])
         for j in range(P.KER_outerPP[i], n):
             var k0 = P.KER_innerPP.get(i, j)
             var kmax = min(-j + 2 * dat.ind_min_energy_pho + job[].factor, n)
+            var r = i * n + j
             if kmax > k0:
-                x += png[unsafe_offset=j] * dot(
-                    Kp.unsafe_offset(j * n + k0), png.unsafe_offset(k0), kmax - k0
+                x += png[unsafe_offset=j] * dot_nonzero(
+                    Kp.unsafe_offset(P.KER_start[r] + k0),
+                    png.unsafe_offset(k0),
+                    kmax - k0,
+                    P.KER_nzlo[r] - k0,
+                    P.KER_nzhi[r] - k0,
                 )
         P.epspairL[i] = x * dat.dlnE * dat.dlnE * 0.75 * dat.egrid_lep[i]
         i += nt
@@ -88,13 +118,18 @@ struct Pair(Copyable, Movable):
     var epspairL: Vec
     var PP_NG: Vec
     var KER_phibarD: MatD  # (nbins_pho x nbins_pho)
-    # Full pair-production kernel KER_RggD1pair[i](j,k), allocated only for the
-    # full (non 8-bin) treatment: one matrix per outgoing lepton bin (1.05 GB
-    # on the default grids). The C++ code allocates one per photon bin,
-    # nbins_pho^3 doubles (~1.9 GB; only the first nbins_lep = 340 are used),
-    # even when it is never used: braces are missing after
-    # `if(!feedback_8bin)` in PairProduction.cc.
-    var KER_RggD1pair: List[MatD]
+    # Full pair-production kernel K_i(j, k) for the full (non 8-bin)
+    # treatment, outgoing lepton bin i, target photons j and k: KER_RggD1[i]
+    # holds the part of row j that pair_lep_work reads, element k at
+    # KER_start[i * nbins_pho + j] + k. The row is zero outside
+    # [KER_nzlo, KER_nzhi)[i * nbins_pho + j]. The C++ code allocates one
+    # dense matrix per photon bin, nbins_pho^3 doubles (~1.9 GB; only the
+    # first nbins_lep = 340 are used), even when it is never used: braces are
+    # missing after `if(!feedback_8bin)` in PairProduction.cc.
+    var KER_RggD1: List[Vec]
+    var KER_start: VecI
+    var KER_nzlo: VecI
+    var KER_nzhi: VecI
     var KER_outerPP: VecI
     var KER_innerPP: MatI
     var A0V: Vec
@@ -108,7 +143,10 @@ struct Pair(Copyable, Movable):
         self.epspairL = Vec()
         self.PP_NG = Vec()
         self.KER_phibarD = MatD()
-        self.KER_RggD1pair = List[MatD]()
+        self.KER_RggD1 = List[Vec]()
+        self.KER_start = VecI()
+        self.KER_nzlo = VecI()
+        self.KER_nzhi = VecI()
         self.KER_outerPP = VecI()
         self.KER_innerPP = MatI()
         self.REG = rp.REG
@@ -132,17 +170,17 @@ struct Pair(Copyable, Movable):
         if not feedback_8bin:
             self.KER_outerPP = zerosi(dat.nbins_lep)
         self.KER_innerPP = MatI(dat.nbins_lep, dat.nbins_pho)
-        self.KER_RggD1pair = List[MatD]()  # lazily allocated (all zeros)
+        self.KER_RggD1 = List[Vec]()  # lazily allocated (all zeros)
 
     def _alloc_full_kernel(mut self, dat: AM3Arrays):
-        # one matrix per outgoing lepton bin (see KER_RggD1pair)
-        if (
-            len(self.KER_RggD1pair) != dat.nbins_lep
-            or self.KER_RggD1pair[0].rows != dat.nbins_pho
+        # an all-zero kernel (every row empty) until initialize_kernels fills it
+        if len(self.KER_RggD1) != dat.nbins_lep or len(self.KER_nzlo) != (
+            dat.nbins_lep * dat.nbins_pho
         ):
-            self.KER_RggD1pair = List[MatD]()
-            for _ in range(dat.nbins_lep):
-                self.KER_RggD1pair.append(MatD(dat.nbins_pho, dat.nbins_pho))
+            self.KER_RggD1 = List[Vec](length=dat.nbins_lep, fill=Vec())
+            self.KER_start = zerosi(dat.nbins_lep * dat.nbins_pho)
+            self.KER_nzlo = zerosi(dat.nbins_lep * dat.nbins_pho)
+            self.KER_nzhi = zerosi(dat.nbins_lep * dat.nbins_pho)
 
     def initialize_kernels(
         mut self,
@@ -168,15 +206,6 @@ struct Pair(Copyable, Movable):
                 if self.verbose:
                     print("computing full e+/- pair production kernel")
                 self._alloc_full_kernel(dat)
-                # R_gg kernel values, stored with k contiguous (element (j,k) of
-                # KER_RggD1pair[i] at [j * nbins_pho + k])
-                var job = PairInitJob(
-                    Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
-                    Pointer(to=dat)
-                    .unsafe_mut_cast[True]()
-                    .unsafe_origin_cast[MutUntrackedOrigin](),
-                )
-                parallel_run[pair_init_work](job, self.nthreads)
                 for i in range(dat.nbins_lep):
                     self.KER_outerPP[i] = self.outerPP(dat, i)
                     for j in range(dat.nbins_pho):
@@ -190,7 +219,19 @@ struct Pair(Copyable, Movable):
                                 dat.nbins_pho - 1,
                             ),
                         )
-                        pass
+                # the R_gg kernel rows within these limits
+                var job = PairInitJob(
+                    Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+                    Pointer(to=dat)
+                    .unsafe_mut_cast[True]()
+                    .unsafe_origin_cast[MutUntrackedOrigin](),
+                )
+                parallel_run[pair_init_work](job, self.nthreads)
+                if self.verbose:
+                    var size = 0
+                    for i in range(dat.nbins_lep):
+                        size += len(self.KER_RggD1[i])
+                    print("full pair kernel:", size, "values")
             elif self.verbose:
                 print(
                     "using eight-bin approx. for e+- distribution from pair"
@@ -215,23 +256,23 @@ struct Pair(Copyable, Movable):
             return self.phibar1(x)
         elif x > 1.1 and x < 5.0:
             return self.phibar2(
-                x, -1.0 + 2.0 * x * (1.0 + c_sqrt(1.0 - 1.0 / x))
+                x, -1.0 + 2.0 * x * (1.0 + sqrt(1.0 - 1.0 / x))
             )
         else:
             return self.phibar3(x)
 
     def phibar1(self, s: Float64) -> Float64:
         var s1 = s - 1.0
-        var s2 = s1 * c_sqrt(s1)
+        var s2 = s1 * sqrt(s1)
         return s2 * (1.333333 + 1.2 * s1 - 253.0 / 70.0 * s1 * s1)
 
     def phibar2(self, s: Float64, w: Float64) -> Float64:
         var v = c_log(w)
         var u = 1.0 - 1.0 / s
         return (
-            (2.0 - 4.0 * s) * c_sqrt(u)
+            (2.0 - 4.0 * s) * sqrt(u)
             + v * (4.0 * c_log(1.0 + w) - 3.0 * v + s * (1.0 + u * u))
-            - 3.289868
+            - PI * PI / 3.0
             + self.phisum(w)
         )
 
@@ -304,7 +345,7 @@ struct Pair(Copyable, Movable):
     def innerPP(self, dat: AM3Arrays, x: Float64, gm: Float64) -> Int:
         if x <= 0.5:
             var f = self.Fpp_m(x, gm)
-            var q = to_int(
+            var q = Int(
                 c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
                 + Float64(dat.ind_min_energy_pho)
                 + 1.0
@@ -312,7 +353,7 @@ struct Pair(Copyable, Movable):
             return min(max(q, 0), dat.nbins_pho)
         elif x > 0.5 and x < 1.0 and gm < self.gmB(x):
             var f = self.Fpp_m(x, gm)
-            var q = to_int(
+            var q = Int(
                 c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
                 + Float64(dat.ind_min_energy_pho)
                 + 1.0
@@ -320,7 +361,7 @@ struct Pair(Copyable, Movable):
             return min(max(q, 0), dat.nbins_pho)
         elif x > 1.0 and gm < self.gmB(x):
             var f = self.Fpp_p(x, gm)
-            var q = to_int(
+            var q = Int(
                 c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
                 + Float64(dat.ind_min_energy_pho)
                 + 1.0
@@ -329,7 +370,7 @@ struct Pair(Copyable, Movable):
         return 0
 
     def outerPP(self, dat: AM3Arrays, i: Int) -> Int:
-        var q = to_int(
+        var q = Int(
             c_log(self.xL(dat.egrid_lep[i])) / dat.dlnE
             + Float64(dat.ind_min_energy_pho)
         )
@@ -337,9 +378,6 @@ struct Pair(Copyable, Movable):
 
     def xL(self, gm: Float64) -> Float64:
         return 0.5 * gm * (1.0 - beta(gm, self.REG))
-
-    def gmA(self, x: Float64) -> Float64:
-        return (4.0 * x * x + 1.0) * 0.25 / x
 
     def gmB(self, x: Float64) -> Float64:
         return x - (x - 1.0) / (2.0 * x - 1.0)
@@ -362,19 +400,19 @@ struct Pair(Copyable, Movable):
                 + 0.09375 / gm / gm / gm
             )
             KU = 0.5 * (
-                gp + c_sqrt(gp * gp - 1.0) + gm + c_sqrt(gm * gm - 1.0)
+                gp + sqrt(gp * gp - 1.0) + gm + sqrt(gm * gm - 1.0)
             )
         elif gp > 10.0 and gm <= 10.0:
-            var sgm = c_sqrt(gm * gm - 1.0)
+            var sgm = sqrt(gm * gm - 1.0)
             KL = 0.5 * (0.5 / gp + gm - sgm)
             KU = gp + 0.5 * (gm + sgm)
         elif gp <= 10.0 and gm > 10.0:
-            var sgp = c_sqrt(gp * gp - 1.0)
+            var sgp = sqrt(gp * gp - 1.0)
             KL = 0.5 * (gp - sgp + 0.5 / gm)
             KU = gm + 0.5 * (gp + sgp)
         else:
-            var sgp = c_sqrt(gp * gp - 1.0)
-            var sgm = c_sqrt(gm * gm - 1.0)
+            var sgp = sqrt(gp * gp - 1.0)
+            var sgm = sqrt(gm * gm - 1.0)
             KL = 0.5 * (gp - sgp + gm - sgm)
             KU = 0.5 * (gp + sgp + gm + sgm)
         if gp <= 1.000 or gm <= 1.000:
@@ -399,85 +437,85 @@ struct Pair(Copyable, Movable):
         var TD2C = self.TD2(gm, x1, x, XUpper)
         var TD2D = self.TD2(gm, x1, x, XLower)
         if h_NH_U > 1000.0 and h_NH_L > 1000.0:
-            TD2A = -(XUpper * XUpper + 2.0 * c_log(XUpper)) / c_sqrt(a_nh)
-            TD2B = -(XLower * XLower + 2.0 * c_log(XLower)) / c_sqrt(a_nh)
+            TD2A = -(XUpper * XUpper + 2.0 * c_log(XUpper)) / sqrt(a_nh)
+            TD2B = -(XLower * XLower + 2.0 * c_log(XLower)) / sqrt(a_nh)
         if h_IH_U > 1000.0 and h_IH_L > 1000.0:
-            TD2C = -(XUpper * XUpper + 2.0 * c_log(XUpper)) / c_sqrt(a_ih)
-            TD2D = -(XLower * XLower + 2.0 * c_log(XLower)) / c_sqrt(a_ih)
+            TD2C = -(XUpper * XUpper + 2.0 * c_log(XUpper)) / sqrt(a_ih)
+            TD2D = -(XLower * XLower + 2.0 * c_log(XLower)) / sqrt(a_ih)
         var td_sum = TD2A - TD2B + TD2C - TD2D
         if u < 0.01 and v < 0.01:
             return -0.25 * (0.5 * T * (u - v) + td_sum)
-        return -0.25 * (T * (c_sqrt(1.0 - v) - c_sqrt(1.0 - u + 1.0e-9)) + td_sum)
+        return -0.25 * (T * (sqrt(1.0 - v) - sqrt(1.0 - u + 1.0e-9)) + td_sum)
 
     def XcmU(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
         var gp = x + x1 - gm
         if gp > 15.0 and gm > 15.0:
-            return min(c_sqrt(x * x1), c_sqrt(gp * gm))
-        var t = gm * gp + 1.0 + c_sqrt(gm * gm - 1.0) * c_sqrt(gp * gp - 1.0)
-        return min(c_sqrt(x * x1), c_sqrt(0.5 * t))
+            return min(sqrt(x * x1), sqrt(gp * gm))
+        var t = gm * gp + 1.0 + sqrt(gm * gm - 1.0) * sqrt(gp * gp - 1.0)
+        return min(sqrt(x * x1), sqrt(0.5 * t))
 
     def XcmL(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
         var gp = x + x1 - gm
         if gp > 10.0:
             if gm > 10.0:
-                return 0.5 * c_sqrt(2.0 + gp / gm + gm / gp)
+                return 0.5 * sqrt(2.0 + gp / gm + gm / gp)
             elif gm < 1.001:
                 return 1.001
             else:
-                var d = gm - c_sqrt(gm * gm - 1.0 + self.REG)
-                return c_sqrt(0.5 * (1.0 + d * (gp - 0.5 / gp)))
+                var d = gm - sqrt(gm * gm - 1.0 + self.REG)
+                return sqrt(0.5 * (1.0 + d * (gp - 0.5 / gp)))
         elif gp < 1.001:
             return 1.001
         else:
             if gm > 10.0:
-                var d = gp - c_sqrt(gp * gp - 1.0 + self.REG)
-                return c_sqrt(0.5 * (1.0 + d * (gm - 0.5 / gm)))
+                var d = gp - sqrt(gp * gp - 1.0 + self.REG)
+                return sqrt(0.5 * (1.0 + d * (gm - 0.5 / gm)))
             elif gm < 1.001:
                 return 1.001
             else:
-                var r = c_sqrt((gm * gm - 1.0) * (gp * gp - 1.0))
-                return c_sqrt(0.5 * (gp * gm + 1.0 - r))
+                var r = sqrt((gm * gm - 1.0) * (gp * gp - 1.0))
+                return sqrt(0.5 * (gp * gm + 1.0 - r))
 
     def TD2(
         self, gm: Float64, x: Float64, x1: Float64, xcm: Float64
     ) -> Float64:
-        var y = c_sqrt(x * x1)
+        var y = sqrt(x * x1)
         var y2 = y * y
         var q = xcm / y
         var h = ((gm - x) * (gm - x) - 1.0) * q * q
         var b = (x * x + gm * (x1 - x)) / y2
         if h > 1000.0:
             var s = c_log(h) + xcm * xcm + h / (xcm * xcm) + 0.886294 - 0.5 * b
-            return -s * q / c_sqrt(h)
+            return -s * q / sqrt(h)
         elif h < -0.999:
             return q * (
-                0.5 * ((x1 - x) / y2 - 6.28319) - 1.5707963 * q * q * (y2 - 1.0)
+                0.5 * ((x1 - x) / y2 - 2.0 * PI) - 0.5 * PI * q * q * (y2 - 1.0)
             )
-        var Ah = c_sqrt(1.0 + h)
+        var Ah = sqrt(1.0 + h)
         var t1 = q * q * q * (y2 - 1.0) * self.A_A0_h(h) - Ah / (xcm * y)
         var t2 = (1.0 - 2.0 * q * q + b) / Ah
         return t1 + 0.5 * q * (t2 - 4.0 * self.A0(h))
 
     def A_A0_h(self, h: Float64) -> Float64:
         if h <= 20.0:
-            var i = 100 + to_int(h / 0.01)
+            var i = 100 + Int(h / 0.01)
             return self.A_A0_hV[i]
-        return -(1.0 - (0.693147 + 0.5 * c_log(h)) / h) / c_sqrt(h)
+        return -(1.0 - (0.693147 + 0.5 * c_log(h)) / h) / sqrt(h)
 
     def A0(self, h: Float64) -> Float64:
         if h < 20.0:
-            var i = 100 + to_int(h / 0.01)
+            var i = 100 + Int(h / 0.01)
             return self.A0V[i]
-        return (0.693147 + 0.5 * c_log(h)) / c_sqrt(h)
+        return (0.693147 + 0.5 * c_log(h)) / sqrt(h)
 
     def A0f(self, h: Float64) -> Float64:
         if h > 1.0e-6:
-            return c_log(c_sqrt(h) + c_sqrt(1.0 + h)) / c_sqrt(h)
+            return c_log(sqrt(h) + sqrt(1.0 + h)) / sqrt(h)
         elif h < -1.0e-6:
-            return c_asin(c_sqrt(-h) - 1.0e-8) / c_sqrt(-h)
+            return c_asin(sqrt(-h) - 1.0e-8) / sqrt(-h)
         return 1.0 - h / 6.0
 
     def A_A0_hf(self, h: Float64) -> Float64:
         if h >= -0.1 and h <= 0.1:
             return -0.666667 + h * (0.2 + h * (-0.107143 + 0.0694444 * h))
-        return (self.A0f(h) - c_sqrt(1.0 + h + 1.0e-8)) / h
+        return (self.A0f(h) - sqrt(1.0 + h + 1.0e-8)) / h

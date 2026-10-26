@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# Build the original C++ AM3 v1.2.0 (commit 04d63d9, gitlab.desy.de/am3/am3) as
+# Build the original C++ AM3 v1.2.0 (commit 04d63d9, gitlab.desy.de/am3/am3),
 # the reference for tests/reference and the benchmark:
 #   work/build/serial/libpython   the unmodified original (serial build)
-#   work/build/fixed/libpython    the same with the AM3 bugs that am3_mojo fixes
-#                                 fixed (am3_fixes.patch): the like-for-like
-#                                 reference for the comparisons
+#   work/build/fixed/libpython    the same with am3_fixes.patch (the AM3 bugs
+#                                 am3_mojo fixes): the like-for-like reference
+#                                 for the comparisons
 # GSL 2.8, Eigen 3.4.0 and, on macOS, LLVM libomp 19.1.7 are downloaded and
-# built into work/deps. cmake, ninja and pybind11 come from the project's
-# Python environment (`uv sync`). Each step is skipped if its result exists
-# (for the AM3 builds: a module for the environment's Python), so the script
-# can be re-run.
+# built into work/deps; cmake, ninja and pybind11 come from the Python
+# environment (`uv sync`). A step whose result exists (for the AM3 builds: a
+# module for this Python) is skipped, so the script can be re-run.
 #
 # Environment variables:
 #   AM3_REFERENCE_DIR   work directory (default: tests/reference/work)
-#   AM3_SOURCE_DIR      use an existing AM3 source tree instead of cloning
+#   AM3_SOURCE_DIR      an existing AM3 source tree to use instead of cloning
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -32,7 +31,7 @@ fetch() { [ -f "$2" ] || curl -fL --retry 3 -o "$2" "$1"; }
 [ -x "$PY" ] || { echo "Python environment not found: run 'uv sync' first"; exit 1; }
 command -v cmake >/dev/null && command -v ninja >/dev/null || { echo "cmake/ninja missing: run 'uv sync'"; exit 1; }
 
-# --- 1. AM3 source ------------------------------------------------------------
+# 1. AM3 source
 SRC="${AM3_SOURCE_DIR:-$WORK/am3}"
 if [ ! -f "$SRC/CMakeLists.txt" ]; then
     say "cloning AM3 ($COMMIT)"
@@ -40,7 +39,7 @@ if [ ! -f "$SRC/CMakeLists.txt" ]; then
     git -C "$SRC" checkout -q "$COMMIT"
 fi
 
-# --- 2. dependencies ----------------------------------------------------------
+# 2. dependencies
 if [ ! -f "$PREFIX/lib/libgsl.a" ]; then
     say "building GSL 2.8"
     fetch https://ftp.gnu.org/gnu/gsl/gsl-2.8.tar.gz "$DEPS/gsl-2.8.tar.gz"
@@ -55,9 +54,9 @@ if [ ! -d "$PREFIX/share/eigen3/cmake" ]; then
     cmake -S "$DEPS/eigen-3.4.0" -B "$DEPS/eigen-build" -G Ninja -DCMAKE_INSTALL_PREFIX="$PREFIX" >/dev/null
     cmake --install "$DEPS/eigen-build" >/dev/null
 fi
-# AM3's CMakeLists requires OpenMP; the reference is built serially: the
-# OpenMP flags leave out -fopenmp (on macOS they only point at the headers),
-# so the pragmas are ignored.
+# AM3's CMakeLists requires OpenMP, but the reference is serial: the OpenMP
+# flags leave out -fopenmp (on macOS they only point at the headers), so the
+# pragmas are ignored.
 if [ "$(uname)" = Darwin ]; then
     if [ ! -f "$PREFIX/lib/libomp.dylib" ]; then
         say "building LLVM libomp 19.1.7"
@@ -77,7 +76,7 @@ else
     OMP_ARGS=(-DOpenMP_CXX_FLAGS="-DAM3_SERIAL_REFERENCE" -DOpenMP_CXX_LIB_NAMES=gomp -DOpenMP_gomp_LIBRARY="$GOMP")
 fi
 
-# --- 3. AM3 builds ------------------------------------------------------------
+# 3. AM3 builds
 PYBIND="$("$PY" -c 'import pybind11; print(pybind11.get_cmake_dir())')"
 EXT="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
 build() {  # build <name> <source dir>

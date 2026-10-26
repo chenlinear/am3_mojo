@@ -1,13 +1,5 @@
 """Port of the AM3 user-interface class (AM3.cc)."""
 
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.simulation.manager import SimulationManager
-from am3_mojo.solver.ids import *
-from am3_mojo.model.particles import *
-from am3_mojo.simulation.coeffs import *
-from am3_mojo.physics.expansion import Expansion
 from am3_mojo.api.convert import (
     scaled,
     summed,
@@ -17,17 +9,21 @@ from am3_mojo.api.convert import (
     set_rates_from_timescales,
     assign_divided,
 )
+from am3_mojo.model.particles import *
+from am3_mojo.physics.expansion import Expansion
+from am3_mojo.simulation.coeffs import *
+from am3_mojo.simulation.manager import SimulationManager
+from am3_mojo.solver.ids import *
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
 
 
 struct AM3(Defaultable, Movable, Writable):
     var sim: SimulationManager
-    var mec2_erg: Float64
-    var erg2eV: Float64
 
     def __init__(out self):
         self.sim = SimulationManager()
-        self.mec2_erg = 8.187111168006826e-07
-        self.erg2eV = 624149596175.2113
 
     def _pair_solver(self) -> Int:
         """Solver of the e+/- array the pair getters report on."""
@@ -93,11 +89,6 @@ struct AM3(Defaultable, Movable, Writable):
     def get_optimize_compton_target_emax(mut self) -> Float64:
         return self.sim.dat.egrid_pho[self.sim.optimize_compton_target_emax]
 
-    def get_annihilation_pair_emission_max_com_energy(mut self) -> Float64:
-        return self.sim.dat.egrid_pho[
-            self.sim.annihilation_pair_emission_max_com_energy
-        ]
-
     def get_optimize_bethe_heitler_incoming_protons_min(mut self) -> Float64:
         return self.sim.dat.egrid_had[
             self.sim.optimize_bethe_heitler_incoming_protons_min
@@ -120,17 +111,16 @@ struct AM3(Defaultable, Movable, Writable):
     def _even_index(index: Int, n: Int) -> Int:
         """`index` rounded up to an even number, as in AM3, but kept on the
         grid of n bins (AM3 can return n, one past the last bin)."""
-        var k = index + 1 if c_mod(index, 2) != 0 else index
+        var k = index + 1 if index % 2 != 0 else index
         while k > n - 1:
             k -= 2
         return max(k, 0)
 
     def _photon_index_even(mut self, value: Float64) -> Int:
-        var mec2_eV = 0.51099895e6
         var E_max_eV = (
-            self.sim.dat.egrid_pho[self.sim.dat.nbins_pho - 1] * mec2_eV
+            self.sim.dat.egrid_pho[self.sim.dat.nbins_pho - 1] * MEC2_EV
         )
-        var Egamma_min_eV = self.sim.dat.egrid_pho[0] * mec2_eV
+        var Egamma_min_eV = self.sim.dat.egrid_pho[0] * MEC2_EV
         var v = max(min(value, E_max_eV), Egamma_min_eV)
         return Self._even_index(
             self.sim.dat.eV_to_photon_grid_index(v), self.sim.dat.nbins_pho
@@ -153,18 +143,6 @@ struct AM3(Defaultable, Movable, Writable):
 
     def set_optimize_compton_target_grid(mut self, new_value: Bool):
         self.sim.optimize_compton_target_grid = True
-
-    def set_annihilation_pair_emission_max_com_energy(
-        mut self, new_value: Float64
-    ):
-        # (kept on the photon grid its getter reads)
-        self.sim.annihilation_pair_emission_max_com_energy = max(
-            min(
-                to_int(c_log(new_value) / self.sim.dat.dlnE),
-                self.sim.dat.nbins_pho - 1,
-            ),
-            0,
-        )
 
     def set_optimize_bethe_heitler_outgoing_pairs_grid(
         mut self, new_value: Bool
@@ -298,7 +276,7 @@ struct AM3(Defaultable, Movable, Writable):
         # the hadron grid must span at least a decade
         if not (
             Egamma_min_eV > 0.0
-            and Egamma_min_eV < 0.511e6
+            and Egamma_min_eV < MEC2_EV
             and Enu_min_eV > 0.0
             and Enu_min_eV < 1e9
             and E_max_eV >= 1e10
@@ -315,15 +293,14 @@ struct AM3(Defaultable, Movable, Writable):
                     E_max_eV,
                 )
             )
-        var mec2_eV = 0.51099895e6
         var d = self.sim.dat.egrid_pho.copy()
         var h = self.sim.dat.egrid_had.copy()
         var opt_E_ic_ph_in_max = max(
-            min(d[self.sim.optimize_compton_target_emax] * mec2_eV, E_max_eV),
+            min(d[self.sim.optimize_compton_target_emax] * MEC2_EV, E_max_eV),
             Egamma_min_eV,
         )
         var opt_E_ic_ph_out_min = max(
-            min(d[self.sim.optimize_compton_emission_emin] * mec2_eV, E_max_eV),
+            min(d[self.sim.optimize_compton_emission_emin] * MEC2_EV, E_max_eV),
             Egamma_min_eV,
         )
         var opt_E_bh_pr_in_min = max(
@@ -335,14 +312,14 @@ struct AM3(Defaultable, Movable, Writable):
         )
         var opt_E_bh_ph_in_max = max(
             min(
-                d[self.sim.optimize_bethe_heitler_target_photon_max] * mec2_eV,
+                d[self.sim.optimize_bethe_heitler_target_photon_max] * MEC2_EV,
                 E_max_eV,
             ),
             Egamma_min_eV,
         )
         var opt_E_pg_ph_in_max = max(
             min(
-                d[self.sim.optimize_photopion_target_photon_max] * mec2_eV,
+                d[self.sim.optimize_photopion_target_photon_max] * MEC2_EV,
                 E_max_eV,
             ),
             Egamma_min_eV,
@@ -381,7 +358,7 @@ struct AM3(Defaultable, Movable, Writable):
         var res = zeros(self.sim.dat.nbins_pho)
         for i in range(self.sim.dat.nbins_pho):
             res[i] = (
-                T_SSC_CGS
+                T_SSC
                 * (self.sim.dat.n[P_photons][i])
                 / (
                     fbool(s) * self.sim.c[C_qgma_sy][i]
@@ -413,7 +390,7 @@ struct AM3(Defaultable, Movable, Writable):
         var res = zeros(self.sim.dat.nbins_pho)
         for i in range(self.sim.dat.nbins_pho):
             res[i] = (
-                T_SSC_CGS
+                T_SSC
                 * (self.sim.dat.n[P_photons][i])
                 / (
                     fbool(s) * self.sim.c[C_qgma_ic][i]
@@ -429,7 +406,7 @@ struct AM3(Defaultable, Movable, Writable):
         var res = zeros(self.sim.dat.nbins_pho)
         for i in range(self.sim.dat.nbins_pho):
             res[i] = (
-                T_SSC_CGS
+                T_SSC
                 * (self.sim.dat.n[P_photons][i])
                 / (
                     fbool(self.sim.process_pion_decay)
@@ -507,6 +484,10 @@ struct AM3(Defaultable, Movable, Writable):
             "evolve kaon",
             "photon coeff: kaon syn. em.",
             "photon coeff: kaon compton em.",
+            "calc. coeff. charm",
+            "evolve charm",
+            "photon coeff: charm syn. em.",
+            "photon coeff: charm compton em.",
         ]:
             labels.append(String(s))
         return labels^
@@ -985,10 +966,10 @@ struct AM3(Defaultable, Movable, Writable):
         self.sim.rp.proton_accel_factor_for_emax_estimate = eta
 
     def get_egrid_lep(mut self) -> Vec:
-        return scaled(self.sim.dat.egrid_lep, self.mec2_erg * self.erg2eV)
+        return scaled(self.sim.dat.egrid_lep, MEC2_EV)
 
     def get_egrid_photons(mut self) -> Vec:
-        return scaled(self.sim.dat.egrid_pho, self.mec2_erg * self.erg2eV)
+        return scaled(self.sim.dat.egrid_pho, MEC2_EV)
 
     def get_egrid_had(mut self) -> Vec:
         return scaled(self.sim.dat.egrid_had, 1e9)
@@ -1040,37 +1021,54 @@ struct AM3(Defaultable, Movable, Writable):
     def get_pion_minus(mut self) -> Vec:
         return self.sim.dat.n[P_pion_minus].copy()
 
-    def _with_kaons(self, made: Int, kaon: Int) -> Vec:
+    def _with_chains(self, made: Int, kaon: Int, charm: Int) -> Vec:
         """Photo-hadronic or pp component of the pions, muons or neutrinos: the
-        part from the pions made in the interactions (n[made]) plus the part
-        from the kaon decays (n[kaon])."""
-        return summed(1.0, self.sim.dat.n[made], self.sim.dat.n[kaon])
+        part from the pions made in the interactions (n[made]) plus the parts
+        from the kaon decays (n[kaon]) and from the charm decays (n[charm])."""
+        return summed(
+            1.0,
+            self.sim.dat.n[made],
+            self.sim.dat.n[kaon],
+            self.sim.dat.n[charm],
+        )
 
     def get_pions_photopion(mut self) -> Vec:
         return summed(
             1.0,
-            self._with_kaons(P_pion_plus_pg, P_pion_plus_Kpg),
-            self._with_kaons(P_pion_minus_pg, P_pion_minus_Kpg),
+            self._with_chains(P_pion_plus_pg, P_pion_plus_Kpg, P_pion_plus_Cpg),
+            self._with_chains(
+                P_pion_minus_pg, P_pion_minus_Kpg, P_pion_plus_Cpg + 1
+            ),
         )
 
     def get_pion_plus_photopion(mut self) -> Vec:
-        return self._with_kaons(P_pion_plus_pg, P_pion_plus_Kpg)
+        return self._with_chains(
+            P_pion_plus_pg, P_pion_plus_Kpg, P_pion_plus_Cpg
+        )
 
     def get_pion_minus_photopion(mut self) -> Vec:
-        return self._with_kaons(P_pion_minus_pg, P_pion_minus_Kpg)
+        return self._with_chains(
+            P_pion_minus_pg, P_pion_minus_Kpg, P_pion_plus_Cpg + 1
+        )
 
     def get_pions_proton_proton(mut self) -> Vec:
         return summed(
             1.0,
-            self._with_kaons(P_pion_plus_pp, P_pion_plus_Kpp),
-            self._with_kaons(P_pion_minus_pp, P_pion_minus_Kpp),
+            self._with_chains(P_pion_plus_pp, P_pion_plus_Kpp, P_pion_plus_Cpp),
+            self._with_chains(
+                P_pion_minus_pp, P_pion_minus_Kpp, P_pion_plus_Cpp + 1
+            ),
         )
 
     def get_pion_plus_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_pion_plus_pp, P_pion_plus_Kpp)
+        return self._with_chains(
+            P_pion_plus_pp, P_pion_plus_Kpp, P_pion_plus_Cpp
+        )
 
     def get_pion_minus_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_pion_minus_pp, P_pion_minus_Kpp)
+        return self._with_chains(
+            P_pion_minus_pp, P_pion_minus_Kpp, P_pion_plus_Cpp + 1
+        )
 
     def get_mu_minus_left(mut self) -> Vec:
         return self.sim.dat.n[P_muon_minus_left].copy()
@@ -1094,45 +1092,101 @@ struct AM3(Defaultable, Movable, Writable):
         )
 
     def get_mu_minus_left_photopion(mut self) -> Vec:
-        return self._with_kaons(P_muon_minus_left_pg, P_muon_plus_left_Kpg + 2)
+        return self._with_chains(
+            P_muon_minus_left_pg,
+            P_muon_plus_left_Kpg + 2,
+            P_muon_plus_left_Cpg + 2,
+        )
 
     def get_mu_minus_right_photopion(mut self) -> Vec:
-        return self._with_kaons(P_muon_minus_right_pg, P_muon_plus_left_Kpg + 3)
+        return self._with_chains(
+            P_muon_minus_right_pg,
+            P_muon_plus_left_Kpg + 3,
+            P_muon_plus_left_Cpg + 3,
+        )
 
     def get_mu_plus_left_photopion(mut self) -> Vec:
-        return self._with_kaons(P_muon_plus_left_pg, P_muon_plus_left_Kpg)
+        return self._with_chains(
+            P_muon_plus_left_pg, P_muon_plus_left_Kpg, P_muon_plus_left_Cpg
+        )
 
     def get_mu_plus_right_photopion(mut self) -> Vec:
-        return self._with_kaons(P_muon_plus_right_pg, P_muon_plus_left_Kpg + 1)
+        return self._with_chains(
+            P_muon_plus_right_pg,
+            P_muon_plus_left_Kpg + 1,
+            P_muon_plus_left_Cpg + 1,
+        )
 
     def get_muons_photopion(mut self) -> Vec:
         return summed(
             1.0,
-            self._with_kaons(P_muon_minus_left_pg, P_muon_plus_left_Kpg + 2),
-            self._with_kaons(P_muon_minus_right_pg, P_muon_plus_left_Kpg + 3),
-            self._with_kaons(P_muon_plus_left_pg, P_muon_plus_left_Kpg),
-            self._with_kaons(P_muon_plus_right_pg, P_muon_plus_left_Kpg + 1),
+            self._with_chains(
+                P_muon_minus_left_pg,
+                P_muon_plus_left_Kpg + 2,
+                P_muon_plus_left_Cpg + 2,
+            ),
+            self._with_chains(
+                P_muon_minus_right_pg,
+                P_muon_plus_left_Kpg + 3,
+                P_muon_plus_left_Cpg + 3,
+            ),
+            self._with_chains(
+                P_muon_plus_left_pg, P_muon_plus_left_Kpg, P_muon_plus_left_Cpg
+            ),
+            self._with_chains(
+                P_muon_plus_right_pg,
+                P_muon_plus_left_Kpg + 1,
+                P_muon_plus_left_Cpg + 1,
+            ),
         )
 
     def get_mu_minus_left_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_muon_minus_left_pp, P_muon_plus_left_Kpp + 2)
+        return self._with_chains(
+            P_muon_minus_left_pp,
+            P_muon_plus_left_Kpp + 2,
+            P_muon_plus_left_Cpp + 2,
+        )
 
     def get_mu_minus_right_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_muon_minus_right_pp, P_muon_plus_left_Kpp + 3)
+        return self._with_chains(
+            P_muon_minus_right_pp,
+            P_muon_plus_left_Kpp + 3,
+            P_muon_plus_left_Cpp + 3,
+        )
 
     def get_mu_plus_left_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_muon_plus_left_pp, P_muon_plus_left_Kpp)
+        return self._with_chains(
+            P_muon_plus_left_pp, P_muon_plus_left_Kpp, P_muon_plus_left_Cpp
+        )
 
     def get_mu_plus_right_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_muon_plus_right_pp, P_muon_plus_left_Kpp + 1)
+        return self._with_chains(
+            P_muon_plus_right_pp,
+            P_muon_plus_left_Kpp + 1,
+            P_muon_plus_left_Cpp + 1,
+        )
 
     def get_muons_proton_proton(mut self) -> Vec:
         return summed(
             1.0,
-            self._with_kaons(P_muon_minus_left_pp, P_muon_plus_left_Kpp + 2),
-            self._with_kaons(P_muon_minus_right_pp, P_muon_plus_left_Kpp + 3),
-            self._with_kaons(P_muon_plus_left_pp, P_muon_plus_left_Kpp),
-            self._with_kaons(P_muon_plus_right_pp, P_muon_plus_left_Kpp + 1),
+            self._with_chains(
+                P_muon_minus_left_pp,
+                P_muon_plus_left_Kpp + 2,
+                P_muon_plus_left_Cpp + 2,
+            ),
+            self._with_chains(
+                P_muon_minus_right_pp,
+                P_muon_plus_left_Kpp + 3,
+                P_muon_plus_left_Cpp + 3,
+            ),
+            self._with_chains(
+                P_muon_plus_left_pp, P_muon_plus_left_Kpp, P_muon_plus_left_Cpp
+            ),
+            self._with_chains(
+                P_muon_plus_right_pp,
+                P_muon_plus_left_Kpp + 1,
+                P_muon_plus_left_Cpp + 1,
+            ),
         )
 
     def get_electron_neutrinos(mut self) -> Vec:
@@ -1156,194 +1210,235 @@ struct AM3(Defaultable, Movable, Writable):
             self.sim.dat.n[P_neutrino_mu_anti],
         )
 
+    def _nu_mu_component(self, mu: Int, pi: Int, kaon: Int, charm: Int) -> Vec:
+        """Photo-hadronic or pp component of the nu_mu or anti-nu_mu: the parts
+        from the decays of the muons (n[mu]) and of the pions (n[pi]) made in
+        the interactions, and from the kaon and charm decays (n[kaon],
+        n[charm])."""
+        return summed(
+            1.0,
+            self.sim.dat.n[mu],
+            self.sim.dat.n[pi],
+            self.sim.dat.n[kaon],
+            self.sim.dat.n[charm],
+        )
+
     def get_electron_neutrinos_photopion(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_el_pg, P_neutrino_el_Kpg)
+        return self._with_chains(
+            P_neutrino_el_pg, P_neutrino_el_Kpg, P_neutrino_el_Cpg
+        )
 
     def get_electron_anti_neutrinos_photopion(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_el_anti_pg, P_neutrino_el_Kpg + 1)
+        return self._with_chains(
+            P_neutrino_el_anti_pg, P_neutrino_el_Kpg + 1, P_neutrino_el_Cpg + 1
+        )
 
     def get_muon_neutrinos_photopion(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_mu_pg, P_neutrino_el_Kpg + 2)
+        return self._nu_mu_component(
+            P_neutrino_mu_pg,
+            P_neutrino_mu_pidec_pg,
+            P_neutrino_el_Kpg + 2,
+            P_neutrino_el_Cpg + 2,
+        )
 
     def get_muon_anti_neutrinos_photopion(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_mu_anti_pg, P_neutrino_el_Kpg + 3)
+        return self._nu_mu_component(
+            P_neutrino_mu_anti_pg,
+            P_neutrino_mu_pidec_pg + 1,
+            P_neutrino_el_Kpg + 3,
+            P_neutrino_el_Cpg + 3,
+        )
 
     def get_neutrinos_photopion(mut self) -> Vec:
         return summed(
             1.0,
-            self._with_kaons(P_neutrino_el_pg, P_neutrino_el_Kpg),
-            self._with_kaons(P_neutrino_el_anti_pg, P_neutrino_el_Kpg + 1),
-            self._with_kaons(P_neutrino_mu_pg, P_neutrino_el_Kpg + 2),
-            self._with_kaons(P_neutrino_mu_anti_pg, P_neutrino_el_Kpg + 3),
+            self.get_electron_neutrinos_photopion(),
+            self.get_electron_anti_neutrinos_photopion(),
+            self.get_muon_neutrinos_photopion(),
+            self.get_muon_anti_neutrinos_photopion(),
         )
 
     def get_electron_neutrinos_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_el_pp, P_neutrino_el_Kpp)
+        return self._with_chains(
+            P_neutrino_el_pp, P_neutrino_el_Kpp, P_neutrino_el_Cpp
+        )
 
     def get_electron_anti_neutrinos_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_el_anti_pp, P_neutrino_el_Kpp + 1)
+        return self._with_chains(
+            P_neutrino_el_anti_pp, P_neutrino_el_Kpp + 1, P_neutrino_el_Cpp + 1
+        )
 
     def get_muon_neutrinos_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_mu_pp, P_neutrino_el_Kpp + 2)
+        return self._nu_mu_component(
+            P_neutrino_mu_pp,
+            P_neutrino_mu_pidec_pp,
+            P_neutrino_el_Kpp + 2,
+            P_neutrino_el_Cpp + 2,
+        )
 
     def get_muon_anti_neutrinos_proton_proton(mut self) -> Vec:
-        return self._with_kaons(P_neutrino_mu_anti_pp, P_neutrino_el_Kpp + 3)
+        return self._nu_mu_component(
+            P_neutrino_mu_anti_pp,
+            P_neutrino_mu_pidec_pp + 1,
+            P_neutrino_el_Kpp + 3,
+            P_neutrino_el_Cpp + 3,
+        )
 
     def get_neutrinos_proton_proton(mut self) -> Vec:
         return summed(
             1.0,
-            self._with_kaons(P_neutrino_el_pp, P_neutrino_el_Kpp),
-            self._with_kaons(P_neutrino_el_anti_pp, P_neutrino_el_Kpp + 1),
-            self._with_kaons(P_neutrino_mu_pp, P_neutrino_el_Kpp + 2),
-            self._with_kaons(P_neutrino_mu_anti_pp, P_neutrino_el_Kpp + 3),
+            self.get_electron_neutrinos_proton_proton(),
+            self.get_electron_anti_neutrinos_proton_proton(),
+            self.get_muon_neutrinos_proton_proton(),
+            self.get_muon_anti_neutrinos_proton_proton(),
         )
 
     def get_electrons(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_electrons], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_electrons], N_SSC)
 
     def get_positrons(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_positrons], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_positrons], N_SSC)
 
     def get_pairs(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs], N_SSC)
 
     def get_pairs_injected(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs_in], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs_in], N_SSC)
 
     def get_pairs_annihilation(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs_pair], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs_pair], N_SSC)
 
     def get_pairs_bethe_heitler(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs_bh], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs_bh], N_SSC)
 
     def get_pairs_photopion(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs_pg], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs_pg], N_SSC)
 
     def get_pairs_proton_proton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs_pp], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs_pp], N_SSC)
 
     def get_photons(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons], N_SSC)
 
     def get_photons_except_injected(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_except_injected], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_except_injected], N_SSC)
 
     def get_photons_injected_electrons_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_insy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_insy], N_SSC)
 
     def get_photons_injected_electrons_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_inic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_inic], N_SSC)
 
     def get_photons_injected_electrons_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_insy],
             self.sim.dat.n[P_photons_inic],
         )
 
     def get_photons_annihilation_pairs_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pairsy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pairsy], N_SSC)
 
     def get_photons_annihilation_pairs_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pairic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pairic], N_SSC)
 
     def get_photons_annihilation_pairs_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_pairsy],
             self.sim.dat.n[P_photons_pairic],
         )
 
     def get_photons_bethe_heitler_pairs_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_bhsy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_bhsy], N_SSC)
 
     def get_photons_bethe_heitler_pairs_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_bhic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_bhic], N_SSC)
 
     def get_photons_bethe_heitler_pairs_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_bhsy],
             self.sim.dat.n[P_photons_bhic],
         )
 
     def get_photons_photo_pion_pairs_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pgsy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pgsy], N_SSC)
 
     def get_photons_photo_pion_pairs_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pgic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pgic], N_SSC)
 
     def get_photons_photo_pion_pairs_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_pgsy],
             self.sim.dat.n[P_photons_pgic],
         )
 
     def get_photons_proton_proton_pairs_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_ppsy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_ppsy], N_SSC)
 
     def get_photons_proton_proton_pairs_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_ppic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_ppic], N_SSC)
 
     def get_photons_proton_proton_pairs_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_ppsy],
             self.sim.dat.n[P_photons_ppic],
         )
 
     def get_photons_protons_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_psy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_psy], N_SSC)
 
     def get_photons_protons_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pic], N_SSC)
 
     def get_photons_protons_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_psy],
             self.sim.dat.n[P_photons_pic],
         )
 
     def get_photons_pions_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pisy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pisy], N_SSC)
 
     def get_photons_pions_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_piic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_piic], N_SSC)
 
     def get_photons_pions_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_pisy],
             self.sim.dat.n[P_photons_piic],
         )
 
     def get_photons_muons_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_musy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_musy], N_SSC)
 
     def get_photons_muons_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_muic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_muic], N_SSC)
 
     def get_photons_muons_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_musy],
             self.sim.dat.n[P_photons_muic],
         )
 
     def get_photons_pi0_decay(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_pi0_pg],
             self.sim.dat.n[P_photons_pi0_pp],
         )
 
     def get_photons_pi0_decay_photopion(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pi0_pg], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pi0_pg], N_SSC)
 
     def get_photons_pi0_decay_proton_proton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pi0_pp], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pi0_pp], N_SSC)
 
     def set_current_densities_protons(mut self, InputArray: Vec) raises:
         assign_divided(self.sim.dat.n[P_protons], InputArray, 1.0)
@@ -1369,7 +1464,9 @@ struct AM3(Defaultable, Movable, Writable):
     def set_current_densities_mu_plus_right(mut self, InputArray: Vec) raises:
         assign_divided(self.sim.dat.n[P_muon_plus_right], InputArray, 1.0)
 
-    def set_current_densities_electron_neutrinos(mut self, InputArray: Vec) raises:
+    def set_current_densities_electron_neutrinos(
+        mut self, InputArray: Vec
+    ) raises:
         assign_divided(self.sim.dat.n[P_neutrino_el], InputArray, 1.0)
 
     def set_current_densities_electron_anti_neutrinos(
@@ -1380,20 +1477,19 @@ struct AM3(Defaultable, Movable, Writable):
     def set_current_densities_muon_neutrinos(mut self, InputArray: Vec) raises:
         assign_divided(self.sim.dat.n[P_neutrino_mu], InputArray, 1.0)
 
-    def set_current_densities_muon_anti_neutrinos(mut self, InputArray: Vec) raises:
+    def set_current_densities_muon_anti_neutrinos(
+        mut self, InputArray: Vec
+    ) raises:
         assign_divided(self.sim.dat.n[P_neutrino_mu_anti], InputArray, 1.0)
 
     def set_current_densities_electrons(mut self, InputArray: Vec) raises:
-        assign_divided(self.sim.dat.n[P_electrons], InputArray, n_SSC_CGS)
+        assign_divided(self.sim.dat.n[P_electrons], InputArray, N_SSC)
 
     def set_current_densities_positrons(mut self, InputArray: Vec) raises:
-        assign_divided(self.sim.dat.n[P_positrons], InputArray, n_SSC_CGS)
-
-    def set_current_densities_pairs(mut self, InputArray: Vec) raises:
-        assign_divided(self.sim.dat.n[P_pairs], InputArray, n_SSC_CGS)
+        assign_divided(self.sim.dat.n[P_positrons], InputArray, N_SSC)
 
     def set_current_densities_photons(mut self, InputArray: Vec) raises:
-        assign_divided(self.sim.dat.n[P_photons], InputArray, n_SSC_CGS)
+        assign_divided(self.sim.dat.n[P_photons], InputArray, N_SSC)
 
     def get_injection_rate_protons(mut self) -> Vec:
         return self.sim.oInj.inj_proton.copy()
@@ -1435,13 +1531,13 @@ struct AM3(Defaultable, Movable, Writable):
         return self.sim.oInj.inj_antinumu.copy()
 
     def get_injection_rate_electrons(mut self) -> Vec:
-        return scaled(self.sim.oInj.inj_electron, Rate_SSC_CGS)
+        return scaled(self.sim.oInj.inj_electron, RATE_SSC)
 
     def get_injection_rate_positrons(mut self) -> Vec:
-        return scaled(self.sim.oInj.inj_positron, Rate_SSC_CGS)
+        return scaled(self.sim.oInj.inj_positron, RATE_SSC)
 
     def get_injection_rate_photons(mut self) -> Vec:
-        return scaled(self.sim.oInj.inj_photon, Rate_SSC_CGS)
+        return scaled(self.sim.oInj.inj_photon, RATE_SSC)
 
     def set_injection_rate_protons(mut self, InputArray: Vec) raises:
         assign_divided(self.sim.oInj.inj_proton, InputArray, 1.0)
@@ -1473,23 +1569,27 @@ struct AM3(Defaultable, Movable, Writable):
     def set_injection_rate_electron_neutrinos(mut self, InputArray: Vec) raises:
         assign_divided(self.sim.oInj.inj_nue, InputArray, 1.0)
 
-    def set_injection_rate_electron_anti_neutrinos(mut self, InputArray: Vec) raises:
+    def set_injection_rate_electron_anti_neutrinos(
+        mut self, InputArray: Vec
+    ) raises:
         assign_divided(self.sim.oInj.inj_antinue, InputArray, 1.0)
 
     def set_injection_rate_muon_neutrinos(mut self, InputArray: Vec) raises:
         assign_divided(self.sim.oInj.inj_numu, InputArray, 1.0)
 
-    def set_injection_rate_muon_anti_neutrinos(mut self, InputArray: Vec) raises:
+    def set_injection_rate_muon_anti_neutrinos(
+        mut self, InputArray: Vec
+    ) raises:
         assign_divided(self.sim.oInj.inj_antinumu, InputArray, 1.0)
 
     def set_injection_rate_electrons(mut self, InputArray: Vec) raises:
-        assign_divided(self.sim.oInj.inj_electron, InputArray, Rate_SSC_CGS)
+        assign_divided(self.sim.oInj.inj_electron, InputArray, RATE_SSC)
 
     def set_injection_rate_positrons(mut self, InputArray: Vec) raises:
-        assign_divided(self.sim.oInj.inj_positron, InputArray, Rate_SSC_CGS)
+        assign_divided(self.sim.oInj.inj_positron, InputArray, RATE_SSC)
 
     def set_injection_rate_photons(mut self, InputArray: Vec) raises:
-        assign_divided(self.sim.oInj.inj_photon, InputArray, Rate_SSC_CGS)
+        assign_divided(self.sim.oInj.inj_photon, InputArray, RATE_SSC)
 
     def set_t_proton_escape(mut self, InputArray: Vec) raises:
         set_rates_from_timescales(self.sim.oEscape.afescPRO, InputArray, 1.0)
@@ -1507,14 +1607,10 @@ struct AM3(Defaultable, Movable, Writable):
         set_rates_from_timescales(self.sim.oEscape.afescNU, InputArray, 1.0)
 
     def set_t_pair_escape(mut self, InputArray: Vec) raises:
-        set_rates_from_timescales(
-            self.sim.oEscape.afescE, InputArray, T_SSC_CGS
-        )
+        set_rates_from_timescales(self.sim.oEscape.afescE, InputArray, T_SSC)
 
     def set_t_photon_escape(mut self, InputArray: Vec) raises:
-        set_rates_from_timescales(
-            self.sim.oEscape.afescG, InputArray, T_SSC_CGS
-        )
+        set_rates_from_timescales(self.sim.oEscape.afescG, InputArray, T_SSC)
 
     def set_t_proton_extra_cooling(mut self, InputArray: Vec) raises:
         set_rates_from_timescales(
@@ -1543,12 +1639,12 @@ struct AM3(Defaultable, Movable, Writable):
 
     def set_t_pair_extra_cooling(mut self, InputArray: Vec) raises:
         set_rates_from_timescales(
-            self.sim.oExtraCool.AExtraCoolE, InputArray, -T_SSC_CGS
+            self.sim.oExtraCool.AExtraCoolE, InputArray, -T_SSC
         )
 
     def set_t_photon_extra_cooling(mut self, InputArray: Vec) raises:
         set_rates_from_timescales(
-            self.sim.oExtraCool.AExtraCoolG, InputArray, -T_SSC_CGS
+            self.sim.oExtraCool.AExtraCoolG, InputArray, -T_SSC
         )
 
     def get_t_proton_syn(mut self) -> Vec:
@@ -1577,7 +1673,7 @@ struct AM3(Defaultable, Movable, Writable):
         return timescales(self.sim.oBH.ABHHadP, 1.0, -1.0)
 
     def get_t_proton_photopion(mut self) -> Vec:
-        return timescales(self.sim.oPhotoPion.afPG_PRO, 1.0, 1.0)
+        return timescales(self.sim.oPhotoHadron.afPG_PRO, 1.0, 1.0)
 
     def get_t_proton_proton_proton(mut self) -> Vec:
         return timescales(self.sim.oProtonProton.APP_PRO, 1.0, -1.0)
@@ -1628,72 +1724,72 @@ struct AM3(Defaultable, Movable, Writable):
         return timescales(self.sim.oExtraCool.AExtraCoolNU, 1.0, -1.0)
 
     def get_t_pair_syn(mut self) -> Vec:
-        return timescales(self.sim.S[self._pair_solver()].Asy, T_SSC_CGS, -1.0)
+        return timescales(self.sim.S[self._pair_solver()].Asy, T_SSC, -1.0)
 
     def get_t_pair_compton(mut self) -> Vec:
-        return timescales(self.sim.S[self._pair_solver()].Aic, T_SSC_CGS, -1.0)
+        return timescales(self.sim.S[self._pair_solver()].Aic, T_SSC, -1.0)
 
     def get_t_pair_acceleration(mut self) -> Vec:
         var res = zeros(self.sim.dat.nbins_lep)
         for i in range(self.sim.dat.nbins_lep):
-            res[i] = T_SSC_CGS / (
+            res[i] = T_SSC / (
                 self.sim.oAcc.AAClepBohm(self.sim.rp, self.sim.dat, i) + 1e-200
             )
         return res^
 
     def get_t_pair_adiabatic(mut self) -> Vec:
         return constant_timescales(
-            self.sim.dat.nbins_lep, T_SSC_CGS, -Expansion.AAdiLep(self.sim.rp)
+            self.sim.dat.nbins_lep, T_SSC, -Expansion.AAdiLep(self.sim.rp)
         )
 
     def get_t_pair_escape(mut self) -> Vec:
-        return timescales(self.sim.oEscape.afescE, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oEscape.afescE, T_SSC, 1.0)
 
     def get_t_pair_extra_cooling(mut self) -> Vec:
-        return timescales(self.sim.oExtraCool.AExtraCoolE, T_SSC_CGS, -1.0)
+        return timescales(self.sim.oExtraCool.AExtraCoolE, T_SSC, -1.0)
 
     def get_t_pair_emission_from_annihilation(mut self) -> Vec:
         return emission_timescales(
-            self.sim.dat.n[P_electrons], self.sim.c[C_qepair], T_SSC_CGS
+            self.sim.dat.n[P_electrons], self.sim.c[C_qepair], T_SSC
         )
 
     def get_t_pair_emission_from_injection(mut self) -> Vec:
         return emission_timescales(
-            self.sim.dat.n[P_electrons], self.sim.c[C_qein], T_SSC_CGS
+            self.sim.dat.n[P_electrons], self.sim.c[C_qein], T_SSC
         )
 
     def get_t_pair_emission_from_bethe_heitler(mut self) -> Vec:
         return emission_timescales(
-            self.sim.dat.n[P_electrons], self.sim.c[C_qebh], T_SSC_CGS
+            self.sim.dat.n[P_electrons], self.sim.c[C_qebh], T_SSC
         )
 
     def get_t_pair_emission_from_photopion(mut self) -> Vec:
         return emission_timescales(
-            self.sim.dat.n[P_electrons], self.sim.c[C_qepg], T_SSC_CGS
+            self.sim.dat.n[P_electrons], self.sim.c[C_qepg], T_SSC
         )
 
     def get_t_pair_emission_from_proton_proton(mut self) -> Vec:
         return emission_timescales(
-            self.sim.dat.n[P_electrons], self.sim.c[C_qepp], T_SSC_CGS
+            self.sim.dat.n[P_electrons], self.sim.c[C_qepp], T_SSC
         )
 
     def get_t_photon_ssa(mut self) -> Vec:
-        return timescales(self.sim.oSyn.afsyG, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oSyn.afsyG, T_SSC, 1.0)
 
     def get_t_photon_compton(mut self) -> Vec:
-        return timescales(self.sim.oComp.aficG, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oComp.aficG, T_SSC, 1.0)
 
     def get_t_photon_escape(mut self) -> Vec:
-        return timescales(self.sim.oEscape.afescG, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oEscape.afescG, T_SSC, 1.0)
 
     def get_t_photon_extra_cooling(mut self) -> Vec:
-        return timescales(self.sim.oExtraCool.AExtraCoolG, T_SSC_CGS, -1.0)
+        return timescales(self.sim.oExtraCool.AExtraCoolG, T_SSC, -1.0)
 
     def get_t_photon_annihilation(mut self) -> Vec:
-        return timescales(self.sim.oPair.afpairG, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oPair.afpairG, T_SSC, 1.0)
 
     def get_t_photon_photopion(mut self) -> Vec:
-        return timescales(self.sim.oPhotoPion.afPG_Rad, 1.0, 1.0)
+        return timescales(self.sim.oPhotoHadron.afPG_Rad, 1.0, 1.0)
 
     def get_estimated_electron_emax(mut self) -> Float64:
         return self.sim.rp.estimated_electron_emax
@@ -1723,13 +1819,13 @@ struct AM3(Defaultable, Movable, Writable):
         self.sim.process_pair_annihilation_cooling = new_value
 
     def get_photons_pair_annihilation(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_pair_ann], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_pair_ann], N_SSC)
 
     def get_t_electron_annihilation(mut self) -> Vec:
-        return timescales(self.sim.oPairAnn.a_ele, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oPairAnn.Gamma_ele, T_SSC, 1.0)
 
     def get_t_positron_annihilation(mut self) -> Vec:
-        return timescales(self.sim.oPairAnn.a_pos, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oPairAnn.Gamma_pos, T_SSC, 1.0)
 
     def get_process_triplet_pair_production(mut self) -> Bool:
         return self.sim.process_triplet_pair_production
@@ -1750,26 +1846,26 @@ struct AM3(Defaultable, Movable, Writable):
         self.sim.process_triplet_pair_production_cooling = new_value
 
     def get_pairs_triplet(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs_tpp], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs_tpp], N_SSC)
 
     def get_photons_triplet_pairs_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_tppsy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_tppsy], N_SSC)
 
     def get_photons_triplet_pairs_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_tppic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_tppic], N_SSC)
 
     def get_photons_triplet_pairs_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_tppsy],
             self.sim.dat.n[P_photons_tppic],
         )
 
     def get_t_pair_triplet(mut self) -> Vec:
-        return timescales(self.sim.oTPP.eloss, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oTPP.eloss, T_SSC, 1.0)
 
     def get_t_photon_triplet(mut self) -> Vec:
-        return timescales(self.sim.oTPP.alpha_g, T_SSC_CGS, 1.0)
+        return timescales(self.sim.oTPP.alpha_g, T_SSC, 1.0)
 
     def get_process_neutron_decay(mut self) -> Bool:
         return self.sim.process_neutron_decay
@@ -1778,17 +1874,17 @@ struct AM3(Defaultable, Movable, Writable):
         self.sim.process_neutron_decay = new_value
 
     def get_electrons_neutron_decay(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_pairs_ndec], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_pairs_ndec], N_SSC)
 
     def get_photons_neutron_decay_electrons_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_ndecsy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_ndecsy], N_SSC)
 
     def get_photons_neutron_decay_electrons_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_ndecic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_ndecic], N_SSC)
 
     def get_photons_neutron_decay_electrons_syn_compton(mut self) -> Vec:
         return summed(
-            n_SSC_CGS,
+            N_SSC,
             self.sim.dat.n[P_photons_ndecsy],
             self.sim.dat.n[P_photons_ndecic],
         )
@@ -1798,6 +1894,76 @@ struct AM3(Defaultable, Movable, Writable):
 
     def get_t_neutron_decay(mut self) -> Vec:
         return timescales(self.sim.S[SA_neutron].alpha_decay, 1.0, 1.0)
+
+    # AM3's photo-hadronic and pp neutrinos by parent: the pion and the muon
+    # decays (am3_mojo addition)
+    def get_neutrinos_pion_decay_photopion(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_mu_pidec_pg],
+            self.sim.dat.n[P_neutrino_mu_pidec_pg + 1],
+        )
+
+    def get_muon_neutrinos_pion_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pidec_pg].copy()
+
+    def get_muon_anti_neutrinos_pion_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pidec_pg + 1].copy()
+
+    def get_neutrinos_pion_decay_proton_proton(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_mu_pidec_pp],
+            self.sim.dat.n[P_neutrino_mu_pidec_pp + 1],
+        )
+
+    def get_muon_neutrinos_pion_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pidec_pp].copy()
+
+    def get_muon_anti_neutrinos_pion_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pidec_pp + 1].copy()
+
+    def get_neutrinos_muon_decay_photopion(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_el_pg],
+            self.sim.dat.n[P_neutrino_el_anti_pg],
+            self.sim.dat.n[P_neutrino_mu_pg],
+            self.sim.dat.n[P_neutrino_mu_anti_pg],
+        )
+
+    def get_electron_neutrinos_muon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_pg].copy()
+
+    def get_electron_anti_neutrinos_muon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_anti_pg].copy()
+
+    def get_muon_neutrinos_muon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pg].copy()
+
+    def get_muon_anti_neutrinos_muon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_anti_pg].copy()
+
+    def get_neutrinos_muon_decay_proton_proton(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_el_pp],
+            self.sim.dat.n[P_neutrino_el_anti_pp],
+            self.sim.dat.n[P_neutrino_mu_pp],
+            self.sim.dat.n[P_neutrino_mu_anti_pp],
+        )
+
+    def get_electron_neutrinos_muon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_pp].copy()
+
+    def get_electron_anti_neutrinos_muon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_anti_pp].copy()
+
+    def get_muon_neutrinos_muon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_pp].copy()
+
+    def get_muon_anti_neutrinos_muon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_mu_anti_pp].copy()
 
     def get_process_kaons(mut self) -> Bool:
         return self.sim.process_kaons
@@ -1854,7 +2020,7 @@ struct AM3(Defaultable, Movable, Writable):
         return timescales(self.sim.S[SA_KL].alpha_decay, 1.0, 1.0)
 
     def get_photons_kaons_syn(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_kasy], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_kasy], N_SSC)
 
     def _kaon_cooling_solver(self) -> Int:
         """The K+ solver whose cooling rates are current: the photo-hadronic
@@ -1895,79 +2061,49 @@ struct AM3(Defaultable, Movable, Writable):
         self.sim.process_kaon_compton_cooling = new_value
 
     def get_photons_kaons_compton(mut self) -> Vec:
-        return scaled(self.sim.dat.n[P_photons_kaic], n_SSC_CGS)
+        return scaled(self.sim.dat.n[P_photons_kaic], N_SSC)
 
-    def _kaon_neutrinos(self, k: Int) -> Vec:
+    def get_neutrinos_kaon_decay_photopion(mut self) -> Vec:
         return summed(
             1.0,
-            self.sim.dat.n[P_neutrino_el_Kpg + k],
-            self.sim.dat.n[P_neutrino_el_Kpp + k],
+            self.sim.dat.n[P_neutrino_el_Kpg],
+            self.sim.dat.n[P_neutrino_el_Kpg + 1],
+            self.sim.dat.n[P_neutrino_el_Kpg + 2],
+            self.sim.dat.n[P_neutrino_el_Kpg + 3],
         )
 
-    def get_neutrinos_kaon_decay(mut self) -> Vec:
+    def get_electron_neutrinos_kaon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpg].copy()
+
+    def get_electron_anti_neutrinos_kaon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpg + 1].copy()
+
+    def get_muon_neutrinos_kaon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpg + 2].copy()
+
+    def get_muon_anti_neutrinos_kaon_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpg + 3].copy()
+
+    def get_neutrinos_kaon_decay_proton_proton(mut self) -> Vec:
         return summed(
             1.0,
-            self._kaon_neutrinos(0),
-            self._kaon_neutrinos(1),
-            self._kaon_neutrinos(2),
-            self._kaon_neutrinos(3),
+            self.sim.dat.n[P_neutrino_el_Kpp],
+            self.sim.dat.n[P_neutrino_el_Kpp + 1],
+            self.sim.dat.n[P_neutrino_el_Kpp + 2],
+            self.sim.dat.n[P_neutrino_el_Kpp + 3],
         )
 
-    def get_electron_neutrinos_kaon_decay(mut self) -> Vec:
-        return self._kaon_neutrinos(0)
+    def get_electron_neutrinos_kaon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpp].copy()
 
-    def get_electron_anti_neutrinos_kaon_decay(mut self) -> Vec:
-        return self._kaon_neutrinos(1)
+    def get_electron_anti_neutrinos_kaon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpp + 1].copy()
 
-    def get_muon_neutrinos_kaon_decay(mut self) -> Vec:
-        return self._kaon_neutrinos(2)
+    def get_muon_neutrinos_kaon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpp + 2].copy()
 
-    def get_muon_anti_neutrinos_kaon_decay(mut self) -> Vec:
-        return self._kaon_neutrinos(3)
-
-    def get_neutrinos_pion_muon_decay_photopion(mut self) -> Vec:
-        return summed(
-            1.0,
-            self.sim.dat.n[P_neutrino_el_pg],
-            self.sim.dat.n[P_neutrino_el_anti_pg],
-            self.sim.dat.n[P_neutrino_mu_pg],
-            self.sim.dat.n[P_neutrino_mu_anti_pg],
-        )
-
-    def get_electron_neutrinos_pion_muon_decay_photopion(mut self) -> Vec:
-        return self.sim.dat.n[P_neutrino_el_pg].copy()
-
-    def get_electron_anti_neutrinos_pion_muon_decay_photopion(mut self) -> Vec:
-        return self.sim.dat.n[P_neutrino_el_anti_pg].copy()
-
-    def get_muon_neutrinos_pion_muon_decay_photopion(mut self) -> Vec:
-        return self.sim.dat.n[P_neutrino_mu_pg].copy()
-
-    def get_muon_anti_neutrinos_pion_muon_decay_photopion(mut self) -> Vec:
-        return self.sim.dat.n[P_neutrino_mu_anti_pg].copy()
-
-    def get_neutrinos_pion_muon_decay_proton_proton(mut self) -> Vec:
-        return summed(
-            1.0,
-            self.sim.dat.n[P_neutrino_el_pp],
-            self.sim.dat.n[P_neutrino_el_anti_pp],
-            self.sim.dat.n[P_neutrino_mu_pp],
-            self.sim.dat.n[P_neutrino_mu_anti_pp],
-        )
-
-    def get_electron_neutrinos_pion_muon_decay_proton_proton(mut self) -> Vec:
-        return self.sim.dat.n[P_neutrino_el_pp].copy()
-
-    def get_electron_anti_neutrinos_pion_muon_decay_proton_proton(
-        mut self,
-    ) -> Vec:
-        return self.sim.dat.n[P_neutrino_el_anti_pp].copy()
-
-    def get_muon_neutrinos_pion_muon_decay_proton_proton(mut self) -> Vec:
-        return self.sim.dat.n[P_neutrino_mu_pp].copy()
-
-    def get_muon_anti_neutrinos_pion_muon_decay_proton_proton(mut self) -> Vec:
-        return self.sim.dat.n[P_neutrino_mu_anti_pp].copy()
+    def get_muon_anti_neutrinos_kaon_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Kpp + 3].copy()
 
     def get_t_kaon_compton(mut self) -> Vec:
         return timescales(
@@ -1981,3 +2117,186 @@ struct AM3(Defaultable, Movable, Writable):
 
     def get_t_kaon_extra_cooling(mut self) -> Vec:
         return timescales(self.sim.oExtraCool.AExtraCoolK, 1.0, -1.0)
+
+    # ------------------------------------------------------------------
+    # charm hadrons (am3_mojo addition)
+    # ------------------------------------------------------------------
+    def get_process_charm(mut self) -> Bool:
+        return self.sim.process_charm
+
+    def set_process_charm(mut self, new_value: Bool):
+        self.sim.process_charm = new_value
+
+    def get_process_charm_decay(mut self) -> Bool:
+        return self.sim.process_charm_decay
+
+    def set_process_charm_decay(mut self, new_value: Bool):
+        self.sim.process_charm_decay = new_value
+
+    def get_process_charm_syn(mut self) -> Bool:
+        return self.sim.process_charm_syn
+
+    def set_process_charm_syn(mut self, new_value: Bool):
+        self.sim.process_charm_syn = new_value
+
+    def get_process_charm_syn_emission(mut self) -> Bool:
+        return self.sim.process_charm_syn_emission
+
+    def set_process_charm_syn_emission(mut self, new_value: Bool):
+        self.sim.process_charm_syn_emission = new_value
+
+    def get_process_charm_syn_cooling(mut self) -> Bool:
+        return self.sim.process_charm_syn_cooling
+
+    def set_process_charm_syn_cooling(mut self, new_value: Bool):
+        self.sim.process_charm_syn_cooling = new_value
+
+    def get_process_charm_compton(mut self) -> Bool:
+        return self.sim.process_charm_compton
+
+    def set_process_charm_compton(mut self, new_value: Bool):
+        self.sim.process_charm_compton = new_value
+
+    def get_process_charm_compton_emission(mut self) -> Bool:
+        return self.sim.process_charm_compton_emission
+
+    def set_process_charm_compton_emission(mut self, new_value: Bool):
+        self.sim.process_charm_compton_emission = new_value
+
+    def get_process_charm_compton_cooling(mut self) -> Bool:
+        return self.sim.process_charm_compton_cooling
+
+    def set_process_charm_compton_cooling(mut self, new_value: Bool):
+        self.sim.process_charm_compton_cooling = new_value
+
+    def get_charm_hadrons(mut self) -> Vec:
+        var res = self.sim.dat.n[P_charm].copy()
+        for s in range(1, N_CHARM):
+            for i in range(len(res)):
+                res[i] += self.sim.dat.n[P_charm + s][i]
+        return res^
+
+    def get_D_plus(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CDP].copy()
+
+    def get_D_minus(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CDM].copy()
+
+    def get_D_zero(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CD0].copy()
+
+    def get_anti_D_zero(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CD0B].copy()
+
+    def get_Ds_plus(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CDSP].copy()
+
+    def get_Ds_minus(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CDSM].copy()
+
+    def get_Lambda_c_plus(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CLC].copy()
+
+    def get_anti_Lambda_c_minus(mut self) -> Vec:
+        return self.sim.dat.n[P_charm + CLCB].copy()
+
+    def get_t_D_plus_decay(mut self) -> Vec:
+        return timescales(self.sim.S[charm_solver(CDP)].alpha_decay, 1.0, 1.0)
+
+    def get_t_D_zero_decay(mut self) -> Vec:
+        return timescales(self.sim.S[charm_solver(CD0)].alpha_decay, 1.0, 1.0)
+
+    def get_t_Ds_decay(mut self) -> Vec:
+        return timescales(self.sim.S[charm_solver(CDSP)].alpha_decay, 1.0, 1.0)
+
+    def get_t_Lambda_c_decay(mut self) -> Vec:
+        return timescales(self.sim.S[charm_solver(CLC)].alpha_decay, 1.0, 1.0)
+
+    def _charm_cooling_solver(self) -> Int:
+        """The D+ solver whose cooling rates are current (as
+        _kaon_cooling_solver)."""
+        return charm_solver(CDP, not self.sim.charm_pg_on())
+
+    def get_t_charm_syn(mut self) -> Vec:
+        return timescales(
+            self.sim.S[self._charm_cooling_solver()].Asy, 1.0, -1.0
+        )
+
+    def get_t_charm_compton(mut self) -> Vec:
+        return timescales(
+            self.sim.S[self._charm_cooling_solver()].Aic, 1.0, -1.0
+        )
+
+    def get_t_charm_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescPipm, 1.0, 1.0)
+
+    def get_t_charm_neutral_escape(mut self) -> Vec:
+        return timescales(self.sim.oEscape.afescNTR, 1.0, 1.0)
+
+    def set_t_charm_extra_cooling(mut self, InputArray: Vec) raises:
+        set_rates_from_timescales(
+            self.sim.oExtraCool.AExtraCoolC, InputArray, -1.0
+        )
+
+    def get_t_charm_extra_cooling(mut self) -> Vec:
+        return timescales(self.sim.oExtraCool.AExtraCoolC, 1.0, -1.0)
+
+    def get_photons_charm_syn(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_chsy], N_SSC)
+
+    def get_photons_charm_compton(mut self) -> Vec:
+        return scaled(self.sim.dat.n[P_photons_chic], N_SSC)
+
+    def get_neutrinos_charm_decay_photopion(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_el_Cpg],
+            self.sim.dat.n[P_neutrino_el_Cpg + 1],
+            self.sim.dat.n[P_neutrino_el_Cpg + 2],
+            self.sim.dat.n[P_neutrino_el_Cpg + 3],
+        )
+
+    def get_electron_neutrinos_charm_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpg].copy()
+
+    def get_electron_anti_neutrinos_charm_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpg + 1].copy()
+
+    def get_muon_neutrinos_charm_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpg + 2].copy()
+
+    def get_muon_anti_neutrinos_charm_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpg + 3].copy()
+
+    def get_neutrinos_charm_decay_proton_proton(mut self) -> Vec:
+        return summed(
+            1.0,
+            self.sim.dat.n[P_neutrino_el_Cpp],
+            self.sim.dat.n[P_neutrino_el_Cpp + 1],
+            self.sim.dat.n[P_neutrino_el_Cpp + 2],
+            self.sim.dat.n[P_neutrino_el_Cpp + 3],
+        )
+
+    def get_electron_neutrinos_charm_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpp].copy()
+
+    def get_electron_anti_neutrinos_charm_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpp + 1].copy()
+
+    def get_muon_neutrinos_charm_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpp + 2].copy()
+
+    def get_muon_anti_neutrinos_charm_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_el_Cpp + 3].copy()
+
+    def get_tau_neutrinos_charm_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_tau_Cpg].copy()
+
+    def get_tau_anti_neutrinos_charm_decay_photopion(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_tau_Cpg + 1].copy()
+
+    def get_tau_neutrinos_charm_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_tau_Cpp].copy()
+
+    def get_tau_anti_neutrinos_charm_decay_proton_proton(mut self) -> Vec:
+        return self.sim.dat.n[P_neutrino_tau_Cpp + 1].copy()

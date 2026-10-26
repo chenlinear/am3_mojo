@@ -1,22 +1,33 @@
-"""Prints what am3_mojo's triplet pair production (physics/triplet.mojo) computes, for the unit tests and the triplet
-checks (tests/support/harness.py, Triplet). The first argument selects the output:
-  tables        TPP_LY0, TPP_DLY and the number of table nodes; per node: k, sigma(k) / (alpha r_e^2), the number
-                of ln y bins nb, then the tabulated dN/dln y of the positron, the lower-energy electron and the
-                recoil (y = xi k), nb values each
-  sigma k ...   sigma(k) / (alpha r_e^2) at these k (the threshold expansion, the spline between the nodes, the
-                high-energy expansion)
-  dist k ...    per k: nb, then distributions(k), the three products' dN/dln y as the code takes them (interpolated
-                between the nodes, extrapolated above the last, normalised to one per interaction)
-  rows          the kernels of the default grid: m0, dlnE and the number of rows; per row q (P = gamma eps =
-                exp((m0 + q) dlnE)): P, the rate R [sigma_T], the energy-loss rate Lxi and nd, then the deposits
-                of the positron and of the lower-energy electron at the offsets 0 .. nd - 1 below the target bin
-  extrap k_lo k_hi k ...   the tables cut to the nodes k <= k_hi and the asymptotic laws fitted to the nodes from
-                k_lo on (as the code fits them from K_FIT on), then per k as `dist`."""
+"""Prints what am3_mojo's triplet pair production (physics/triplet.mojo)
+computes, for the unit tests and the triplet checks (tests/support/harness.py,
+Triplet). The first argument selects the output:
+  tables        TPP_LY0, TPP_DLY, the number of table nodes; per node: k,
+                sigma(k) / (alpha r_e^2), the number of ln y bins nb, then the
+                tabulated dN/dln y of the positron, the lower-energy electron
+                and the recoil (y = xi k), nb values each
+  sigma k ...   sigma(k) / (alpha r_e^2) at these k (threshold expansion, spline
+                between the nodes, high-energy expansion)
+  dist k ...    per k: nb, then distributions(k), the three products' dN/dln y
+                as the code takes them (interpolated between the nodes,
+                extrapolated above the last, normalised to one per interaction)
+  rows          the default grid's kernels: m0, dlnE, the number of rows; per
+                row q (P = gamma eps = exp((m0 + q) dlnE)): P, the rate
+                R [sigma_T], the energy-loss rate Lxi and nd, then the
+                positron's and the lower-energy electron's deposits at the
+                offsets 0 .. nd - 1 below the target bin
+  extrap k_lo k_hi k ...   the tables cut to the nodes k <= k_hi, with the
+                asymptotic laws fitted to the nodes from k_lo on (the code fits
+                from K_FIT on), then per k as `dist`."""
 
 from std.sys import argv
 
 from am3_mojo.model.arrays import AM3Arrays
-from am3_mojo.physics.triplet import TripletPairProduction, N_KR, N_ROLES, tpp_nbins
+from am3_mojo.physics.triplet import (
+    N_ROLES,
+    N_KR,
+    tpp_nbins,
+    TripletPairProduction,
+)
 from am3_mojo.physics.triplet_tables import TPP_LY0, TPP_DLY
 from am3_mojo.utils.buffers import Vec, VecI
 from am3_mojo.utils.libm import c_exp

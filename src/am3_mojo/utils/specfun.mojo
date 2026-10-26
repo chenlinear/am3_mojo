@@ -2,17 +2,16 @@
 that AM3 calls: `gsl_sf_bessel_Knu`)."""
 
 from std.builtin.globals import global_constant
+from std.math import floor, sqrt
+from am3_mojo.utils.buffers import *
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
 
 comptime GSL_DBL_EPSILON: Float64 = 2.2204460492503131e-16
 comptime GSL_SQRT_DBL_MAX: Float64 = 1.3407807929942596e154
 comptime GSL_SQRT_DBL_MIN: Float64 = 1.4916681462400413e-154
 comptime GSL_LOG_DBL_MAX: Float64 = 7.0978271289338397e02
 comptime GSL_LOG_DBL_MIN: Float64 = -7.0839641853226408e02
-comptime M_PI: Float64 = 3.14159265358979323846264338328
-comptime M_LN10: Float64 = 2.30258509299404568401799145468
 
 
 # ----------------------------------------------------------------------------
@@ -36,7 +35,7 @@ comptime _G1: Array[Float64, 14] = [
 ]
 
 
-@always_inline
+@inline(.always)
 def _g1_coef(j: Int) -> Float64:
     return global_constant[_G1]()[j]
 
@@ -60,7 +59,7 @@ comptime _G2: Array[Float64, 15] = [
 ]
 
 
-@always_inline
+@inline(.always)
 def _g2_coef(j: Int) -> Float64:
     return global_constant[_G2]()[j]
 
@@ -104,18 +103,14 @@ def _bessel_K_scaled_temme(nu: Float64, x: Float64) -> Tuple[Float64, Float64]:
     var half_x = 0.5 * x
     var ln_half_x = c_log(half_x)
     var half_x_nu = c_exp(nu * ln_half_x)
-    var pi_nu = M_PI * nu
+    var pi_nu = PI * nu
     var sigma = -nu * ln_half_x
-    var sinrat = 1.0 if c_fabs(pi_nu) < GSL_DBL_EPSILON else pi_nu / c_sin(
-        pi_nu
-    )
-    var sinhrat = (
-        1.0 if c_fabs(sigma) < GSL_DBL_EPSILON else c_sinh(sigma) / sigma
-    )
+    var sinrat = 1.0 if abs(pi_nu) < GSL_DBL_EPSILON else pi_nu / c_sin(pi_nu)
+    var sinhrat = 1.0 if abs(sigma) < GSL_DBL_EPSILON else c_sinh(sigma) / sigma
     var ex = c_exp(x)
 
     # gsl_sf_temme_gamma
-    var anu = c_fabs(nu)
+    var anu = abs(nu)
     var xx = 4.0 * anu - 1.0
     var g1 = _cheb_eval_g1(xx)
     var g2 = _cheb_eval_g2(xx)
@@ -142,7 +137,7 @@ def _bessel_K_scaled_temme(nu: Float64, x: Float64) -> Tuple[Float64, Float64]:
         var del1 = ck * hk
         sum0 += del0
         sum1 += del1
-        if c_fabs(del0) < 0.5 * c_fabs(sum0) * GSL_DBL_EPSILON:
+        if abs(del0) < 0.5 * abs(sum0) * GSL_DBL_EPSILON:
             break
     var K_nu = sum0 * ex
     var K_nup1 = sum1 * 2.0 / x * ex
@@ -180,18 +175,18 @@ def _bessel_K_scaled_steed_temme_CF2(
         hi += delhi
         var dels = Qi * delhi
         s += dels
-        if c_fabs(dels / s) < GSL_DBL_EPSILON:
+        if abs(dels / s) < GSL_DBL_EPSILON:
             break
         i += 1
     hi *= -a1
-    var K_nu = c_sqrt(M_PI / (2.0 * x)) / s
+    var K_nu = sqrt(PI / (2.0 * x)) / s
     var K_nup1 = K_nu * (nu + x + 0.5 - hi) / x
     return (K_nu, K_nup1)
 
 
 def _exp_mult(x: Float64, y: Float64) -> Float64:
     """gsl_sf_exp_mult_err_e of GSL, value only (underflow 0, overflow MAX)."""
-    var ay = c_fabs(y)
+    var ay = abs(y)
     if y == 0.0:
         return 0.0
     elif (x < 0.5 * GSL_LOG_DBL_MAX and x > 0.5 * GSL_LOG_DBL_MIN) and (
@@ -208,8 +203,8 @@ def _exp_mult(x: Float64, y: Float64) -> Float64:
             return 0.0  # GSL would signal an underflow error
         else:
             var sy = 1.0 if y >= 0.0 else -1.0
-            var M = c_floor(x)
-            var N = c_floor(ly)
+            var M = floor(x)
+            var N = floor(ly)
             var a = x - M
             var b = ly - N
             var eMN = c_exp(M + N)
@@ -221,7 +216,7 @@ def gsl_bessel_Knu(nu: Float64, x: Float64) -> Float64:
     """Port of gsl_sf_bessel_Knu(nu, x) for x > 0, nu >= 0."""
     if x <= 0.0 or nu < 0.0:
         return Float64.MAX  # GSL domain error -> NaN; not reachable in AM3
-    var N = to_int(nu + 0.5)
+    var N = Int(nu + 0.5)
     var mu = nu - Float64(N)
     var K_mu: Float64
     var K_mup1: Float64
@@ -235,60 +230,48 @@ def gsl_bessel_Knu(nu: Float64, x: Float64) -> Float64:
     for n in range(N):
         var K_num1 = K_nu
         K_nu = K_nup1
-        if c_fabs(K_nu) > GSL_SQRT_DBL_MAX:
-            var p = c_floor(c_log(c_fabs(K_nu)) / M_LN10)
+        if abs(K_nu) > GSL_SQRT_DBL_MAX:
+            var p = floor(c_log(abs(K_nu)) / LN10)
             var factor = c_pow(10.0, p)
             K_num1 /= factor
             K_nu /= factor
-            e10 += to_int(p)
+            e10 += Int(p)
         K_nup1 = 2.0 * (mu + Float64(n) + 1.0) / x * K_nu + K_num1
     var val = K_nu
     # gsl_sf_result_smash_e
     if e10 != 0:
-        var av = c_fabs(val)
+        var av = abs(val)
         if (
             GSL_SQRT_DBL_MIN < av
             and av < GSL_SQRT_DBL_MAX
             and 0.49 * GSL_LOG_DBL_MIN < Float64(e10)
             and Float64(e10) < 0.49 * GSL_LOG_DBL_MAX
         ):
-            val = val * c_exp(Float64(e10) * M_LN10)
+            val = val * c_exp(Float64(e10) * LN10)
         else:
-            val = _exp_mult(Float64(e10) * M_LN10, val)
+            val = _exp_mult(Float64(e10) * LN10, val)
     return _exp_mult(-x, val)
 
 
-@always_inline
+@inline(.always)
 def beta(g: Float64, REG: Float64) -> Float64:
     if g < 10.0:
-        return c_sqrt(1.0 - (1.0 / (g * g)) + REG)
+        return sqrt(1.0 - (1.0 / (g * g)) + REG)
     # second-order expansion of sqrt(1 - 1/g^2) for large g
     var ig2 = 1.0 / (g * g)
     return 1.0 - 0.5 * ig2 * (1.0 + 0.25 * ig2)
 
 
-@always_inline
+@inline(.always)
 def signf(a: Int) -> Int:
-    if c_mod(a, 2) == 0:
+    if a % 2 == 0:
         return 1
     else:
         return -1
 
 
-def bessel_k13(x: Float64) -> Float64:
-    if x > 700.0:
-        return 0.0
-    return gsl_bessel_Knu(1.0 / 3.0, x)
-
-
-def bessel_k43(x: Float64) -> Float64:
-    if x > 700.0:
-        return 0.0
-    return gsl_bessel_Knu(4.0 / 3.0, x)
-
-
 def int_bk53l(x: Float64) -> Float64:
-    return (1.253314 + 0.139338 / x) / (c_exp(x) * c_sqrt(x))
+    return (1.253314 + 0.139338 / x) / (c_exp(x) * sqrt(x))
 
 
 def int_bk53m(x: Float64) -> Float64:
@@ -331,7 +314,7 @@ def polylog(z_in: Float64) -> Float64:
             a += Float64(signf(n)) * c_pow(z, Float64(n)) / Float64(n * n)
         return a
     elif z1 > 0.0 and z < 10.0:
-        var b = mathpi * mathpi / 12.0
+        var b = PI * PI / 12.0
         var z2 = 0.01 * z1
         for m in range(1, 100):
             var mf = Float64(m)
@@ -341,11 +324,11 @@ def polylog(z_in: Float64) -> Float64:
         return -0.5 * c_log(z) * c_log(z) - 1.6
 
 
-@always_inline
+@inline(.always)
 def number_split(x: Float64, dlnE: Float64) -> Tuple[Int, Float64]:
     """Split x into integer part i and weight r (AM3 math.cc number_split)."""
     if x > 0.0 or x < 0.0:
-        var i = to_int(c_floor(x))
+        var i = Int(floor(x))
         var r = x - 1.0 * Float64(i)
         r += 0.5 * r * (1.0 - r) * dlnE
         return (i, r)
@@ -357,7 +340,7 @@ def gauss_legendre(n: Int, mut x: Vec, mut w: Vec):
     x = zeros(n)
     w = zeros(n)
     for i in range(n):
-        var z = c_cos(mathpi * (Float64(i) + 0.75) / (Float64(n) + 0.5))
+        var z = c_cos(PI * (Float64(i) + 0.75) / (Float64(n) + 0.5))
         var dp = 0.0
         for _ in range(100):
             var p0 = 1.0
@@ -371,7 +354,7 @@ def gauss_legendre(n: Int, mut x: Vec, mut w: Vec):
             dp = Float64(n) * (z * p0 - p1) / (z * z - 1.0)
             var z1 = z
             z = z1 - p0 / dp
-            if c_fabs(z - z1) < 1e-15:
+            if abs(z - z1) < 1e-15:
                 break
         x[i] = z
         w[i] = 2.0 / ((1.0 - z * z) * dp * dp)

@@ -1,14 +1,16 @@
 """Port of ProtonProton (ProtonProton.cc): p + p -> pions (Kelner et al. 2006,
 Kafexhiu et al. 2014)."""
 
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.model.runparams import RunParams
+from std.builtin.globals import global_constant
+from std.math import ceil, floor, sqrt
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.particles import *
-from std.builtin.globals import global_constant
+from am3_mojo.model.runparams import RunParams
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
 from am3_mojo.utils.linalg import MatD, gemv_d
+from am3_mojo.utils.parallel import parallel_run
 
 
 def getIndexBelow(arr: Vec, n: Int, target: Float64) -> Int:
@@ -42,8 +44,8 @@ def kab_pion_F(x: Float64, Ep: Float64, model: Int) -> Float64:
         var L = c_log(0.001 * Ep)
         var a = 3.67 + 0.83 * L + 0.075 * L * L
         var B = a + 0.25
-        var r = 2.6 / c_sqrt(a)
-        var alpha = 0.98 / c_sqrt(a)
+        var r = 2.6 / sqrt(a)
+        var alpha = 0.98 / sqrt(a)
         var xtoalphaminusone = c_pow(x, alpha - 1.0)
         var xtoalpha = c_pow(x, alpha)
         var to_exponate = (1.0 - xtoalpha) / (
@@ -65,7 +67,7 @@ def kab_pion_F(x: Float64, Ep: Float64, model: Int) -> Float64:
     var L = c_log(0.001 * Ep)
     var B = 5.58 + 0.78 * L + 0.1 * L * L
     var r = 3.1 / c_pow(B, 1.5)
-    var alpha = 0.89 / c_sqrt(B) / (1.0 - c_exp(-0.33 * B))
+    var alpha = 0.89 / sqrt(B) / (1.0 - c_exp(-0.33 * B))
     var xtoalphaminusone = c_pow(x, alpha - 1.0)
     var xtoalpha = c_pow(x, alpha)
     var to_exponate = (1.0 - xtoalpha) / c_pow(1.0 + r * xtoalpha, 3.0)
@@ -83,12 +85,13 @@ def kab_pion_F(x: Float64, Ep: Float64, model: Int) -> Float64:
 # kaon production in pp collisions (am3_mojo addition)
 # ---------------------------------------------------------------------------
 # Kaon energy distribution F_K(x, E_p) = E_p n(x E_p) per inelastic collision,
-# x = E_K / E_p, in three ranges of E_p (README, "Production in pp
-# collisions"):
+# x = E_K / E_p, in three ranges of E_p
+# (tests/literature_checks/kaons/README.md, "Production in pp collisions"):
 #   * KPW_E_MIN <= E_p <= KPW_E_MAX: Koers, Pe'er & Wijers (2006,
 #     arXiv:hep-ph/0611219), eqs. 16-18 with Table 3 (PYTHIA 6.324, fitted
 #     for 1e3 - 1e6 GeV, checked against kaon data down to sqrt(s) = 14 GeV,
-#     E_p ~ 100 GeV);
+#     E_p ~ 100 GeV); below KPW_FIT_E_MIN times pp_kaon_fade, which joins
+#     them to the multiplicities measured below KPW_E_MIN;
 #   * E_p > KPW_E_MAX (am3_mojo extension, not from a publication): the fit's
 #     kaon/pion ratio at E_p = KPW_E_MAX, kept at fixed x (nearly independent
 #     of E_p in the fit range), times AM3's pions (Kelner et al. 2006);
@@ -96,6 +99,7 @@ def kab_pion_F(x: Float64, Ep: Float64, model: Int) -> Float64:
 #     like Kelner et al.'s for pions (2006, eq. 77), with kaon multiplicities
 #     fitted to the NA49 compilation (Anticic et al. 2010, Table 11).
 comptime KPW_E_MIN = 100.0  # GeV
+comptime KPW_FIT_E_MIN = 1.0e3  # GeV, where Koers et al.'s fit range begins
 comptime KPW_E_MAX = 1.0e6  # GeV
 comptime KPW_X_MIN = 1.0e-4  # the ratio is taken at x >= KPW_X_MIN
 
@@ -170,33 +174,33 @@ comptime _KPW: Array[Float64, 60] = [
 ]
 
 
-@always_inline
+@inline(.always)
 def _kpw(sp: Int, k: Int) -> Float64:
     return global_constant[_KPW]()[sp * 12 + k]
 
 
-@always_inline
+@inline(.always)
 def _log10(x: Float64) -> Float64:
-    return c_log(x) / 2.302585092994046
+    return c_log(x) / LN10
 
 
-@always_inline
+@inline(.always)
 def _pow10(x: Float64) -> Float64:
-    return c_exp(2.302585092994046 * x)
+    return c_exp(LN10 * x)
 
 
-@always_inline
+@inline(.always)
 def _tanh_pos(x: Float64) -> Float64:
     """tanh(x) for x >= 0."""
     var t = c_exp(-2.0 * x)
     return (1.0 - t) / (1.0 + t)
 
 
-@always_inline
+@inline(.always)
 def kpw_mass(sp: Int) -> Float64:
     if sp == _KPW_PI0:
-        return massPi0_PDG
-    return massK if sp <= _KPW_KBAR else massK0
+        return MASS_PI0
+    return MASS_K if sp <= _KPW_KBAR else MASS_K0
 
 
 def kpw_n(sp: Int, eps: Float64, Ep: Float64) -> Float64:
@@ -272,7 +276,7 @@ def pp_kaon_moments(s: Int, Ep: Float64, model: Int) -> Tuple[Float64, Float64]:
     """Multiplicity integral of F dx and energy fraction integral of x F dx
     of species s at Ep (trapezoidal rule in ln x, 4000 intervals)."""
     comptime N = 4000
-    var lx0 = c_log(massK / Ep)
+    var lx0 = c_log(MASS_K / Ep)
     var h = -lx0 / Float64(N)
     var n = 0.0
     var e = 0.0
@@ -285,7 +289,20 @@ def pp_kaon_moments(s: Int, Ep: Float64, model: Int) -> Tuple[Float64, Float64]:
     return (n, e)
 
 
-@always_inline
+def pp_kaon_fade(c_t: Float64, Ep: Float64) -> Float64:
+    """Factor on Koers et al.'s spectra of a kaon species at E_p >= KPW_E_MIN:
+    c_t at KPW_E_MIN, the multiplicity fit over Koers et al.'s multiplicity
+    there (pp_kaon_mult_fit, pp_kaon_moments), falling linearly in ln E_p to
+    1 at KPW_FIT_E_MIN, and 1 above. The kaons per collision are thus
+    continuous at KPW_E_MIN, and Koers et al.'s in their own fit range
+    (tests/literature_checks/kaons/README.md, "The kaon spectra")."""
+    if Ep >= KPW_FIT_E_MIN:
+        return 1.0
+    var w = c_log(Ep / KPW_E_MIN) / c_log(KPW_FIT_E_MIN / KPW_E_MIN)
+    return c_t + (1.0 - c_t) * w
+
+
+@inline(.always)
 def pp_kaon_sqrt_s_th(s: Int) -> Float64:
     """Threshold sqrt(s) [GeV] of species s: p p -> p Lambda K+ (K+),
     p p -> p p K+ K- (K-), p p -> p Sigma+ K0 (the neutral kaons)."""
@@ -297,15 +314,23 @@ def pp_kaon_sqrt_s_th(s: Int) -> Float64:
 def pp_kaon_mult_fit(s: Int, Ep: Float64) -> Float64:
     """Fit to the kaon multiplicities per inelastic pp collision of the NA49
     compilation (Anticic et al. 2010, Table 11; am3_mojo fit):
-    n = A (1 - s_th / s)^a (s / s_th)^b, s = 2 m_p^2 + 2 m_p E_p. For the
-    neutral kaons it fits <K0_S> = (K0 + anti-K0) / 2."""
+    n = A (1 - s_th / s)^a (s / s_th)^b + C (1 - s_th / s)^2 (s_th / s)^d,
+    s = 2 m_p^2 + 2 m_p E_p. Only the K+ has the second term (C = 0 for the
+    others): it grows like the phase space of p p -> p Lambda K+ from the
+    threshold, follows the table's two points at sqrt(s) = 2.9 GeV and fades
+    with energy (tests/literature_checks/kaons/README.md, "The kaon
+    spectra"). For the neutral kaons it fits <K0_S> = (K0 + anti-K0) / 2."""
     var A: Float64
     var a: Float64
     var b: Float64
+    var C = 0.0
+    var d = 0.0
     if s == KP:
-        A = 0.0942
-        a = 3.435
-        b = 0.2574
+        A = 0.1132
+        a = 4.099
+        b = 0.2244
+        C = 0.3354
+        d = 5.29
     elif s == KM:
         A = 0.0476
         a = 6.175
@@ -314,17 +339,210 @@ def pp_kaon_mult_fit(s: Int, Ep: Float64) -> Float64:
         A = 0.02128
         a = 2.115
         b = 0.5398
-    var mp = massP_PDG
+    var mp = MASS_P
     var ss = 2.0 * mp * mp + 2.0 * mp * Ep
     var th = pp_kaon_sqrt_s_th(s)
     var st = th * th
     if ss <= st:
         return 0.0
-    return A * c_pow(1.0 - st / ss, a) * c_pow(ss / st, b)
+    var x = 1.0 - st / ss
+    var n = A * c_pow(x, a) * c_pow(ss / st, b)
+    if C > 0.0:
+        n += C * x * x * c_pow(st / ss, d)
+    return n
+
+
+# ---------------------------------------------------------------------------
+# charm-hadron production in pp collisions (am3_mojo addition)
+# ---------------------------------------------------------------------------
+# Charm quarks of a proton of energy E_p on a proton at rest, x = E_c / E_p in
+# the lab frame (tests/literature_checks/charm/README.md, "Production in pp
+# collisions"): a closed form fitted to the published NLO spectra
+# (tests/literature_checks/charm/charm_production.py),
+#   x dsigma/dx = sigma_cc g(x),  g = A P(x) P(x_c^2 / x)  (x_c^2 < x < 1),
+#   P(u) = (1 - u)^n / (1 + u / x_0),  x_c = m_T / sqrt(s),
+#   log10 x_0 = b_0 + b_1 l + b_2 l^2,  n = n_0 + n_1 l,
+#   l = min(log10(E_p / 1e6 GeV), 5),  A from int g dx / x = 1,
+# and the same for the anti-quarks. The hadrons h of a pair (a hadron and its
+# antiparticle, each):
+#   x dsigma_h/dx = sigma_cc int_x^1 dz D_h(z) g(x / z),
+#   D_h(z) = N_h z (1 - z)^2 / [(1 - z)^2 + eps_h z]^2,  int D_h dz = f_h.
+comptime CHARM_E_FIT = 1.0e3  # GeV: the closed form from here on
+comptime CHARM_E_TOP = 1.0e11  # GeV: sigma_cc / sigma_inel held above
+comptime CPP_MT = 1.66  # m_T [GeV]
+comptime CPP_B0 = -1.2836
+comptime CPP_B1 = 0.0354
+comptime CPP_B2 = -0.0171
+comptime CPP_N0 = 2.957
+comptime CPP_N1 = 0.126
+comptime CPP_L_MAX = 5.0
+comptime CPP_SUB = 4  # convolution steps per step dlnE of the hadron grid
+comptime CPP_LN_ZMIN = 4.6  # z of the fragmentation down to exp(-4.6) = 0.01
+
+
+@inline(.always)
+def pp_charm_mass(h: Int) -> Float64:
+    """Mass of the hadrons of pair h (0: D+ or D-, 1: D0 or anti-D0, 2: Ds+
+    or Ds-, 3: Lambda_c+ or anti-Lambda_c-)."""
+    if h == 0:
+        return MASS_D
+    if h == 1:
+        return MASS_D0
+    return MASS_DS if h == 2 else MASS_LC
+
+
+@inline(.always)
+def pp_charm_fraction(h: Int) -> Float64:
+    """Fraction f_h of the charm quarks that make a hadron of pair h."""
+    if h == 0:
+        return FRAG_D
+    if h == 1:
+        return FRAG_D0
+    return FRAG_DS if h == 2 else FRAG_LC
+
+
+@inline(.always)
+def pp_charm_peterson_eps(h: Int) -> Float64:
+    """eps_h of the fragmentation functions of Kniehl & Kramer (2006,
+    Table I, LO, c -> hadron)."""
+    if h == 0:
+        return 0.104
+    if h == 1:
+        return 0.101
+    return 0.0322 if h == 2 else 0.00418
+
+
+def pp_charm_sigma_cc(Ep: Float64) -> Float64:
+    """sigma(pp -> c c-bar X) [cm^2] at a proton energy Ep [GeV] up to
+    CHARM_E_TOP: the NLO values of Bhattacharya et al. (2016, Table 1, pp,
+    scales m_T) at 1e2, 1e3, ..., 1e10 GeV, linear in log-log between them,
+    with the slope of the last decade above. Below 1e2 GeV:
+    sigma(1e2 GeV) [(1 - s_th / s) / (1 - s_th / s_2)]^a, s_th the threshold
+    of pp -> p Lambda_c+ anti-D0, s_2 = s(1e2 GeV), a for the slope of the
+    first decade at 1e2 GeV."""
+    var tab: Array[Float64, 9] = [
+        1.51,
+        38.4,
+        252.0,
+        858.0,
+        2250.0,
+        5360.0,
+        12100.0,
+        26700.0,
+        56600.0,
+    ]
+    var l = c_log10(Ep)
+    if l >= 2.0:
+        var k = min(Int(floor(l - 2.0)), 7)
+        var a = c_log10(tab[k])
+        var b = c_log10(tab[k + 1])
+        return c_pow(10.0, a + (b - a) * (l - 2.0 - Float64(k))) * MICROBARN
+    var mp = MASS_P
+    var s = 2.0 * mp * mp + 2.0 * mp * Ep
+    var m_th = mp + MASS_LC + MASS_D0
+    var s_th = m_th * m_th
+    if s <= s_th:
+        return 0.0
+    var s2 = 2.0 * mp * mp + 2.0 * mp * 100.0
+    var a = (
+        c_log10(tab[1] / tab[0]) * (s2 - s_th) * s2 / (s_th * 2.0 * mp * 100.0)
+    )
+    return tab[0] * MICROBARN * c_pow((1.0 - s_th / s) / (1.0 - s_th / s2), a)
+
+
+def pp_charm_shape(Ep: Float64, d: Float64) -> List[Float64]:
+    """g of the closed form at x_m = exp(-m d), m = 0, 1, ... while
+    x_m > x_c^2, normalised to d sum_m g(x_m) = 1 (int g dx / x = 1)."""
+    var mp = MASS_P
+    var l = min(c_log10(Ep) - 6.0, CPP_L_MAX)
+    var xc = CPP_MT / sqrt(2.0 * mp * mp + 2.0 * mp * Ep)
+    var xc2 = xc * xc
+    var x0 = c_pow(10.0, CPP_B0 + CPP_B1 * l + CPP_B2 * l * l)
+    var n = CPP_N0 + CPP_N1 * l
+    var nm = Int(ceil(-c_log(xc2) / d))
+    var g = List[Float64](length=nm, fill=0.0)
+    var sum = 0.0
+    for m in range(1, nm):
+        var x = c_exp(-Float64(m) * d)
+        if x <= xc2:
+            break
+        var u = xc2 / x
+        g[m] = (
+            c_pow(1.0 - x, n)
+            / (1.0 + x / x0)
+            * c_pow(1.0 - u, n)
+            / (1.0 + u / x0)
+        )
+        sum += g[m]
+    for m in range(nm):
+        g[m] /= d * sum
+    return g^
+
+
+def pp_charm_fragmentation(h: Int, d: Float64, nz: Int) -> List[Float64]:
+    """z D_h(z) at z_l = exp(-l d), l < nz, normalised to
+    d sum_l z_l D_h(z_l) = f_h."""
+    var eps = pp_charm_peterson_eps(h)
+    var zD = List[Float64](length=nz, fill=0.0)
+    var sum = 0.0
+    for k in range(1, nz):
+        var z = c_exp(-Float64(k) * d)
+        var u = (1.0 - z) * (1.0 - z)
+        var den = u + eps * z
+        zD[k] = z * z * u / (den * den)
+        sum += zD[k]
+    for k in range(nz):
+        zD[k] *= pp_charm_fraction(h) / (d * sum)
+    return zD^
+
+
+struct PPCharmJob(Movable):
+    """The charm sources of the pairs t, t + nt, ... (ppc_work)."""
+
+    var P: Pointer[ProtonProton, MutUntrackedOrigin]
+    var dens: Float64
+    var dlnE: Float64
+
+    def __init__(
+        out self,
+        P: Pointer[ProtonProton, MutUntrackedOrigin],
+        dens: Float64,
+        dlnE: Float64,
+    ):
+        self.P = P
+        self.dens = dens
+        self.dlnE = dlnE
+
+
+def ppc_work(job: Pointer[PPCharmJob, MutUntrackedOrigin], t: Int, nt: Int):
+    """Pairs h = t, t + nt, ...: the hadron's source from the kernel and the
+    delta-functional term, then the same for its antiparticle."""
+    ref P = job[].P[]
+    var h = t
+    while h < 4:
+        var s = 2 * h
+        ref prot = P.prot_view
+        gemv_d(
+            P.KER_PP2C[h],
+            pd(prot),
+            job[].dlnE * job[].dens,
+            pd(P.qC[s]),
+        )
+        for j in range(len(prot)):
+            var l = P.cd_l[h][j]
+            if l < 0:
+                continue
+            var r = P.cd_n[h][j] * job[].dens * prot[j]
+            P.qC[s][l] += (1.0 - P.cd_w[h][j]) * r
+            P.qC[s][l + 1] += P.cd_w[h][j] * r
+        for i in range(len(P.qC[s])):
+            P.qC[s + 1][i] = P.qC[s][i]
+        h += nt
 
 
 struct ProtonProton(Copyable, Movable):
     var verbose: Bool
+    var nthreads: Int
     var E_trans: Float64
     var K_pi: Float64
     var Tp_th: Float64
@@ -361,12 +579,27 @@ struct ProtonProton(Copyable, Movable):
     # fractions of T_p (as in its C++ code); kappa_K is one of E_p, so that the
     # protons lose exactly the energy of the kaon source.
     var kappa_K: Vec
+    # charm hadrons (am3_mojo addition), as the kaons: kernels per pair of a
+    # hadron and its antiparticle from CHARM_E_FIT on, one energy per proton
+    # energy below (_init_charm_kernels); sig_kappa_C: the cross section times
+    # the fraction of E_p carried by all charm hadrons [cm^2]
+    var prot_view: Vec  # the protons, for the charm jobs (ppc_work)
+    var charm_built: Bool
+    var charm_src: Bool
+    var charm_loss: Bool
+    var qC: List[Vec]
+    var KER_PP2C: List[MatD]
+    var cd_l: List[VecI]
+    var cd_w: List[Vec]
+    var cd_n: List[Vec]
+    var sig_kappa_C: Vec
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
         self.verbose = verbose
+        self.nthreads = 1
         self.E_trans = 100.0
         self.K_pi = 0.112478
-        self.Tp_th = 2.0 * masspi0 + (masspi0 * masspi0) / (2.0 * massp)
+        self.Tp_th = 2.0 * MASS_PI0 + (MASS_PI0 * MASS_PI0) / (2.0 * MASS_P)
         self.sigma_inel_pipm = Vec()
         self.sigma_inel_pi0 = Vec()
         self.egrid_shifted = Vec()
@@ -400,11 +633,28 @@ struct ProtonProton(Copyable, Movable):
             self.kd_w.append(Vec())
             self.kd_n.append(Vec())
         self.kappa_K = Vec()
+        self.prot_view = Vec()
+        self.charm_built = False
+        self.charm_src = False
+        self.charm_loss = False
+        self.qC = List[Vec]()
+        for _ in range(N_CHARM):
+            self.qC.append(Vec())
+        self.KER_PP2C = List[MatD]()
+        self.cd_l = List[VecI]()
+        self.cd_w = List[Vec]()
+        self.cd_n = List[Vec]()
+        for _ in range(4):
+            self.KER_PP2C.append(MatD())
+            self.cd_l.append(VecI())
+            self.cd_w.append(Vec())
+            self.cd_n.append(Vec())
+        self.sig_kappa_C = Vec()
         self.reinitialize_empty_kernels(dat)
         self.clear_internal_arrays(dat)
         self.egrid_shifted = zeros(dat.nbins_had)
         for i in range(dat.nbins_had):
-            self.egrid_shifted[i] = dat.egrid_had[i] / self.K_pi + massp
+            self.egrid_shifted[i] = dat.egrid_had[i] / self.K_pi + MASS_P
 
     def clear_internal_arrays(mut self, dat: AM3Arrays):
         resize_zero(self.qpi0, dat.nbins_had)
@@ -414,6 +664,8 @@ struct ProtonProton(Copyable, Movable):
         resize_zero(self.epsilon_gamma_p2pi02GG, dat.nbins_had)
         for s in range(N_KAON):
             resize_zero(self.qK[s], dat.nbins_had)
+        for s in range(N_CHARM):
+            resize_zero(self.qC[s], dat.nbins_had)
 
     def reinitialize_empty_kernels(mut self, dat: AM3Arrays):
         var nh = dat.nbins_had
@@ -439,15 +691,24 @@ struct ProtonProton(Copyable, Movable):
         self.kaons_built = False
         self.kaons_src = False
         self.kaons_loss = False
+        self.sig_kappa_C = zeros(nh)
+        for h in range(4):
+            self.KER_PP2C[h] = MatD()
+            self.cd_l[h] = VecI()
+            self.cd_w[h] = Vec()
+            self.cd_n[h] = Vec()
+        self.charm_built = False
+        self.charm_src = False
+        self.charm_loss = False
 
     def initialize_kernels(
         mut self,
         dat: AM3Arrays,
-        pi0_into_cascade: Bool,
         EtransGeV: Float64,
         pp_model_charged_pions_in: Int,
         pp_model_neutral_pions_in: Int,
         build_kaons: Bool,
+        build_charm: Bool,
     ):
         if EtransGeV < 0.0:
             print(
@@ -489,10 +750,10 @@ struct ProtonProton(Copyable, Movable):
         var nh = dat.nbins_had
         for i in range(nh):
             self.sigma_inel_pipm[i] = self.sigma_inel_Kafexhiu(
-                dat.egrid_had[i], masspip
+                dat.egrid_had[i], MASS_PI
             )
             self.sigma_inel_pi0[i] = self.sigma_inel_Kafexhiu(
-                dat.egrid_had[i], masspi0
+                dat.egrid_had[i], MASS_PI0
             )
         if self.verbose:
             print("computing proton proton emission kernel")
@@ -505,8 +766,8 @@ struct ProtonProton(Copyable, Movable):
                         var F_over_cutoff = kab_pion_F(
                             Ei / Ej, Ej, pp_model_charged_pions
                         )
-                        if Ei > masspi0:
-                            var cutoff = c_sqrt(1.0 - masspi0 / Ei)
+                        if Ei > MASS_PI0:
+                            var cutoff = sqrt(1.0 - MASS_PI0 / Ei)
                             self.F_pi0.set(i, j, F_over_cutoff * cutoff)
                             self.KER_PP2Pi0.set(
                                 i,
@@ -515,11 +776,11 @@ struct ProtonProton(Copyable, Movable):
                                 * cutoff
                                 * Ei
                                 / Ej
-                                * c0
+                                * C_LIGHT
                                 * self.sigma_inel_pi0[j],
                             )
-                        if Ei > masspip:
-                            var cutoff = c_sqrt(1.0 - masspip / Ei)
+                        if Ei > MASS_PI:
+                            var cutoff = sqrt(1.0 - MASS_PI / Ei)
                             self.F_pipm.set(i, j, F_over_cutoff * cutoff)
                             self.KER_PP2Pipm.set(
                                 i,
@@ -528,7 +789,7 @@ struct ProtonProton(Copyable, Movable):
                                 * cutoff
                                 * Ei
                                 / Ej
-                                * c0
+                                * C_LIGHT
                                 * self.sigma_inel_pipm[j],
                             )
         if self.verbose:
@@ -536,7 +797,7 @@ struct ProtonProton(Copyable, Movable):
         for j in range(nh):
             var Ej = dat.egrid_had[j]
             if Ej >= self.E_trans:
-                var Ekin = Ej - massp
+                var Ekin = Ej - MASS_P
                 for i in range(1, j):
                     var Ei = dat.egrid_had[i]
                     self.kappa_prot_pi0[j] += (
@@ -557,12 +818,12 @@ struct ProtonProton(Copyable, Movable):
                 self.kappa_prot_pipm[j] = self.K_pi
                 self.kappa_prot_pi0[j] = self.K_pi
         for i in range(nh):
-            self.egrid_shifted[i] = dat.egrid_had[i] / self.K_pi + massp
+            self.egrid_shifted[i] = dat.egrid_had[i] / self.K_pi + MASS_P
             self.sigma_inel_pipm_shifted[i] = self.sigma_inel_Kafexhiu(
-                self.egrid_shifted[i], masspip
+                self.egrid_shifted[i], MASS_PI
             )
             self.sigma_inel_pi0_shifted[i] = self.sigma_inel_Kafexhiu(
-                self.egrid_shifted[i], masspi0
+                self.egrid_shifted[i], MASS_PI0
             )
         if self.verbose:
             print("computing proton proton direct pp->pi0->gamma kernel")
@@ -571,100 +832,45 @@ struct ProtonProton(Copyable, Movable):
             for j in range(nh):
                 var Ep = dat.egrid_had[j]
                 var ds: Float64
-                if pp_model_neutral_pions == 0:
-                    ds = self.dsigma_dEgamma_SIBYLL(Ep, Eg)
-                elif pp_model_neutral_pions == 1:
-                    ds = self.dsigma_dEgamma_QGSJET(Ep, Eg)
-                elif pp_model_neutral_pions == 2:
-                    ds = self.dsigma_dEgamma_Geant4(Ep, Eg)
-                else:
-                    ds = self.dsigma_dEgamma_Pythia(Ep, Eg)
-                self.KER_FP2Pi02GG.set(i, j, dat.dlnE * Eg * ds * c0)
+                match pp_model_neutral_pions:
+                    case 0:
+                        ds = self.dsigma_dEgamma_SIBYLL(Ep, Eg)
+                    case 1:
+                        ds = self.dsigma_dEgamma_QGSJET(Ep, Eg)
+                    case 2:
+                        ds = self.dsigma_dEgamma_Geant4(Ep, Eg)
+                    case _:
+                        ds = self.dsigma_dEgamma_Pythia(Ep, Eg)
+                self.KER_FP2Pi02GG.set(i, j, dat.dlnE * Eg * ds * C_LIGHT)
         self.kappa_K = zeros(nh)
         if build_kaons:
             self._init_kaon_kernels(dat, pp_model_charged_pions)
             self.kaons_built = True
+        self.sig_kappa_C = zeros(nh)
+        if build_charm:
+            self._init_charm_kernels(dat)
+            self.charm_built = True
 
-    def _init_kaon_kernels(mut self, dat: AM3Arrays, model: Int):
-        """Kaon production kernels (am3_mojo addition, see pp_kaon_F)."""
-        if self.verbose:
-            print("computing proton proton kaon kernels")
-        var nh = dat.nbins_had
-        # Koers et al. from 100 GeV on, whatever the transition energy of the
-        # pions (the multiplicity fit below covers only sqrt(s) <= 63 GeV)
-        var Et = KPW_E_MIN
-        var mp = massP_PDG
-        for s in range(N_KAON):
-            self.KER_PP2K[s] = MatD(nh, nh)
-            self.kd_l[s] = VecI(length=nh, fill=-1)
-            self.kd_w[s] = zeros(nh)
-            self.kd_n[s] = zeros(nh)
-            # proton energies from Et on: the distribution F_K
-            for j in range(nh):
-                var Ej = dat.egrid_had[j]
-                if Ej < Et:
-                    continue
-                for i in range(j):
-                    var Ei = dat.egrid_had[i]
-                    var F = pp_kaon_F(s, Ei / Ej, Ej, model)
-                    self.KER_PP2K[s].set(
-                        i, j, F * Ei / Ej * c0 * self.sigma_inel_pipm[j]
-                    )
-                    # fraction of E_p in the kaons of the kernel (AM3 applies
-                    # the pp loss as dE/dt = A E)
-                    self.kappa_K[j] += dat.dlnE * F * Ei * Ei / Ej / Ej
-            # below: one kaon energy per proton energy, ntilde kaons per
-            # collision, matched to F_K at Et in number and mean energy
-            var nt: Float64
-            var et: Float64
-            nt, et = pp_kaon_moments(s, Et, model)
-            if nt <= 0.0:
-                continue
-            var K_s = et * Et / nt / (Et - mp)  # mean fraction of T_p
-            var fit_t = pp_kaon_mult_fit(s, Et)
-            for j in range(nh):
-                var Ej = dat.egrid_had[j]
-                if Ej >= Et:
-                    continue
-                var fit = pp_kaon_mult_fit(s, Ej)
-                if fit <= 0.0:
-                    continue
-                var nj = nt * fit / fit_t
-                var Tj = Ej - mp
-                var g_cm = c_sqrt((Ej + mp) / (2.0 * mp))
-                var mK = kpw_mass(_KPW_K if s <= KM else _KPW_K0)
-                var EK = max(K_s * Tj, g_cm * mK)
-                # number- and energy-keeping split between two bins
-                var l = to_int(c_floor(c_log(EK) / dat.dlnE))
-                if l < 0 or l + 1 >= nh:
-                    continue  # below the hadron grid: neither made nor lost
-                self.kappa_K[j] += nj * EK / Ej
-                self.kd_l[s][j] = l
-                self.kd_w[s][j] = (EK - dat.egrid_had[l]) / (
-                    dat.egrid_had[l + 1] - dat.egrid_had[l]
-                )
-                self.kd_n[s][j] = nj * c0 * self.sigma_inel_pipm[j]
-
+    # pions
     def sigma_inel_Kafexhiu(self, Eproton: Float64, mpi: Float64) -> Float64:
-        var T_th = 2.0 * mpi + mpi * mpi / (2.0 * massp)
-        var T_p = Eproton - massp
+        var T_th = 2.0 * mpi + mpi * mpi / (2.0 * MASS_P)
+        var T_p = Eproton - MASS_P
         var L = c_log(T_p / T_th)
         var cutoff = c_pow(T_th / T_p, 1.9)
-        var mb2cm = 1e-27
         if T_p > T_th:
             return (
                 (30.7 - 0.96 * L + 0.18 * L * L)
                 * c_pow(1.0 - cutoff, 3.0)
-                * mb2cm
+                * MILLIBARN
             )
         return 0.0
 
-    def Calc_PP_ProtonLoss(mut self, rp: RunParams, dat: AM3Arrays):
+    def Calc_PP_ProtonLoss(mut self, rp: RunParams):
         if self.verbose:
             print("computing proton-proton proton-cooling term")
         var nh = len(self.kappa_prot_pipm)
         resize_zero(self.APP_PRO, nh)
-        var f = -rp.pp_target_proton_density * c0
+        var f = -rp.pp_target_proton_density * C_LIGHT
         for i in range(nh):
             self.APP_PRO[i] = f * (
                 2.0 * (self.kappa_prot_pipm[i] * self.sigma_inel_pipm[i])
@@ -674,6 +880,10 @@ struct ProtonProton(Copyable, Movable):
             # the energy the kaons carry away (am3_mojo addition)
             for i in range(nh):
                 self.APP_PRO[i] += f * self.kappa_K[i] * self.sigma_inel_pipm[i]
+        if self.charm_loss and len(self.sig_kappa_C) == nh:
+            # the energy the charm hadrons carry away (am3_mojo addition)
+            for i in range(nh):
+                self.APP_PRO[i] += f * self.sig_kappa_C[i]
 
     def Calc_PP_PionSrc(
         mut self, rp: RunParams, dat: AM3Arrays, pi0_into_cascade: Bool
@@ -681,7 +891,7 @@ struct ProtonProton(Copyable, Movable):
         if self.verbose:
             print("computing proton-proton pion-generation term")
         var nh = dat.nbins_had
-        var i_trans = to_int(c_log(self.E_trans * self.K_pi) / dat.dlnE)
+        var i_trans = Int(c_log(self.E_trans * self.K_pi) / dat.dlnE)
         for i in range(nh):
             self.qpip[i] = 0.0
             self.qpim[i] = 0.0
@@ -697,7 +907,7 @@ struct ProtonProton(Copyable, Movable):
                 N_P_shifted
                 * self.sigma_inel_pipm_shifted[i]
                 * dens
-                * c0
+                * C_LIGHT
                 * dat.egrid_had[i]
                 / self.K_pi
             )
@@ -708,7 +918,7 @@ struct ProtonProton(Copyable, Movable):
                     N_P_shifted
                     * self.sigma_inel_pi0_shifted[i]
                     * dens
-                    * c0
+                    * C_LIGHT
                     * dat.egrid_had[i]
                     / self.K_pi
                 )
@@ -716,45 +926,47 @@ struct ProtonProton(Copyable, Movable):
         var K0 = self.KER_PP2Pi0.ptr()
         var prot = pd(dat.n[P_protons])
         var nr = self.KER_PP2Pipm.rows
-        for i in range(max(i_trans, 0), nh):
-            var sp = self.qpip[i]
-            var sm = self.qpim[i]
-            var s0 = self.qpi0[i]
+        var qp = pd(self.qpip)
+        var qm = pd(self.qpim)
+        var q0 = pd(self.qpi0)
+        # the sums over j for 8 bins i at a time, down the columns of the
+        # (column-major) kernels; pi+ and pi- add the same product
+        comptime W = WD
+        var i = max(i_trans, 0)
+        while i + W <= nh:
+            var sp = qp.unsafe_offset(i).unsafe_load[width=W]()
+            var sm = qm.unsafe_offset(i).unsafe_load[width=W]()
+            var s0 = q0.unsafe_offset(i).unsafe_load[width=W]()
+            for j in range(nh):
+                var base = SIMD[DType.float64, W](
+                    dat.dlnE * prot[unsafe_offset=j] * dens
+                )
+                var kpm = Kpm.unsafe_offset(j * nr + i).unsafe_load[width=W]()
+                var t = base * kpm
+                sp += t
+                sm += t
+                if pi0_into_cascade:
+                    s0 = base.fma(
+                        K0.unsafe_offset(j * nr + i).unsafe_load[width=W](), s0
+                    )
+            qp.unsafe_offset(i).unsafe_store(sp)
+            qm.unsafe_offset(i).unsafe_store(sm)
+            q0.unsafe_offset(i).unsafe_store(s0)
+            i += W
+        for i2 in range(i, nh):
+            var sp = self.qpip[i2]
+            var sm = self.qpim[i2]
+            var s0 = self.qpi0[i2]
             for j in range(nh):
                 var base = dat.dlnE * prot[unsafe_offset=j] * dens
-                var kpm = Kpm[unsafe_offset=j * nr + i]
+                var kpm = Kpm[unsafe_offset=j * nr + i2]
                 sp += base * kpm
                 sm += base * kpm
                 if pi0_into_cascade:
-                    s0 += base * K0[unsafe_offset=j * nr + i]
-            self.qpip[i] = sp
-            self.qpim[i] = sm
-            self.qpi0[i] = s0
-
-    def Calc_PP_KaonSrc(mut self, rp: RunParams, dat: AM3Arrays):
-        """Kaon sources qK[s] (per ln E) from pp collisions:
-        q_K(E_i) = dlnE n_H sum_j N_p(E_j) K[i, j] above the kaon transition
-        energy, and the delta-functional term below."""
-        var nh = dat.nbins_had
-        var dens = rp.pp_target_proton_density
-        for s in range(N_KAON):
-            resize_zero(self.qK[s], nh)
-            if not self.kaons_src or self.KER_PP2K[s].rows != nh:
-                continue
-            gemv_d(
-                self.KER_PP2K[s],
-                pd(dat.n[P_protons]),
-                dat.dlnE * dens,
-                pd(self.qK[s]),
-            )
-            for j in range(nh):
-                var l = self.kd_l[s][j]
-                if l < 0:
-                    continue
-                # number per volume and time, per ln E of the kaon bins
-                var r = self.kd_n[s][j] * dens * dat.n[P_protons][j]
-                self.qK[s][l] += (1.0 - self.kd_w[s][j]) * r
-                self.qK[s][l + 1] += self.kd_w[s][j] * r
+                    s0 += base * K0[unsafe_offset=j * nr + i2]
+            self.qpip[i2] = sp
+            self.qpim[i2] = sm
+            self.qpi0[i2] = s0
 
     def Calc_PP_P2Pi02GG(mut self, rp: RunParams, dat: AM3Arrays):
         if self.verbose:
@@ -771,36 +983,33 @@ struct ProtonProton(Copyable, Movable):
         )
 
     # ---------------- Kafexhiu et al. 2014 pi0 -> gamma parameterisation ------
+
     def dsigma_dEgamma_SIBYLL(
         self, Eproton: Float64, Egamma: Float64
     ) -> Float64:
-        var mb2cm = mubarn * 1e3
-        var Tp = Eproton - massp
-        return mb2cm * self.Amax_SIBYLL(Tp) * self.F_SIBYLL(Tp, Egamma)
+        var Tp = Eproton - MASS_P
+        return MILLIBARN * self.Amax_SIBYLL(Tp) * self.F_SIBYLL(Tp, Egamma)
 
     def dsigma_dEgamma_QGSJET(
         self, Eproton: Float64, Egamma: Float64
     ) -> Float64:
-        var mb2cm = mubarn * 1e3
-        var Tp = Eproton - massp
-        return mb2cm * self.Amax_QGSJET(Tp) * self.F_QGSJET(Tp, Egamma)
+        var Tp = Eproton - MASS_P
+        return MILLIBARN * self.Amax_QGSJET(Tp) * self.F_QGSJET(Tp, Egamma)
 
     def dsigma_dEgamma_Geant4(
         self, Eproton: Float64, Egamma: Float64
     ) -> Float64:
-        var mb2cm = mubarn * 1e3
-        var Tp = Eproton - massp
-        return mb2cm * self.Amax_Geant4(Tp) * self.F_Geant4(Tp, Egamma)
+        var Tp = Eproton - MASS_P
+        return MILLIBARN * self.Amax_Geant4(Tp) * self.F_Geant4(Tp, Egamma)
 
     def dsigma_dEgamma_Pythia(
         self, Eproton: Float64, Egamma: Float64
     ) -> Float64:
-        var mb2cm = mubarn * 1e3
-        var Tp = Eproton - massp
-        return mb2cm * self.Amax_Pythia(Tp) * self.F_Pythia(Tp, Egamma)
+        var Tp = Eproton - MASS_P
+        return MILLIBARN * self.Amax_Pythia(Tp) * self.F_Pythia(Tp, Egamma)
 
     def Amax_SIBYLL(self, Tp: Float64) -> Float64:
-        var theta_p = Tp / massp
+        var theta_p = Tp / MASS_P
         var Ltheta_p = c_log(theta_p)
         var Amax = 0.0
         if Tp > self.Tp_th and Tp <= 100.0:
@@ -811,12 +1020,12 @@ struct ProtonProton(Copyable, Movable):
                 * c_pow(theta_p, -0.412)
                 * c_exp(0.01264 * (Ltheta_p * Ltheta_p))
                 * self.sigma_pi_SIBYLL(Tp)
-                / massp
+                / MASS_P
             )
         return Amax
 
     def Amax_QGSJET(self, Tp: Float64) -> Float64:
-        var theta_p = Tp / massp
+        var theta_p = Tp / MASS_P
         var Ltheta_p = c_log(theta_p)
         var Amax = 0.0
         if Tp > self.Tp_th and Tp <= 100.0:
@@ -827,12 +1036,12 @@ struct ProtonProton(Copyable, Movable):
                 * c_pow(theta_p, -0.4419)
                 * c_exp(0.01439 * (Ltheta_p * Ltheta_p))
                 * self.sigma_pi_QGSJET(Tp)
-                / massp
+                / MASS_P
             )
         return Amax
 
     def Amax_Geant4(self, Tp: Float64) -> Float64:
-        var theta_p = Tp / massp
+        var theta_p = Tp / MASS_P
         var Ltheta_p = c_log(theta_p)
         var Amax: Float64
         if Tp > self.Tp_th and Tp < 1.0:
@@ -843,7 +1052,7 @@ struct ProtonProton(Copyable, Movable):
                 * c_pow(theta_p, -0.52)
                 * c_exp(0.054 * (Ltheta_p * Ltheta_p))
                 * self.sigma_pi_Geant4(Tp)
-                / massp
+                / MASS_P
             )
         else:
             Amax = (
@@ -851,12 +1060,12 @@ struct ProtonProton(Copyable, Movable):
                 * c_pow(theta_p, -0.35)
                 * c_exp(9.7e-3 * (Ltheta_p * Ltheta_p))
                 * self.sigma_pi_Geant4(Tp)
-                / massp
+                / MASS_P
             )
         return Amax
 
     def Amax_Pythia(self, Tp: Float64) -> Float64:
-        var theta_p = Tp / massp
+        var theta_p = Tp / MASS_P
         var Ltheta_p = c_log(theta_p)
         var Amax = 0.0
         if Tp > self.Tp_th and Tp <= 50.0:
@@ -867,45 +1076,45 @@ struct ProtonProton(Copyable, Movable):
                 * c_pow(theta_p, -0.3795)
                 * c_exp(0.01105 * (Ltheta_p * Ltheta_p))
                 * self.sigma_pi_Pythia(Tp)
-                / massp
+                / MASS_P
             )
         return Amax
 
     def _XY(self, Tp: Float64, Egamma: Float64) -> Tuple[Float64, Float64]:
-        """(X, Y0) as in the F_* functions (pow(masspi0, 2.0) == masspi0^2)."""
-        var mpi2 = masspi0 * masspi0
+        """(X, Y0) of the F_* functions (pow(m, 2.0) == m^2 for MASS_PI0)."""
+        var mpi2 = MASS_PI0 * MASS_PI0
         var Y = Egamma + mpi2 / (4.0 * Egamma)
         var Egm = self.Egamma_max(Tp)
         var Y0 = Egm + mpi2 / (4.0 * Egm)
-        var X = (Y - masspi0) / (Y0 - masspi0)
+        var X = (Y - MASS_PI0) / (Y0 - MASS_PI0)
         return (X, Y0)
 
     def F_SIBYLL(self, Tp: Float64, Egamma: Float64) -> Float64:
         var X: Float64
         var Y0: Float64
         X, Y0 = self._XY(Tp, Egamma)
-        var C = 3.55 * masspi0 / Y0
+        var C = 3.55 * MASS_PI0 / Y0
         if X >= 0.0 and X < 1.0 and Tp > 50.0:
-            return c_pow(1.0 - c_sqrt(X), 3.6) / (1.0 + X / C)
+            return c_pow(1.0 - sqrt(X), 3.6) / (1.0 + X / C)
         return self.F_Geant4(Tp, Egamma)
 
     def F_QGSJET(self, Tp: Float64, Egamma: Float64) -> Float64:
         var X: Float64
         var Y0: Float64
         X, Y0 = self._XY(Tp, Egamma)
-        var C = 3.55 * masspi0 / Y0
+        var C = 3.55 * MASS_PI0 / Y0
         if X >= 0.0 and X < 1.0 and Tp > 50.0:
-            return c_pow(1.0 - c_sqrt(X), 4.5) / (1.0 + X / C)
+            return c_pow(1.0 - sqrt(X), 4.5) / (1.0 + X / C)
         return self.F_Geant4(Tp, Egamma)
 
     def F_Geant4(self, Tp: Float64, Egamma: Float64) -> Float64:
         var X: Float64
         var Y0: Float64
         X, Y0 = self._XY(Tp, Egamma)
-        var theta = Tp / massp
+        var theta = Tp / MASS_P
         var kappa = 3.29 - 0.2 * c_pow(theta, -1.5)
-        var q = (Tp - 1.0) / massp
-        var C = 3.0 * masspi0 / Y0
+        var q = (Tp - 1.0) / MASS_P
+        var C = 3.0 * MASS_PI0 / Y0
         if X >= 0.0 and X < 1.0:
             if Tp > self.Tp_th and Tp < 1.0:
                 return c_pow(1.0 - X, kappa)
@@ -920,9 +1129,9 @@ struct ProtonProton(Copyable, Movable):
                 var gamma = mu + 1.5
                 return c_pow(1.0 - X, beta_) / c_pow(1.0 + X / C, gamma)
             elif Tp > 20.0 and Tp <= 100.0:
-                return c_pow(1.0 - c_sqrt(X), 4.2) / (1.0 + X / C)
+                return c_pow(1.0 - sqrt(X), 4.2) / (1.0 + X / C)
             elif Tp > 100.0:
-                return c_pow(1.0 - c_sqrt(X), 4.9) / (1.0 + X / C)
+                return c_pow(1.0 - sqrt(X), 4.9) / (1.0 + X / C)
             return 0.0
         return 0.0
 
@@ -930,9 +1139,9 @@ struct ProtonProton(Copyable, Movable):
         var X: Float64
         var Y0: Float64
         X, Y0 = self._XY(Tp, Egamma)
-        var C = 3.5 * masspi0 / Y0
+        var C = 3.5 * MASS_PI0 / Y0
         if X >= 0.0 and X < 1.0 and Tp > 50.0:
-            return c_pow(1.0 - c_sqrt(X), 4.0) / (1.0 + X / C)
+            return c_pow(1.0 - sqrt(X), 4.0) / (1.0 + X / C)
         return self.F_Geant4(Tp, Egamma)
 
     def sigma_pi_SIBYLL(self, Tp: Float64) -> Float64:
@@ -969,25 +1178,25 @@ struct ProtonProton(Copyable, Movable):
         var sigma_0 = 7.66e-3
         var XS_1_pi = 0.0
         if Tp > self.Tp_th and Tp <= 2.0:
-            var s = 2.0 * massp * (Tp + 2.0 * massp)
-            var X = c_sqrt(s) - massp
-            var t = s - masspi0 * masspi0 - 4.0 * massp * massp
-            var eta = c_sqrt(
-                t * t - 16.0 * masspi0 * masspi0 * massp * massp
-            ) / (2.0 * masspi0 * c_sqrt(s))
-            var g_RES = c_sqrt(
+            var s = 2.0 * MASS_P * (Tp + 2.0 * MASS_P)
+            var X = sqrt(s) - MASS_P
+            var t = s - MASS_PI0 * MASS_PI0 - 4.0 * MASS_P * MASS_P
+            var eta = sqrt(
+                t * t - 16.0 * MASS_PI0 * MASS_PI0 * MASS_P * MASS_P
+            ) / (2.0 * MASS_PI0 * sqrt(s))
+            var g_RES = sqrt(
                 M_RES * M_RES * (M_RES * M_RES + Gamma_RES * Gamma_RES)
             )
             var K_RES = (
-                c_sqrt(8.0)
+                sqrt(8.0)
                 * M_RES
                 * Gamma_RES
                 * g_RES
-                / (mathpi * c_sqrt(M_RES * M_RES + g_RES))
+                / (PI * sqrt(M_RES * M_RES + g_RES))
             )
             var u = X * X - M_RES * M_RES
             var w = M_RES * Gamma_RES
-            var f_BW = massp * K_RES / (u * u + w * w)
+            var f_BW = MASS_P * K_RES / (u * u + w * w)
             XS_1_pi = (
                 sigma_0
                 * c_pow(eta, 1.95)
@@ -1012,7 +1221,7 @@ struct ProtonProton(Copyable, Movable):
         if Tp <= 100.0:
             m = self.multip_pi0_Geant4(Tp)
         if Tp > 100.0:
-            var xi_p = (Tp - 3.0) / massp
+            var xi_p = (Tp - 3.0) / MASS_P
             m = (
                 5.436
                 * c_pow(xi_p, 0.075)
@@ -1024,7 +1233,7 @@ struct ProtonProton(Copyable, Movable):
     def multip_pi0_QGSJET(self, Tp: Float64) -> Float64:
         if Tp <= 100.0:
             return self.multip_pi0_Geant4(Tp)
-        var xi_p = (Tp - 3.0) / massp
+        var xi_p = (Tp - 3.0) / MASS_P
         return (
             0.908
             * c_pow(xi_p, 0.176)
@@ -1035,10 +1244,10 @@ struct ProtonProton(Copyable, Movable):
     def multip_pi0_Geant4(self, Tp: Float64) -> Float64:
         var m = 0.0
         if Tp > 2.0 and Tp < 5.0:
-            var Qp = (Tp - self.Tp_th) / massp
+            var Qp = (Tp - self.Tp_th) / MASS_P
             m = -6.0e-3 + 0.237 * Qp - 0.023 * (Qp * Qp)
         if Tp >= 5.0:
-            var xi_p = (Tp - 3.0) / massp
+            var xi_p = (Tp - 3.0) / MASS_P
             m = (
                 0.728
                 * c_pow(xi_p, 0.2503)
@@ -1050,7 +1259,7 @@ struct ProtonProton(Copyable, Movable):
     def multip_pi0_Pythia(self, Tp: Float64) -> Float64:
         if Tp <= 50.0:
             return self.multip_pi0_Geant4(Tp)
-        var xi_p = (Tp - 3.0) / massp
+        var xi_p = (Tp - 3.0) / MASS_P
         return (
             0.652
             * c_pow(xi_p, 0.1928)
@@ -1059,16 +1268,219 @@ struct ProtonProton(Copyable, Movable):
         )
 
     def Egamma_max(self, Tp: Float64) -> Float64:
-        var gamma_pi_LAB = self.E_pi_max_LAB(Tp) / masspi0
-        var Beta_pi_LAB = c_sqrt(1.0 - c_pow(gamma_pi_LAB, -2.0))
-        return (masspi0 / 2.0) * gamma_pi_LAB * (1.0 + Beta_pi_LAB)
+        var gamma_pi_LAB = self.E_pi_max_LAB(Tp) / MASS_PI0
+        var Beta_pi_LAB = sqrt(1.0 - c_pow(gamma_pi_LAB, -2.0))
+        return (MASS_PI0 / 2.0) * gamma_pi_LAB * (1.0 + Beta_pi_LAB)
 
     def E_pi_max_LAB(self, Tp: Float64) -> Float64:
-        var s = 2.0 * massp * (Tp + 2.0 * massp)
-        var gamma_CM = (Tp + 2.0 * massp) / c_sqrt(s)
-        var E_pi_CM = (s - 4.0 * massp * massp + masspi0 * masspi0) / (
-            2.0 * c_sqrt(s)
+        var s = 2.0 * MASS_P * (Tp + 2.0 * MASS_P)
+        var gamma_CM = (Tp + 2.0 * MASS_P) / sqrt(s)
+        var E_pi_CM = (s - 4.0 * MASS_P * MASS_P + MASS_PI0 * MASS_PI0) / (
+            2.0 * sqrt(s)
         )
-        var P_pi_CM = c_sqrt(E_pi_CM * E_pi_CM - masspi0 * masspi0)
-        var Beta_CM = c_sqrt(1.0 - c_pow(gamma_CM, -2.0))
+        var P_pi_CM = sqrt(E_pi_CM * E_pi_CM - MASS_PI0 * MASS_PI0)
+        var Beta_CM = sqrt(1.0 - c_pow(gamma_CM, -2.0))
         return gamma_CM * (E_pi_CM + P_pi_CM * Beta_CM)
+
+    # kaons (am3_mojo addition)
+    def _init_kaon_kernels(mut self, dat: AM3Arrays, model: Int):
+        """Kaon production kernels (am3_mojo addition, see pp_kaon_F).
+
+        From protons above E_t = 100 GeV, the kaon source is a matrix-vector
+        product with K[i, j] = c F_K(E_i/E_j, E_j) (E_i/E_j) c sigma_inel(E_j)
+        (E_i/E_j as AM3's densities are per ln E; the first c is pp_kaon_fade,
+        1 from 1 TeV on). kappa_K, the sum of x c F_K dx over the same grid,
+        is the fraction of E_p the kaons take, so the protons lose the energy
+        of the kaon source. Below E_t, the multiplicity fit gives the kaons per
+        collision, which are shared between the two hadron bins around E_K,
+        keeping their number and energy. Kaons below the lowest hadron bin
+        (1 GeV), from protons below about 7 GeV, are neither made nor charged
+        to the protons."""
+        if self.verbose:
+            print("computing proton proton kaon kernels")
+        var nh = dat.nbins_had
+        # Koers et al. from 100 GeV on, whatever the transition energy of the
+        # pions (the multiplicity fit below covers only sqrt(s) <= 63 GeV)
+        var Et = KPW_E_MIN
+        var mp = MASS_P
+        for s in range(N_KAON):
+            self.KER_PP2K[s] = MatD(nh, nh)
+            self.kd_l[s] = VecI(length=nh, fill=-1)
+            self.kd_w[s] = zeros(nh)
+            self.kd_n[s] = zeros(nh)
+            # Koers et al.'s kaons per collision at Et, and the factor c_t that
+            # joins them to the multiplicity fit there
+            var nt: Float64
+            var et: Float64
+            nt, et = pp_kaon_moments(s, Et, model)
+            var c_t = pp_kaon_mult_fit(s, Et) / nt if nt > 0.0 else 1.0
+            # proton energies from Et on: the distribution F_K, times the factor
+            for j in range(nh):
+                var Ej = dat.egrid_had[j]
+                if Ej < Et:
+                    continue
+                var c = pp_kaon_fade(c_t, Ej)
+                for i in range(j):
+                    var Ei = dat.egrid_had[i]
+                    var F = c * pp_kaon_F(s, Ei / Ej, Ej, model)
+                    self.KER_PP2K[s].set(
+                        i, j, F * Ei / Ej * C_LIGHT * self.sigma_inel_pipm[j]
+                    )
+                    # fraction of E_p in the kaons of the kernel (AM3 applies
+                    # the pp loss as dE/dt = A E)
+                    self.kappa_K[j] += dat.dlnE * F * Ei * Ei / Ej / Ej
+            # below: one kaon energy per proton energy, the fit's kaons per
+            # collision, of the mean energy of F_K at Et
+            if nt <= 0.0:
+                continue
+            var K_s = et * Et / nt / (Et - mp)  # mean fraction of T_p
+            for j in range(nh):
+                var Ej = dat.egrid_had[j]
+                if Ej >= Et:
+                    continue
+                var nj = pp_kaon_mult_fit(s, Ej)
+                if nj <= 0.0:
+                    continue
+                var Tj = Ej - mp
+                var g_cm = sqrt((Ej + mp) / (2.0 * mp))
+                var mK = kpw_mass(_KPW_K if s <= KM else _KPW_K0)
+                var EK = max(K_s * Tj, g_cm * mK)
+                # number- and energy-keeping split between two bins
+                var l = Int(floor(c_log(EK) / dat.dlnE))
+                if l < 0 or l + 1 >= nh:
+                    continue  # below the hadron grid: neither made nor lost
+                self.kappa_K[j] += nj * EK / Ej
+                self.kd_l[s][j] = l
+                self.kd_w[s][j] = (EK - dat.egrid_had[l]) / (
+                    dat.egrid_had[l + 1] - dat.egrid_had[l]
+                )
+                self.kd_n[s][j] = nj * C_LIGHT * self.sigma_inel_pipm[j]
+
+    def Calc_PP_KaonSrc(mut self, rp: RunParams, dat: AM3Arrays):
+        """Kaon sources qK[s] (per ln E) from pp collisions:
+        q_K(E_i) = dlnE n_H sum_j N_p(E_j) K[i, j] above the kaon transition
+        energy, and the delta-functional term below."""
+        var nh = dat.nbins_had
+        var dens = rp.pp_target_proton_density
+        for s in range(N_KAON):
+            resize_zero(self.qK[s], nh)
+            if not self.kaons_src or self.KER_PP2K[s].rows != nh:
+                continue
+            gemv_d(
+                self.KER_PP2K[s],
+                pd(dat.n[P_protons]),
+                dat.dlnE * dens,
+                pd(self.qK[s]),
+            )
+            for j in range(nh):
+                var l = self.kd_l[s][j]
+                if l < 0:
+                    continue
+                # number per volume and time, per ln E of the kaon bins
+                var r = self.kd_n[s][j] * dens * dat.n[P_protons][j]
+                self.qK[s][l] += (1.0 - self.kd_w[s][j]) * r
+                self.qK[s][l + 1] += self.kd_w[s][j] * r
+
+    # charm hadrons (am3_mojo addition)
+    def _init_charm_kernels(mut self, dat: AM3Arrays):
+        """Charm production kernels (am3_mojo addition). From CHARM_E_FIT on,
+        K[i, j] = x dsigma_h/dx c at x = E_i / E_j for the hadrons of pair h,
+        the convolution of pp_charm_shape and pp_charm_fragmentation on a
+        grid CPP_SUB times finer than the hadron grid, without hadrons below
+        their mass; above CHARM_E_TOP, sigma_cc grows as sigma_inel. Below
+        CHARM_E_FIT, f_h sigma_cc hadrons of one energy per proton energy,
+        max(K_h T_p, gamma_cm m_h) (as the kaons), K_h from the mean energy
+        of the closed form at CHARM_E_FIT. sig_kappa_C: the cross section
+        times the fraction of E_p in all charm hadrons."""
+        if self.verbose:
+            print("computing proton proton charm kernels")
+        var nh = dat.nbins_had
+        var d = dat.dlnE / Float64(CPP_SUB)
+        var nz = Int(CPP_LN_ZMIN / d) + 1
+        var zD = List[List[Float64]]()
+        for h in range(4):
+            zD.append(pp_charm_fragmentation(h, d, nz))
+            self.KER_PP2C[h] = MatD(nh, nh)
+            self.cd_l[h] = VecI(length=nh, fill=-1)
+            self.cd_w[h] = zeros(nh)
+            self.cd_n[h] = zeros(nh)
+        var per_inel = pp_charm_sigma_cc(
+            CHARM_E_TOP
+        ) / self.sigma_inel_Kafexhiu(CHARM_E_TOP, MASS_PI)
+        for j in range(nh):
+            var Ej = dat.egrid_had[j]
+            if Ej < CHARM_E_FIT:
+                continue
+            var sig = (
+                pp_charm_sigma_cc(Ej) if Ej
+                <= CHARM_E_TOP else per_inel * self.sigma_inel_pipm[j]
+            )
+            var g = pp_charm_shape(Ej, d)
+            var ng = len(g)
+            for k in range(1, j + 1):
+                var i = j - k
+                var c = k * CPP_SUB
+                var lo = max(0, c - (ng - 1))
+                var hi = min(nz - 1, c)
+                if lo > hi:
+                    continue
+                var Ei = dat.egrid_had[i]
+                for h in range(4):
+                    if Ei < pp_charm_mass(h):
+                        continue
+                    var s = 0.0
+                    for l in range(lo, hi + 1):
+                        s += zD[h][l] * g[c - l]
+                    var xs = sig * d * s  # x dsigma_h/dx
+                    self.KER_PP2C[h].set(i, j, xs * C_LIGHT)
+                    # a hadron and its antiparticle
+                    self.sig_kappa_C[j] += 2.0 * dat.dlnE * xs * Ei / Ej
+        # below CHARM_E_FIT: <x> = <x_c> <z>_h of the closed form there
+        var mp = MASS_P
+        var gT = pp_charm_shape(CHARM_E_FIT, d)
+        var xq = 0.0
+        for m in range(len(gT)):
+            xq += d * c_exp(-Float64(m) * d) * gT[m]
+        for h in range(4):
+            var zm = 0.0
+            for l in range(nz):
+                zm += d * c_exp(-Float64(l) * d) * zD[h][l]
+            zm /= pp_charm_fraction(h)
+            var K_h = xq * zm * CHARM_E_FIT / (CHARM_E_FIT - mp)
+            for j in range(nh):
+                var Ej = dat.egrid_had[j]
+                if Ej >= CHARM_E_FIT:
+                    continue
+                var sig = pp_charm_sigma_cc(Ej)
+                if sig <= 0.0:
+                    continue
+                var g_cm = sqrt((Ej + mp) / (2.0 * mp))
+                var Eh = max(K_h * (Ej - mp), g_cm * pp_charm_mass(h))
+                # number- and energy-keeping split between two bins
+                var l = Int(floor(c_log(Eh) / dat.dlnE))
+                if l < 0 or l + 1 >= nh:
+                    continue
+                var nhad = pp_charm_fraction(h) * sig
+                self.sig_kappa_C[j] += 2.0 * nhad * Eh / Ej
+                self.cd_l[h][j] = l
+                self.cd_w[h][j] = (Eh - dat.egrid_had[l]) / (
+                    dat.egrid_had[l + 1] - dat.egrid_had[l]
+                )
+                self.cd_n[h][j] = nhad * C_LIGHT
+
+    def Calc_PP_CharmSrc(mut self, rp: RunParams, dat: AM3Arrays):
+        """Charm sources qC[s] (per ln E) from pp collisions, as
+        Calc_PP_KaonSrc: a hadron and its antiparticle have the source of
+        their pair, computed once (ppc_work), the pairs in parallel."""
+        var nh = dat.nbins_had
+        for s in range(N_CHARM):
+            resize_zero(self.qC[s], nh)
+        if not self.charm_src or self.KER_PP2C[0].rows != nh:
+            return
+        self.prot_view = dat.n[P_protons].copy()
+        var job = PPCharmJob(
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+            rp.pp_target_proton_density,
+            dat.dlnE,
+        )
+        parallel_run[ppc_work](job, min(self.nthreads, 4))

@@ -1,5 +1,6 @@
-// Harness: the AM3 Fic/polylog code, copied verbatim from src/Solver.cc with the
-// series fix of am3_fixes.patch (Fic_1, Fic_2: Jones' Taylor series to z^10)
+// Harness: AM3's Fic/polylog code, verbatim from src/Solver.cc with the series fix
+// of am3_fixes.patch (Fic_1, Fic_2: Jones' Taylor series to z^10) and its PDG 2026
+// constants (masse, massp and mathpi of consts.h)
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -9,7 +10,7 @@ double Fic(double,double); double Fic_1(double); double Fic_2(double);
 double polylog(double); double polylog_smallz(double); double polylog_rk4(double); double polylog_largez(double);
 double Fic(double gamma, double Eph_GeV)
 {
-	double mass_mu = MASS_R * 0.511e-3;
+	double mass_mu = MASS_R * 0.51099895069e-3;
 	double gamma_bar = gamma + sqrt(gamma * gamma - 1.0 + 1.0e-10);
 	double za = Eph_GeV / mass_mu * gamma_bar;
 	double zb = Eph_GeV / mass_mu / gamma_bar;
@@ -87,12 +88,12 @@ double polylog_rk4(double z) // applies when z<-0.1
 double polylog_largez(double z)
 {
 	double x = -z;
-	return -3.1415926 * 3.1415927 / 6.0 - 0.5 * log(x) * log(x) + 1.0 / x - 1.0 / 4.0 / x / x + 1.0 / 9.0 / x / x / x;
+	return -3.141592653589793 * 3.141592653589793 / 6.0 - 0.5 * log(x) * log(x) + 1.0 / x - 1.0 / 4.0 / x / x + 1.0 / 9.0 / x / x / x;
 }
 
 
 int main(int argc,char**argv){
-  MASS_R = 0.938/0.511e-3;               // proton
+  MASS_R = 0.93827208943/0.51099895069e-3;   // proton
   FILE*f=fopen(argv[1],"wb");
   for(int i=0;i<200;i++){ double g=exp(0.1*i);
     for(int j=0;j<400;j++){ double e=exp(0.1*j)*1e-9; double y=Fic(g,e); fwrite(&y,8,1,f);} }

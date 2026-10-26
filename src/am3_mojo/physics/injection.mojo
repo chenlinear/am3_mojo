@@ -1,10 +1,10 @@
 """Injection physics module (port of the AM3 C++ class)."""
 
+from am3_mojo.model.arrays import AM3Arrays
+from am3_mojo.model.runparams import RunParams
+from am3_mojo.utils.buffers import *
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.model.runparams import RunParams
-from am3_mojo.model.arrays import AM3Arrays
 
 
 struct Injection(Copyable, Movable):
@@ -81,9 +81,8 @@ struct Injection(Copyable, Movable):
         var pidxm1_low = pl_idx - 1.0
         var pidxm1_high = ph_idx - 1.0
         var integral = 0.0
-        var mec2_eV = 0.510998e6
-        var Gamma_mid = rp.powerlaw_injection_electrons_ebreak / mec2_eV
-        var Gamma_max = rp.powerlaw_injection_electrons_emax / mec2_eV
+        var Gamma_mid = rp.powerlaw_injection_electrons_ebreak / MEC2_EV
+        var Gamma_max = rp.powerlaw_injection_electrons_emax / MEC2_EV
         for i in range(dat.nbins_lep):
             var log_cutoff = c_pow(dat.egrid_lep[i] / Gamma_max, exp_steep)
             if i < max(imin, 1):
@@ -97,7 +96,7 @@ struct Injection(Copyable, Movable):
                     dat.egrid_lep[i] / Gamma_mid, -pidxm1_high
                 ) * c_exp(-log_cutoff)
             integral += dat.dlnE * dat.egrid_lep[i] * self.inj_electron[i]
-        var L_density = lum / volume * erg_GeV / masse / Rate_SSC_CGS
+        var L_density = lum / volume * GEV_PER_ERG / MASS_E / RATE_SSC
         for i in range(dat.nbins_lep):
             self.inj_electron[i] *= L_density / integral
 
@@ -131,6 +130,6 @@ struct Injection(Copyable, Movable):
                     dat.egrid_had[i] / Emid_GeV, -pidxm1_high
                 ) * c_exp(-log_cutoff)
             integral += dat.dlnE * dat.egrid_had[i] * self.inj_proton[i]
-        var L_density = lum / volume * erg_GeV
+        var L_density = lum / volume * GEV_PER_ERG
         for i in range(dat.nbins_had):
             self.inj_proton[i] *= L_density / integral

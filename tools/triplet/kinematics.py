@@ -10,8 +10,8 @@ The azimuth of p2 around the photon is integrated analytically (2 pi).
 
 Phase space: dPhi3 = beta*/(512 pi^4 k) dT2 dM2 dc* dphi*; cross section
   sigma / (alpha r_e^2) = beta*/(128 pi k^2) * Int sum|M|^2 dT2 dM2 dc* dphi*
-over the region E2 <= E3 (the two outgoing electrons are identical: this region times the
-full |M|^2, without a factor 1/2).
+over the region E2 <= E3 (the two outgoing electrons are identical: this region times the full |M|^2, without a
+factor 1/2).
 """
 import numpy as np
 from qed_triplet import onshell, dot
@@ -20,17 +20,16 @@ from qed_triplet import onshell, dot
 def t2_limits(k):
     """Kinetic energy range of the recoil: E = [(k^2 - 1) -+ k sqrt(k (k - 4))] / (1 + 2k)."""
     r = k * np.sqrt(k * (k - 4.0))
-    Em = ((k * k - 1.0) - r) / (1.0 + 2.0 * k)
     Ep = ((k * k - 1.0) + r) / (1.0 + 2.0 * k)
-    # T- = Em - 1 = (a - r)/(1 + 2k) with a = k(k - 2) - 2; a^2 - r^2 = 4 (1 + 2k), so T- = 4/(a + r)
+    # T- = E- - 1 = (a - r)/(1 + 2k) with a = k(k - 2) - 2; a^2 - r^2 = 4 (1 + 2k), so T- = 4/(a + r)
     a = k * (k - 2.0) - 2.0
     return 4.0 / (a + r), Ep - 1.0
 
 
 def generate(u, k):
-    """Events for unit-cube points u (N, 4) at photon energy k. Returns (ok, jac, p1, kv, p2, p3,
-    p4, inv) with the phase-space Jacobian jac (including beta* and the constant), inv the
-    accurate invariants for qed_triplet.amplitude_sq."""
+    """Events for unit-cube points u (N, 4) at photon energy k. Returns (ok, jac, p1, kv, p2, p3, p4, inv) with the
+    phase-space Jacobian jac (including beta* and the constant), inv the accurate invariants for
+    qed_triplet.amplitude_sq."""
     N = u.shape[0]
     Tm, Tp = t2_limits(k)
     lT = np.log(Tm) + u[:, 0] * (np.log(Tp) - np.log(Tm))
@@ -60,7 +59,6 @@ def generate(u, k):
     # pair system P = p1 + k - p2
     Pplus = 1.0 + 2.0 * k - p2plus
     Px = -p2x
-    Py = zero
     M = np.sqrt(M2)
     # photon in the pair rest frame: k+* = (M/P+) k+, k_perp* = -v k+, k-* = (P+/M) v^2 k+, v = P_perp/P+
     vx = Px / Pplus

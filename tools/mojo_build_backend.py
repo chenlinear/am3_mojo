@@ -1,21 +1,18 @@
 """PEP 517 build backend of am3_mojo (in-tree, see pyproject.toml).
 
-`pip install .` and `uv pip install .` call it. It compiles
-src/am3_mojo_module.mojo into the extension module `am3_mojo` with the Mojo
-compiler of the build environment (the `mojo-compiler` package from PyPI), and
-packs it into a wheel:
+`pip install .` and `uv pip install .` call it. It compiles src/am3_mojo_module.mojo into the extension module
+`am3_mojo` with the Mojo compiler of the build environment (the `mojo-compiler` package from PyPI), and packs it into
+a wheel:
 
     am3_mojo.cpython-314-<platform>.so        (the module, at the top level)
     am3_mojo-<version>.dist-info/
 
-The module needs Mojo's runtime libraries (libKGENCompilerRTShared and the two
-it loads), which `mojo-compiler` installs into <site-packages>/modular/lib. So
-the wheel depends on `mojo-compiler`, and the module finds the libraries
-through an rpath relative to itself, not in the build environment.
+The module needs Mojo's runtime libraries (libKGENCompilerRTShared and the two it loads), which `mojo-compiler` installs
+into <site-packages>/modular/lib. So the wheel depends on `mojo-compiler`, and the module finds the libraries through an
+rpath relative to itself, not in the build environment.
 
-The module is compiled for the building machine's CPU (Mojo's default), so the
-wheel is meant for that machine only. Mojo links with the C compiler on the
-PATH (Xcode Command Line Tools on macOS, gcc or clang on Linux).
+The module is compiled for the building machine's CPU (Mojo's default), so the wheel is meant for that machine only.
+Mojo links with the C compiler on the PATH (Xcode Command Line Tools on macOS, gcc or clang on Linux).
 """
 import base64, csv, hashlib, io, os, re, subprocess, sys, sysconfig, tarfile, tempfile, zipfile
 
@@ -53,12 +50,11 @@ def _metadata(p):
 
 
 def _mojo():
-    """Command that runs the build environment's Mojo compiler
-    (mojo-compiler==1.1.0), whatever Mojo is on the PATH. It calls the
-    package's own `mojo` launcher through this interpreter, as pip keeps the
-    build environment's scripts in a directory that is not on sys.prefix."""
+    """Command that runs the build environment's Mojo compiler (mojo-compiler==1.2.0), whatever Mojo is on the PATH. It
+    calls the package's own `mojo` launcher through this interpreter, as pip keeps the build environment's scripts in a
+    directory that is not on sys.prefix."""
     try:
-        import mojo._entrypoints  # noqa: F401
+        import mojo._entrypoints
     except ImportError:
         raise RuntimeError('Mojo compiler not found: install the `mojo-compiler` package')
     return [sys.executable, '-c', 'import sys; from mojo._entrypoints import exec_mojo; '

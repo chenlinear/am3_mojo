@@ -7,17 +7,17 @@ dense kernel every step. The sums run only over the proton bins between the
 lowest and the highest that hold particles, and the worker threads share the
 outgoing lepton bins."""
 
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
-from am3_mojo.model.runparams import RunParams
+from std.math import sqrt
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.particles import *
-from am3_mojo.utils.parallel import parallel_run
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
 from am3_mojo.utils.linalg import MatD, Mat3F, PackedGemvF
+from am3_mojo.utils.parallel import parallel_run
 
 
-@always_inline
+@inline(.always)
 def bh_sigma_W(omega: Float64, E_: Float64, ksi: Float64) -> Float64:
     if omega < 2.0001 or omega > 600.0:
         return 0.0
@@ -25,11 +25,11 @@ def bh_sigma_W(omega: Float64, E_: Float64, ksi: Float64) -> Float64:
     var k = omega
     var g = E_
     var u = ksi
-    var p = c_sqrt(g * g - 1.0 + REG)
+    var p = sqrt(g * g - 1.0 + REG)
     var g1 = k - g
-    var p1 = c_sqrt(g1 * g1 - 1.0 + REG)
+    var p1 = sqrt(g1 * g1 - 1.0 + REG)
     var D = g - u * p
-    var T = c_sqrt(k * k + p * p - 2.0 * k * p * u)
+    var T = sqrt(k * k + p * p - 2.0 * k * p * u)
     var d1T = c_log((T + p1) / (T - p1))
     var y1 = c_log((g1 + p1) / (g1 - p1)) / p1
     var Y = 2.0 * c_log((g * g1 + p * p1 + 1.0) / k) / (p * p)
@@ -61,10 +61,10 @@ def bh_sigma_W(omega: Float64, E_: Float64, ksi: Float64) -> Float64:
     return A0 * (A1 + A2 + A3 + A4 + A50 * (A51 + A52 + A53) + A6 + A7)
 
 
-@always_inline
+@inline(.always)
 def bh_inner(gp: Float64, Ee: Float64, omega: Float64, E_: Float64) -> Float64:
     var REG = 1.0e-20
-    var p_ = c_sqrt(E_ * E_ - 1.0 + REG)
+    var p_ = sqrt(E_ * E_ - 1.0 + REG)
     var ksi = (gp * E_ - Ee) / (gp * p_)
     if ksi < -1.0 or ksi > 1.0 or E_ < 1.0 or E_ > omega - 1.0:
         return 0.0
@@ -132,7 +132,7 @@ def bh_eloss_kernal_semiana_phi(x: Float64) -> Float64:
     elif x < 25.0:
         var z = x - 2.0
         y = (
-            (3.1416 / 12.0)
+            (PI / 12.0)
             * z
             * z
             * z
@@ -202,9 +202,9 @@ def bh_init_work(job: Pointer[BHInitJob, MutUntrackedOrigin], t: Int, nt: Int):
                             k,
                             Float32(
                                 bh_kernal_elec_gen(
-                                    dat.egrid_had_leptons[i] / masse,
-                                    dat.egrid_had[j] / massp,
-                                    dat.egrid_had_photons[k] / masse,
+                                    dat.egrid_had_leptons[i] / MASS_E,
+                                    dat.egrid_had[j] / MASS_P,
+                                    dat.egrid_had_photons[k] / MASS_E,
                                 )
                             ),
                         )
@@ -276,6 +276,63 @@ def bh_rad_work(job: Pointer[BHJob, MutUntrackedOrigin], t: Int, nt: Int):
     _ = buf^
 
 
+struct BHCoolJob(Movable):
+    var B: Pointer[BetheHeitler, MutUntrackedOrigin]
+    var dat: Pointer[AM3Arrays, MutUntrackedOrigin]
+
+    def __init__(
+        out self,
+        B: Pointer[BetheHeitler, MutUntrackedOrigin],
+        dat: Pointer[AM3Arrays, MutUntrackedOrigin],
+    ):
+        self.B = B
+        self.dat = dat
+
+
+def bh_cool_work(job: Pointer[BHCoolJob, MutUntrackedOrigin], t: Int, nt: Int):
+    """ABHHadP of the proton blocks b = t, t + nt, ...: the WD protons from
+    b WD, and, for b = nbins_had // WD, the protons past the last whole
+    block. SIMD over protons j, photons i accumulated in the original order.
+    A masked lane skips photons below threshold (Eph < 1/gp), exactly as the
+    scalar `continue` does."""
+    ref B = job[].B[]
+    ref dat = job[].dat[]
+    var k_rate_semiana = (
+        (3.0 / 8.0 / PI) * ALPHA * SIGMA_T * C_LIGHT * (MASS_E / MASS_P)
+    )
+    var K = B.KER_BH_LOSS.ptr()
+    var nh = B.KER_BH_LOSS.rows
+    var ph = pd(dat.n[P_photons_on_had_grid])
+    var nb = dat.nbins_had
+    comptime W = WD
+    var b = t
+    while b <= nb // W:
+        var j = b * W
+        if j + W <= nb:
+            var ginv = SIMD[DType.float64, W](0)
+            for l in range(W):
+                ginv[l] = 1.0 / (dat.egrid_had[j + l] / MASS_P)
+            var rj = SIMD[DType.float64, W](0)
+            for i in range(dat.nbins_pho):
+                var Eph = dat.egrid_had_photons[i] / MASS_E
+                var keep = SIMD[DType.float64, W](Eph).ge(ginv)
+                var k = K.unsafe_offset(i * nh + j).unsafe_load[width=W]()
+                rj = keep.select(rj + k * ph[unsafe_offset=i], rj)
+            for l in range(W):
+                B.ABHHadP[j + l] = -rj[l] * k_rate_semiana * dat.dlnE
+        else:
+            for jj in range(j, nb):
+                var rj = 0.0
+                var gp = dat.egrid_had[jj] / MASS_P
+                for i in range(dat.nbins_pho):
+                    var Eph = dat.egrid_had_photons[i] / MASS_E
+                    if Eph < 1.0 / gp:
+                        continue
+                    rj += K[unsafe_offset=i * nh + jj] * ph[unsafe_offset=i]
+                B.ABHHadP[jj] = -rj * k_rate_semiana * dat.dlnE
+        b += nt
+
+
 struct BetheHeitler(Copyable, Movable):
     var verbose: Bool
     var QBH_LGen: Vec
@@ -286,7 +343,6 @@ struct BetheHeitler(Copyable, Movable):
     var sparse_valid: Bool
     var nthreads: Int
     var sparse_prinmin: Int  # first proton row of the kernel (init_kernels)
-    var w_res: VecF
     var w_vphot: VecF
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
@@ -299,7 +355,6 @@ struct BetheHeitler(Copyable, Movable):
         self.sparse_valid = False
         self.nthreads = 1
         self.sparse_prinmin = -1
-        self.w_res = VecF()
         self.w_vphot = VecF()
         self.clear_internal_arrays(dat)
 
@@ -314,19 +369,9 @@ struct BetheHeitler(Copyable, Movable):
         self.sparse_valid = False
 
     def reinitialize_empty_kernels(
-        mut self,
-        dat: AM3Arrays,
-        rad_fast: Int,
-        n_el_out: Int,
-        proton_in_min: Int,
-        photon_in_max: Int,
+        mut self, dat: AM3Arrays, n_el_out: Int, photon_in_max: Int
     ):
-        var _n_el_out = 1
-        var _photon_in_max = dat.nbins_pho
-        if rad_fast != 0:
-            _n_el_out = n_el_out
-            _photon_in_max = photon_in_max
-        self.update_dim_KERBH(dat, dat.nbins_lep // _n_el_out, _photon_in_max)
+        self.update_dim_KERBH(dat, dat.nbins_lep // n_el_out, photon_in_max)
         self.KER_BH_LOSS = MatD(dat.nbins_had, dat.nbins_pho)
 
     def initialize_kernels(
@@ -334,7 +379,6 @@ struct BetheHeitler(Copyable, Movable):
         dat: AM3Arrays,
         rad: Int,
         cool: Int,
-        rad_fast: Int,
         n_el_out: Int,
         proton_in_min: Int,
         photon_in_max: Int,
@@ -376,8 +420,8 @@ struct BetheHeitler(Copyable, Movable):
                         i,
                         j,
                         bh_kernal_proton_loss(
-                            dat.egrid_had[i] / massp,
-                            dat.egrid_had_photons[j] / masse,
+                            dat.egrid_had[i] / MASS_P,
+                            dat.egrid_had_photons[j] / MASS_E,
                         ),
                     )
 
@@ -388,7 +432,7 @@ struct BetheHeitler(Copyable, Movable):
             print(" computing BH radiation term")
         for i in range(dat.nbins_lep):
             self.QBH_LGen[i] = 0.0
-        var k_inj_rate = c0 * 3.0 / (16.0 * mathpi) * sigmaT / 137.0
+        var k_inj_rate = C_LIGHT * 3.0 / (16.0 * PI) * SIGMA_T * ALPHA
         # the kernel keeps the target photons of init_kernels: photons above a
         # limit lowered since then count as zero (as for inverse Compton), and
         # the photon vector covers every column the kernel reads
@@ -412,7 +456,7 @@ struct BetheHeitler(Copyable, Movable):
             var row_min = zerosi(self.KER.nmat)
             for k in range(self.KER.nmat):
                 row_min[k] = self.sparse_prinmin
-            self.packed = PackedGemvF(self.KER, row_min)
+            self.packed = PackedGemvF(self.KER, row_min, self.nthreads)
             self.sparse_valid = True
             self.KER = Mat3F(self.KER.nmat, 0, 0)
         if not self.sparse_valid:
@@ -448,45 +492,20 @@ struct BetheHeitler(Copyable, Movable):
                 )
 
     def Calc_BH_Cool(mut self, dat: AM3Arrays):
+        """The protons' Bethe-Heitler energy-loss rates, in parallel over
+        blocks of WD protons (bh_cool_work)."""
         if self.verbose:
             print("computing BH proton cooling term")
         for i in range(dat.nbins_had):
             self.ABHHadP[i] = 0.0
         if self.KER_BH_LOSS.rows == 0:
             return
-        var k_rate_semiana = (
-            (3.0 / 8.0 / mathpi) * (1.0 / 137.0) * sigmaT * c0 * (masse / massp)
+        var job = BHCoolJob(
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=dat)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
         )
-        var K = self.KER_BH_LOSS.ptr()
-        var nh = self.KER_BH_LOSS.rows
-        var ph = pd(dat.n[P_photons_on_had_grid])
-        var nb = dat.nbins_had
-        # SIMD over protons j, photons i accumulated in the original order. A
-        # masked lane skips photons below threshold (Eph < 1/gp), exactly as
-        # the scalar `continue` does
-        var j = 0
-        while j < nb:
-            comptime W = WD
-            if j + W <= nb:
-                var ginv = SIMD[DType.float64, W](0)
-                for l in range(W):
-                    ginv[l] = 1.0 / (dat.egrid_had[j + l] / massp)
-                var rj = SIMD[DType.float64, W](0)
-                for i in range(dat.nbins_pho):
-                    var Eph = dat.egrid_had_photons[i] / masse
-                    var keep = SIMD[DType.float64, W](Eph).ge(ginv)
-                    var k = K.unsafe_offset(i * nh + j).unsafe_load[width=W]()
-                    rj = keep.select(rj + k * ph[unsafe_offset=i], rj)
-                for l in range(W):
-                    self.ABHHadP[j + l] = -rj[l] * k_rate_semiana * dat.dlnE
-                j += W
-            else:
-                var rj = 0.0
-                var gp = dat.egrid_had[j] / massp
-                for i in range(dat.nbins_pho):
-                    var Eph = dat.egrid_had_photons[i] / masse
-                    if Eph < 1.0 / gp:
-                        continue
-                    rj += K[unsafe_offset=i * nh + j] * ph[unsafe_offset=i]
-                self.ABHHadP[j] = -rj * k_rate_semiana * dat.dlnE
-                j += 1
+        # (the protons past the last whole block are one more task)
+        var nblk = dat.nbins_had // WD + 1
+        parallel_run[bh_cool_work](job, min(self.nthreads, nblk))

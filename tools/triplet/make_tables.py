@@ -1,9 +1,9 @@
 """Write src/am3_mojo/physics/triplet_tables.mojo from the Monte Carlo tables (produce.py).
 
 usage: python make_tables.py TABLE_DIR OUT.mojo
-For every k node: sigma / (alpha r_e^2) and the per-interaction distributions dN/dln y of the three
-products (see the header it writes), on tpp_nbins(k) = floor((ln k + 0.1 - LY0)/DLY) + 1 bins, as
-in physics/triplet.mojo, which fits to these tables the asymptotic laws it uses above the last node.
+For every k node: sigma / (alpha r_e^2) and the per-interaction distributions dN/dln y of the three products
+(see the header it writes), on tpp_nbins(k) = floor((ln k + 0.1 - LY0)/DLY) + 1 bins, as in physics/triplet.mojo, which
+fits to these tables the asymptotic laws it uses above the last node.
 """
 import glob, os, sys
 import numpy as np

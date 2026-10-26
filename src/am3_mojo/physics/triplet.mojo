@@ -38,7 +38,8 @@ time of the pairs from 1e14 to 1e16 eV is 3-7 s, against a step of 30 s
 (3e-3 R/c). AM3's solver integrates a continuous loss within the step, also
 where it is fast.
 
-Limitations (their size: tests/literature_checks/README.md, Results):
+Limitations (tests/literature_checks/triplet/README.md gives their size at
+the steps that make them):
   * soft photons only (eps <= m_e c^2, gamma >> 1): the lab energies x gamma
     neglect the photon's energy and direction. On photons above about
     0.25 m_e c^2, some products fall below the lepton grid into bin 0, which
@@ -54,12 +55,8 @@ Limitations (their size: tests/literature_checks/README.md, Results):
     gamma m_e c^2) are neglected.
 """
 
-from am3_mojo.utils.constants import *
-from am3_mojo.utils.libm import *
-from am3_mojo.utils.buffers import *
+from std.math import floor, sqrt
 from am3_mojo.model.arrays import AM3Arrays
-from am3_mojo.utils.parallel import parallel_run
-from am3_mojo.utils.specfun import gauss_legendre
 from am3_mojo.physics.triplet_tables import (
     TPP_LY0,
     TPP_DLY,
@@ -67,10 +64,12 @@ from am3_mojo.physics.triplet_tables import (
     TPP_SIG,
     TPP_DIST,
 )
+from am3_mojo.utils.buffers import *
+from am3_mojo.utils.constants import *
+from am3_mojo.utils.libm import *
+from am3_mojo.utils.parallel import parallel_run
+from am3_mojo.utils.specfun import gauss_legendre
 
-comptime SIG_UNIT: Float64 = 3.0 * alpha_PDG / (
-    8.0 * 3.141592653589793
-)  # alpha r_e^2 / sigma_T
 # above K_ASYM: the high-energy expansion of sigma(k) (Lee et al., rounded
 # coefficients)
 comptime K_ASYM: Float64 = 1000.0
@@ -86,7 +85,8 @@ comptime ROLE_POS = 0
 comptime ROLE_LOW = 1
 comptime ROLE_HIGH = 2
 comptime N_KR = 2  # kernels: the produced pair (e+, lower-energy e-)
-comptime BLK = 4 * WD  # offsets per register block of the per-step convolution
+comptime BLK = 4 * WD  # the rows' padding (the row blocks of the convolution)
+comptime TIB = 4  # target bins per block of the per-step convolution
 
 
 def _parse(s: StringSlice) raises -> Vec:
@@ -97,10 +97,10 @@ def _parse(s: StringSlice) raises -> Vec:
     return out^
 
 
-@always_inline
+@inline(.always)
 def tpp_nbins(k: Float64) -> Int:
     """Number of ln y bins of the tables for photon energy k (y = x k)."""
-    return to_int(c_floor((c_log(k) + 0.1 - TPP_LY0) / TPP_DLY)) + 1
+    return Int(floor((c_log(k) + 0.1 - TPP_LY0) / TPP_DLY)) + 1
 
 
 def sigma_threshold(k: Float64) -> Float64:
@@ -109,8 +109,8 @@ def sigma_threshold(k: Float64) -> Float64:
     var s = 1.0 + 2.0 * k
     var r = (s - 9.0) / (s - 1.0)
     return (
-        3.141592653589793
-        / (3.0 * c_sqrt(3.0))
+        PI
+        / (3.0 * sqrt(3.0))
         * (r * r * (4.0 / 27.0 + r * (602.0 / 243.0 + r * 4217.0 / 4374.0)))
     )
 
@@ -155,6 +155,7 @@ struct TripletJob(Movable):
 
     var T: Pointer[TripletPairProduction, MutUntrackedOrigin]
     var nph: FPtr
+    var v: FPtr  # n_ph[j] dlnE at v[j], zero outside [0, jmax]
     var ele: FPtr
     var pos: FPtr
     var two: Bool  # pos given (not merged e+-)
@@ -167,6 +168,7 @@ struct TripletJob(Movable):
         out self,
         T: Pointer[TripletPairProduction, MutUntrackedOrigin],
         nph: FPtr,
+        v: FPtr,
         ele: FPtr,
         pos: FPtr,
         two: Bool,
@@ -177,6 +179,7 @@ struct TripletJob(Movable):
     ):
         self.T = T
         self.nph = nph
+        self.v = v
         self.ele = ele
         self.pos = pos
         self.two = two
@@ -189,67 +192,70 @@ struct TripletJob(Movable):
 def triplet_rows_work(
     job: Pointer[TripletJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
+    """The target bins i0 .. i0 + 3, i0 = 4 b for b = t, t + nt, ...
+
+    Row m = q of W serves the target bins i with photons j = q + j0 + m0 - i:
+    each loaded slice of 8 offsets of a row goes into the sums of the 4
+    target bins of a block (photons outside [0, jmax] count as zero). Every
+    sum adds its terms in increasing j, as a loop over the photons of one
+    target bin."""
     ref J = job[]
     ref T = J.T[]
-    var i = t
-    while i < J.nl:
-        var jmin = max(0, T.m0 - i + J.j0)
-        var e = 0.0
-        for j in range(jmin, J.jmax + 1):
-            var n = J.nph[unsafe_offset=j]
-            if n != 0.0:
-                e += n * J.dl * T.Lxi[i + j - J.j0 - T.m0]
-        T.eloss[i] = e
-        # (rows of empty bins are unused: the e- and e+ totals make the pairs)
-        var full = J.ele[unsafe_offset=i] != 0.0 or (
-            J.two and J.pos[unsafe_offset=i] != 0.0
-        )
-        var nz = T.nz[i]
+    var c = J.j0 + T.m0  # j = q + c - i
+    var nb = (J.nl + TIB - 1) // TIB
+    var b = t
+    while b < nb:
+        var i0 = b * TIB
+        var ni = min(TIB, J.nl - i0)
+        var full = Array[Bool, TIB](fill=False)
+        var any_full = False
+        var nzmax = 0
+        for ii in range(ni):
+            var i = i0 + ii
+            var jmin = max(0, T.m0 - i + J.j0)
+            var e = 0.0
+            for j in range(jmin, J.jmax + 1):
+                var n = J.nph[unsafe_offset=j]
+                if n != 0.0:
+                    e += n * J.dl * T.Lxi[i + j - J.j0 - T.m0]
+            T.eloss[i] = e
+            # (rows of empty bins are unused: the e- and e+ totals make the
+            # pairs)
+            full[ii] = J.ele[unsafe_offset=i] != 0.0 or (
+                J.two and J.pos[unsafe_offset=i] != 0.0
+            )
+            any_full = any_full or full[ii]
+            nzmax = max(nzmax, T.nz[i])
+        # the rows that reach the photons [0, jmax] of the block's bins
+        var qhi = i0 + ni - 1 + J.jmax - c
+        var zero = SIMD[DType.float64, WD](0.0)
         for r in range(N_KR):
-            var z = pd(T.Z[r]).unsafe_offset(T.zoff[i])
             var w0 = pd(T.W[r])
-            # blocks of BLK offsets, accumulated in registers over the
-            # photons. The rows that reach offset ob (nd[q] > ob) are those
-            # from q = qblk[ob / BLK] on
+            var z0 = pd(T.Z[r])
             var ob = 0
-            while ob < nz:
-                var a0 = SIMD[DType.float64, WD](0.0)
-                var a1 = SIMD[DType.float64, WD](0.0)
-                var a2 = SIMD[DType.float64, WD](0.0)
-                var a3 = SIMD[DType.float64, WD](0.0)
-                if full:
-                    var js = max(jmin, T.qblk[ob // BLK] - i + J.j0 + T.m0)
-                    for j in range(js, J.jmax + 1):
-                        var n = J.nph[unsafe_offset=j]
-                        if n == 0.0:
-                            continue
-                        var w = SIMD[DType.float64, WD](n * J.dl)
-                        var src = w0.unsafe_offset(
-                            T.woff[i + j - J.j0 - T.m0] + ob
+            while ob < nzmax:
+                var a = Array[SIMD[DType.float64, WD], TIB](fill=zero)
+                if any_full:
+                    # (the rows that reach offset ob are q >= qblk[ob / BLK])
+                    var qlo = max(max(0, T.qblk[ob // BLK]), i0 - c)
+                    for q in range(qlo, qhi + 1):
+                        var w = w0.unsafe_offset(T.woff[q] + ob).unsafe_load[
+                            width=WD
+                        ]()
+                        var vq = J.v.unsafe_offset(q + c - i0)
+                        comptime for ii in range(TIB):
+                            a[ii] = w.fma(
+                                SIMD[DType.float64, WD](vq[unsafe_offset=-ii]),
+                                a[ii],
+                            )
+                for ii in range(ni):
+                    var i = i0 + ii
+                    if ob < T.zoff[i + 1] - T.zoff[i]:
+                        z0.unsafe_offset(T.zoff[i] + ob).unsafe_store(
+                            a[ii] if full[ii] else zero
                         )
-                        a0 = src.unsafe_load[width=WD]().fma(w, a0)
-                        a1 = (
-                            src.unsafe_offset(WD)
-                            .unsafe_load[width=WD]()
-                            .fma(w, a1)
-                        )
-                        a2 = (
-                            src.unsafe_offset(2 * WD)
-                            .unsafe_load[width=WD]()
-                            .fma(w, a2)
-                        )
-                        a3 = (
-                            src.unsafe_offset(3 * WD)
-                            .unsafe_load[width=WD]()
-                            .fma(w, a3)
-                        )
-                var zp = z.unsafe_offset(ob)
-                zp.unsafe_store(a0)
-                zp.unsafe_offset(WD).unsafe_store(a1)
-                zp.unsafe_offset(2 * WD).unsafe_store(a2)
-                zp.unsafe_offset(3 * WD).unsafe_store(a3)
-                ob += BLK
-        i += nt
+                ob += WD
+        b += nt
 
 
 struct TripletPairProduction(Movable):
@@ -296,6 +302,8 @@ struct TripletPairProduction(Movable):
     var zoff: VecI
     var nz: VecI
     var nlep: Vec
+    var w_v: Vec  # TripletJob.v, with TIB zeros on either side
+    var w_R: Vec  # R with WD zeros in front (photon_sink)
     var step_valid: Bool
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
@@ -335,6 +343,8 @@ struct TripletPairProduction(Movable):
         self.zoff = VecI()
         self.nz = VecI()
         self.nlep = Vec()
+        self.w_v = Vec()
+        self.w_R = Vec()
         self.step_valid = False
         self.clear_internal_arrays(dat)
 
@@ -431,7 +441,7 @@ struct TripletPairProduction(Movable):
         """Table of node n, role r at ln y, linear between the bin centres
         (0 outside)."""
         var u = (ly - TPP_LY0) / TPP_DLY - 0.5
-        var b = to_int(c_floor(u))
+        var b = Int(floor(u))
         var t = u - Float64(b)
         return (1.0 - t) * self._node(n, r, b) + t * self._node(n, r, b + 1)
 
@@ -443,8 +453,8 @@ struct TripletPairProduction(Movable):
         while n0 < len(self.tk) and self.tk[n0] < k_fit:
             n0 += 1
         var N = len(self.tk)
-        self.nby = to_int(c_floor((c_log(Y_SW) - TPP_LY0) / TPP_DLY)) + 1
-        self.nlx = to_int(c_floor(-c_log(X_LO) / TPP_DLY)) + 1
+        self.nby = Int(floor((c_log(Y_SW) - TPP_LY0) / TPP_DLY)) + 1
+        self.nlx = Int(floor(-c_log(X_LO) / TPP_DLY)) + 1
         self.eg0 = zeros(N_ROLES * self.nby)
         self.eg1 = zeros(N_ROLES * self.nby)
         self.eA = zeros(N_ROLES * self.nlx)
@@ -453,7 +463,7 @@ struct TripletPairProduction(Movable):
         self.eb0 = zeros(N_ROLES)
 
         # straight-line fits v = c0 + c1 z over the nodes
-        @always_inline
+        @inline(.always)
         def line(z: Vec, v: Vec) -> Tuple[Float64, Float64]:
             var m = Float64(len(z))
             var sz = 0.0
@@ -562,7 +572,7 @@ struct TripletPairProduction(Movable):
                     else:
                         var u = (ly - lk - c_log(X_LO)) / TPP_DLY
                         if u >= 0.0:
-                            var j = min(to_int(c_floor(u)), self.nlx - 2)
+                            var j = min(Int(floor(u)), self.nlx - 2)
                             var t = u - Float64(j)
                             var o = r * self.nlx + j
                             var A = (1.0 - t) * self.eA[o] + t * self.eA[o + 1]
@@ -596,7 +606,7 @@ struct TripletPairProduction(Movable):
         """Share `amount` products at the fraction x between the two
         neighbouring grid offsets, keeping their number and energy."""
         var u = -c_log(x) / dl
-        var o = to_int(c_floor(u))
+        var o = Int(floor(u))
         if o < 0:
             o = 0
         if o + 1 >= len(I):
@@ -618,7 +628,7 @@ struct TripletPairProduction(Movable):
         var e1 = c_exp(-dl)
         var nl = dat.nbins_lep
         # P = exp(m dl): threshold P = 2 (k = 2P = 4)
-        self.m0 = to_int(c_floor(c_log(2.0) / dl)) + 1
+        self.m0 = Int(floor(c_log(2.0) / dl)) + 1
         var nq = max(nl - self.m0, 0)
         self.R = zeros(nq)
         self.Lxi = zeros(nq)
@@ -629,7 +639,7 @@ struct TripletPairProduction(Movable):
             # offsets down to the lowest table bin at k = 2P,
             # x = e^TPP_LY0 / (2P)
             var P = c_exp(Float64(self.m0 + q) * dl)
-            self.nd[q] = to_int((c_log(2.0 * P) - TPP_LY0) / dl) + 3
+            self.nd[q] = Int((c_log(2.0 * P) - TPP_LY0) / dl) + 3
             self.woff[q] = tot
             tot += (self.nd[q] + BLK - 1) // BLK * BLK
         self.woff[nq] = tot
@@ -684,7 +694,7 @@ struct TripletPairProduction(Movable):
                         * k
                         * k
                         * self.sigma(k)
-                        * SIG_UNIT
+                        * ALPHA_RE2
                     )
                     if c <= 0.0:
                         continue
@@ -747,15 +757,20 @@ struct TripletPairProduction(Movable):
         # photons up to eps = 1 (m_e c^2): the soft-photon limit
         var j0 = dat.ind_min_energy_pho
         var two = len(pos) == nl
+        var jmax = min(j0, ng - 1)
+        resize_zero(self.w_v, jmax + 1 + 2 * TIB)
+        for j in range(jmax + 1):
+            self.w_v[TIB + j] = pho[j] * dat.dlnE
         var job = TripletJob(
             Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
             pd(pho),
+            pd(self.w_v).unsafe_offset(TIB),
             pd(ele),
             pd(pos) if two else pd(ele),
             two,
             nl,
             j0,
-            min(j0, ng - 1),
+            jmax,
             dat.dlnE,
         )
         parallel_run[triplet_rows_work](job, self.nthreads)
@@ -770,14 +785,34 @@ struct TripletPairProduction(Movable):
         var dl = dat.dlnE
         for i in range(nl):
             self.nlep[i] = ele[i] + (pos[i] if len(pos) == nl else 0.0)
-        for j in range(ng):
+        # R[q] at rp[q], zero for q < 0 (below threshold): 8 photon bins at a
+        # time, each sum over i in increasing order
+        var nq = len(self.R)
+        resize_zero(self.w_R, nq + WD)
+        for q in range(nq):
+            self.w_R[WD + q] = self.R[q]
+        var rp = pd(self.w_R).unsafe_offset(WD)
+        var c = j0 + self.m0
+        var jtop = min(ng - 1, j0)  # (no sink above eps = m_e c^2)
+        var j = 0
+        while j + WD <= jtop + 1:
+            var a = SIMD[DType.float64, WD](0.0)
+            for i in range(max(0, c - (j + WD - 1)), nl):
+                var n = self.nlep[i]
+                if n != 0.0:
+                    a = SIMD[DType.float64, WD](n * dl).fma(
+                        rp.unsafe_offset(i + j - c).unsafe_load[width=WD](), a
+                    )
+            pd(self.alpha_g).unsafe_offset(j).unsafe_store(a)
+            j += WD
+        for jj in range(j, ng):
             var a = 0.0
-            if j <= j0:
-                for i in range(max(0, self.m0 - j + j0), nl):
+            if jj <= j0:
+                for i in range(max(0, self.m0 - jj + j0), nl):
                     var n = self.nlep[i]
                     if n != 0.0:
-                        a += n * dl * self.R[i + j - j0 - self.m0]
-            self.alpha_g[j] = a
+                        a += n * dl * self.R[i + jj - j0 - self.m0]
+            self.alpha_g[jj] = a
 
     def add_pair_sources(
         self, de: FPtr, dp: FPtr, ne: Vec, np_: Vec, factor: Float64

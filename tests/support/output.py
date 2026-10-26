@@ -1,5 +1,5 @@
-"""Silencing the standard output: what Python writes and what the module writes to file descriptor 1 directly (as
-init_kernels does with its parameters), which contextlib.redirect_stdout does not catch."""
+"""Silencing the standard output, also what the module writes to file descriptor 1 directly (init_kernels prints its
+parameters there), which contextlib.redirect_stdout misses."""
 import contextlib
 import os
 import sys
@@ -7,7 +7,7 @@ import sys
 
 @contextlib.contextmanager
 def silenced():
-    """Sends everything written to the standard output inside the block to /dev/null."""
+    """Sends everything written to the standard output in the block to /dev/null."""
     sys.stdout.flush()
     saved = os.dup(1)
     with open(os.devnull, 'w') as null:
