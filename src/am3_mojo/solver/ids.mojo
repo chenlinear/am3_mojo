@@ -1,5 +1,5 @@
-"""Indices of the SolverAlgorithm instances held by SimulationManager
-(one per species / SED component, as in SimulationManager.h)."""
+"""One SolverAlgorithm per species / SED component, as in
+SimulationManager.h."""
 
 comptime SA_proton = 0
 comptime SA_neutron = 1
@@ -63,63 +63,53 @@ comptime SA_gpi0_pg = 58
 comptime SA_gpi0_pp = 59
 comptime SA_ginj = 60
 # solvers of the species am3_mojo adds to AM3
-comptime SA_gpann = 61  # e+e- annihilation photon component
-comptime SA_eptpp = 62  # pairs from triplet pair production
-comptime SA_gtppsy = 63  # their synchrotron photons
-comptime SA_gtppic = 64  # their inverse-Compton photons
-comptime SA_endec = 65  # electrons from neutron decay
-comptime SA_gndecsy = 66  # their synchrotron photons
-comptime SA_gndecic = 67  # their inverse-Compton photons
-comptime SA_nueA_ndec = 68  # anti-nu_e from neutron decay
-comptime SA_K = 69  # kaons from photo-hadronic interactions, SA_K + s
+comptime SA_gpann = 61
+comptime SA_eptpp = 62
+comptime SA_gtppsy = 63
+comptime SA_gtppic = 64
+comptime SA_endec = 65
+comptime SA_gndecsy = 66
+comptime SA_gndecic = 67
+comptime SA_nueA_ndec = 68
+comptime SA_K = 69
 comptime SA_Km = 70
 comptime SA_KS = 71
 comptime SA_KL = 72
-comptime SA_gksy = 73  # kaon synchrotron photon component
-comptime SA_gkic = 74  # kaon inverse-Compton photon component
-comptime SA_Kpp = 75  # kaons from pp collisions, SA_Kpp + s
-# pions, muons and neutrinos from the decays of the photo-hadronic and the pp
-# kaons (model/particles.mojo, P_pion_plus_Kpg ...)
-comptime SA_Pip_Kpg = 79  # pi+, pi-
+comptime SA_gksy = 73
+comptime SA_gkic = 74
+comptime SA_Kpp = 75
+comptime SA_Pip_Kpg = 79
 comptime SA_Pip_Kpp = 81
-comptime SA_MpL_Kpg = 83  # + 0 .. 3
+comptime SA_MpL_Kpg = 83
 comptime SA_MpL_Kpp = 87
-comptime SA_nue_Kpg = 91  # + 0 .. 3
+comptime SA_nue_Kpg = 91
 comptime SA_nue_Kpp = 95
-# nu_mu and anti-nu_mu from the decays of the pions made in photo-hadronic
-# interactions and pp collisions (P_neutrino_mu_pidec_pg ...)
-comptime SA_num_pidec_pg = 99  # + 0 .. 1
+comptime SA_num_pidec_pg = 99
 comptime SA_num_pidec_pp = 101
-comptime SA_C = 103  # charm hadrons from photo-hadronic interactions, SA_C + s
-comptime SA_gcsy = 111  # charm-hadron synchrotron photon component
-comptime SA_gcic = 112  # charm-hadron inverse-Compton photon component
-comptime SA_Cpp = 113  # charm hadrons from pp collisions, SA_Cpp + s
-# the decay chain of the photo-hadronic and the pp charm hadrons
-# (model/particles.mojo, P_kaon_plus_Cpg ...): kaons, pions, muons, neutrinos
-comptime SA_K_Cpg = 121  # + 0 .. 3
+comptime SA_C = 103
+comptime SA_gcsy = 111
+comptime SA_gcic = 112
+comptime SA_Cpp = 113
+comptime SA_K_Cpg = 121
 comptime SA_K_Cpp = 125
-comptime SA_Pip_Cpg = 129  # pi+, pi-
+comptime SA_Pip_Cpg = 129
 comptime SA_Pip_Cpp = 131
-comptime SA_MpL_Cpg = 133  # + 0 .. 3
+comptime SA_MpL_Cpg = 133
 comptime SA_MpL_Cpp = 137
-comptime SA_nue_Cpg = 141  # + 0 .. 3
+comptime SA_nue_Cpg = 141
 comptime SA_nue_Cpp = 145
-comptime SA_nutau_Cpg = 149  # nu_tau, anti-nu_tau
+comptime SA_nutau_Cpg = 149
 comptime SA_nutau_Cpp = 151
 comptime N_SOLVERS = 153
 
 
 @inline(.always)
 def kaon_solver(s: Int, pp: Bool = False) -> Int:
-    """Solver of kaon species s (model/particles.mojo: K+, K-, K0_S, K0_L), of
-    the photo-hadronic or (pp) the pp component; both are configured the same.
-    """
+    """The photo-hadronic and the pp solvers are configured the same."""
     return (SA_Kpp if pp else SA_K) + s
 
 
 @inline(.always)
 def charm_solver(s: Int, pp: Bool = False) -> Int:
-    """Solver of charm species s (model/particles.mojo: D+, D-, D0, anti-D0,
-    Ds+, Ds-, Lambda_c+, anti-Lambda_c-), of the photo-hadronic or (pp) the pp
-    component; both are configured the same."""
+    """The photo-hadronic and the pp solvers are configured the same."""
     return (SA_Cpp if pp else SA_C) + s

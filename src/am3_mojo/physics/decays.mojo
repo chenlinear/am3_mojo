@@ -1,6 +1,6 @@
 """Ports of PionDecay (PionDecay.cc), MuonDecay (MuonDecay.cc) and HadIC
-(HadronicInverseCompton.cc), and the neutron and kaon decays (am3_mojo
-additions)."""
+(HadronicInverseCompton.cc), and the neutron, kaon and charm hadron decays
+(am3_mojo additions)."""
 
 from std.math import floor, sqrt
 from am3_mojo.model.arrays import AM3Arrays
@@ -14,8 +14,8 @@ from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.linalg import (
     MatD,
-    diagonal_gemv,
-    diagonal_gemv2,
+    toeplitz_window_zero,
+    toeplitz_gemv,
     gemv_d,
     GemvPair,
     run_gemv_pairs,
@@ -27,7 +27,7 @@ from am3_mojo.utils.specfun import gauss_legendre
 def PMu1(x: Float64) -> Float64:
     """A primitive of the energy fraction distribution of the mu+_R (mu-_L) of
     pi+ (pi-) decay, r (1 - x) / ((1 - r)^2 x) on [r, 1] with r = (m_mu/m_pi)^2
-    (AM3 paper; Lipari et al. 2007)."""
+    (AM3 paper, Lipari et al. 2007)."""
     var rpi = MASS_MU * MASS_MU / MASS_PI / MASS_PI
     return rpi * (c_log(x) - x) / (1.0 - rpi) / (1.0 - rpi)
 
@@ -45,15 +45,7 @@ def FPi2NU(x: Float64) -> Float64:
     return 1.0 / (1.0 - rpi)
 
 
-def FPi2G(x: Float64) -> Float64:
-    if x <= 0.0 or x > 1.00001:
-        return 0.0
-    return 2.0
-
-
 def _sized(mut sets: List[Vec], n: Int, size: Int):
-    """At least n vectors in `sets`, each of length `size` (zero where new or
-    resized)."""
     while len(sets) < n:
         sets.append(zeros(size))
     for k in range(len(sets)):
@@ -63,8 +55,7 @@ def _sized(mut sets: List[Vec], n: Int, size: Int):
 
 struct PionDecay(Copyable, Movable):
     """The decays of the charged pions of several pion sets (all pions, the
-    components, the decay chains) run together: set k's products are in
-    MpLGen[k], ..., NUmAGen_pi[k]."""
+    components, the decay chains) run together."""
 
     var nthreads: Int
     var verbose: Bool
@@ -79,7 +70,7 @@ struct PionDecay(Copyable, Movable):
     var KER_FMU2: MatD
     var KER_FPi2NU: MatD
     var KER_FPi2G: MatD
-    var w_p: List[Vec]  # per set: the decay rates of the pi+ and pi-
+    var w_p: List[Vec]
     var w_m: List[Vec]
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
@@ -105,57 +96,71 @@ struct PionDecay(Copyable, Movable):
         self.MpRGen = [zeros(dat.nbins_had)]
         self.MmLGen = [zeros(dat.nbins_had)]
         self.MmRGen = [zeros(dat.nbins_had)]
-        # (on the neutrino grid they are read on)
         self.NUmGen_pi = [zeros(dat.nbins_nu)]
         self.NUmAGen_pi = [zeros(dat.nbins_nu)]
         resize_zero(self.QPI2GGen, dat.nbins_pho)
 
-    def reinitialize_empty_kernels(mut self, dat: AM3Arrays):
-        self.KER_FMU1 = MatD(dat.nbins_had, dat.nbins_had)
-        self.KER_FMU2 = MatD(dat.nbins_had, dat.nbins_had)
-        self.KER_FPi2NU = MatD(dat.nbins_nu, dat.nbins_had)
-        self.KER_FPi2G = MatD(dat.nbins_pho, dat.nbins_had)
-
     def initialize_kernels(mut self, dat: AM3Arrays):
+        """The kernels are functions of the ratio of the energies. So on the
+        grids of one dlnE, they are Toeplitz matrices. KER_FMU2 is kept dense.
+        Its differences of PMu2 cancel, so its values vary along a diagonal by
+        1.2e-11. This is more than the tolerance of analyze() for a Toeplitz
+        matrix (1e-12)."""
         if self.verbose:
             print("computing charged pion decay to muon + neutrino kernels")
         var nh = dat.nbins_had
-        # the muons of a decay whose energy fraction lies in the bin of grid
-        # point i, within a factor e^(dlnE/2) of egrid_had[i] / egrid_had[j],
-        # per dlnE, so that every decay makes one muon. AM3 took the
-        # distributions at the grid points and dropped x = 1, where that of the
-        # mu+_L is largest: a decay made 0.876 muons with 15 % too little
-        # energy (AM3 bug).
+        # The muons of a decay whose energy fraction lies in the bin of grid
+        # point i. With these bins, every decay makes one muon. AM3 took the
+        # distributions at the grid points and dropped x = 1, where the
+        # distribution of the mu+_L is largest. In AM3, a decay made
+        # 0.876 muons with 15 % too little energy (AM3 bug).
         var rpi = MASS_MU * MASS_MU / MASS_PI / MASS_PI
         var half = c_exp(0.5 * dat.dlnE)
+        var t1 = zeros(2 * nh - 1)
+        for m in range(2 * nh - 1):
+            var i: Int
+            var j: Int
+            i, j = MatD.toeplitz_entry(m, nh)
+            var r = dat.egrid_had[i] / dat.egrid_had[j]
+            var lo = min(max(r / half, rpi), 1.0)
+            var hi = min(max(r * half, rpi), 1.0)
+            t1[m] = (PMu1(hi) - PMu1(lo)) / dat.dlnE
+        self.KER_FMU1 = MatD.toeplitz(nh, nh, t1^)
+        self.KER_FMU2 = MatD(nh, nh)
         for i in range(nh):
             for j in range(nh):
                 var r = dat.egrid_had[i] / dat.egrid_had[j]
                 var lo = min(max(r / half, rpi), 1.0)
                 var hi = min(max(r * half, rpi), 1.0)
-                self.KER_FMU1.set(i, j, (PMu1(hi) - PMu1(lo)) / dat.dlnE)
                 self.KER_FMU2.set(i, j, (PMu2(hi) - PMu2(lo)) / dat.dlnE)
-        for i in range(dat.nbins_nu):
-            for j in range(nh):
-                var r = dat.egrid_nu[i] / dat.egrid_had[j]
-                self.KER_FPi2NU.set(i, j, r * FPi2NU(r))
+        var nn = dat.nbins_nu
+        var tn = zeros(nn + nh - 1)
+        for m in range(nn + nh - 1):
+            var i: Int
+            var j: Int
+            i, j = MatD.toeplitz_entry(m, nh)
+            var r = dat.egrid_nu[i] / dat.egrid_had[j]
+            tn[m] = r * FPi2NU(r)
+        self.KER_FPi2NU = MatD.toeplitz(nn, nh, tn^)
         if self.verbose:
             print("computing pi0 decay to gamma kernel")
-        for i in range(dat.nbins_pho):
-            for j in range(nh):
-                # egrid_had[j+1] reads past the end of the C++ vector for the
-                # last bin; the next grid point exp((j+1) dlnE) is used instead.
-                var e_next = dat.egrid_had[j + 1] if j + 1 < nh else c_exp(
-                    Float64(j + 1) * dat.dlnE
-                )
-                var r = (
-                    dat.egrid_had_photons[i] * 2.0 / (dat.egrid_had[j] + e_next)
-                )
-                self.KER_FPi2G.set(i, j, r * FPi2G(r))
+        # The photons of a decay whose energy fraction lies in the bin of grid
+        # point i, as for the muons above. So every decay makes two photons,
+        # with 1.001 of the pion's energy. AM3 took 2 x at
+        # x = 2 E_gamma / (E_j + E_j+1), the pion between its grid point and
+        # the next. In AM3, the photons of a decay carried 1.048 times its
+        # energy (AM3 bug).
+        var npho = dat.nbins_pho
+        var tg = zeros(npho + nh - 1)
+        for m in range(npho + nh - 1):
+            var i: Int
+            var j: Int
+            i, j = MatD.toeplitz_entry(m, nh)
+            var r = dat.egrid_had_photons[i] / dat.egrid_had[j]
+            tg[m] = 2.0 * (min(r * half, 1.0) - min(r / half, 1.0)) / dat.dlnE
+        self.KER_FPi2G = MatD.toeplitz(npho, nh, tg^)
 
     def _rates(mut self, dat: AM3Arrays, pions: List[Int]):
-        """The decay rates of set k's pi+ and pi-, dat.n[pions[k]] and
-        dat.n[pions[k] + 1]: w_p[k], w_m[k]."""
         var nh = dat.nbins_had
         _sized(self.w_p, len(pions), nh)
         _sized(self.w_m, len(pions), nh)
@@ -168,9 +173,6 @@ struct PionDecay(Copyable, Movable):
                 self.w_m[k][i] = Pim[i] / tdec
 
     def Calc_PItoMU(mut self, dat: AM3Arrays, pions: List[Int]):
-        """Muons of the decay of the pion sets k (see _rates): MpLGen[k],
-        MpRGen[k], MmLGen[k], MmRGen[k]. All products run in parallel; a
-        kernel takes one pass for the pi+ and pi- of a set (`gemv_pair`)."""
         if self.verbose:
             print("computing pion decay to muon term")
         var n = len(pions)
@@ -206,8 +208,6 @@ struct PionDecay(Copyable, Movable):
         run_gemv_pairs(jobs, self.nthreads)
 
     def Calc_PItoNU(mut self, dat: AM3Arrays, pions: List[Int]):
-        """nu_mu and anti-nu_mu of the decay of the pion sets k (see _rates):
-        NUmGen_pi[k], NUmAGen_pi[k], in parallel as Calc_PItoMU."""
         if self.verbose:
             print("computing pion decay to neutrino term")
         var n = len(pions)
@@ -253,7 +253,7 @@ def FNU2(x: Float64, h: Float64) -> Float64:
 
 struct MuonDecay(Copyable, Movable):
     """The decays of the muons of several muon sets run together (as
-    PionDecay): set k's products are in NUeGen_mu[k], ..., QMU2PGen_mu[k]."""
+    PionDecay)."""
 
     var nthreads: Int
     var verbose: Bool
@@ -269,8 +269,6 @@ struct MuonDecay(Copyable, Movable):
     var KER_FNU1m: MatD
     var KER_FNU2p: MatD
     var KER_FNU2m: MatD
-    # per set: the decay rates of the four muon states, and the kernel
-    # products before they are combined (8 per set to neutrinos, 4 to e+-)
     var w_ml: List[Vec]
     var w_pl: List[Vec]
     var w_mr: List[Vec]
@@ -309,41 +307,49 @@ struct MuonDecay(Copyable, Movable):
         self.QMU2EGen_mu = [zeros(dat.nbins_lep)]
         self.QMU2PGen_mu = [zeros(dat.nbins_lep)]
 
-    def reinitialize_empty_kernels(mut self, dat: AM3Arrays):
-        self.KER_FMU2Ep = MatD(dat.nbins_lep, dat.nbins_had)
-        self.KER_FMU2Em = MatD(dat.nbins_lep, dat.nbins_had)
-        self.KER_FNU1p = MatD(dat.nbins_nu, dat.nbins_had)
-        self.KER_FNU1m = MatD(dat.nbins_nu, dat.nbins_had)
-        self.KER_FNU2p = MatD(dat.nbins_nu, dat.nbins_had)
-        self.KER_FNU2m = MatD(dat.nbins_nu, dat.nbins_had)
-
     def initialize_kernels(mut self, dat: AM3Arrays):
         if self.verbose:
             print("computing muon decay to neutrino kernels")
-        for i in range(dat.nbins_nu):
-            for j in range(dat.nbins_had):
-                var r = dat.egrid_nu[i] / dat.egrid_had[j]
-                self.KER_FNU1p.set(i, j, r * FNU1(r, 1.0))
-                self.KER_FNU1m.set(i, j, r * FNU1(r, -1.0))
-                self.KER_FNU2p.set(i, j, r * FNU2(r, 1.0))
-                self.KER_FNU2m.set(i, j, r * FNU2(r, -1.0))
+        var nh = dat.nbins_had
+        var nn = dat.nbins_nu
+        var t1p = zeros(nn + nh - 1)
+        var t1m = zeros(nn + nh - 1)
+        var t2p = zeros(nn + nh - 1)
+        var t2m = zeros(nn + nh - 1)
+        for m in range(nn + nh - 1):
+            var i: Int
+            var j: Int
+            i, j = MatD.toeplitz_entry(m, nh)
+            var r = dat.egrid_nu[i] / dat.egrid_had[j]
+            t1p[m] = r * FNU1(r, 1.0)
+            t1m[m] = r * FNU1(r, -1.0)
+            t2p[m] = r * FNU2(r, 1.0)
+            t2m[m] = r * FNU2(r, -1.0)
+        self.KER_FNU1p = MatD.toeplitz(nn, nh, t1p^)
+        self.KER_FNU1m = MatD.toeplitz(nn, nh, t1m^)
+        self.KER_FNU2p = MatD.toeplitz(nn, nh, t2p^)
+        self.KER_FNU2m = MatD.toeplitz(nn, nh, t2m^)
         if self.verbose:
             print("computing muon decay to e+/- kernels")
-        # the e+- of a muon of helicity h have the spectrum of its nu_mu-type
-        # neutrino (V-A), FNU1(x, h) for a mu+ and FNU1(x, -h) for a mu-. AM3
-        # gave those of both helicities 4/3 (1 - x^3), the spectrum of h = +1,
-        # so that the e+- of h = -1 got 0.40 of the muon energy, not 0.30 (AM3
-        # bug).
-        for i in range(dat.nbins_lep):
-            for j in range(dat.nbins_had):
-                var r = dat.egrid_had_leptons[i] / dat.egrid_had[j]
-                self.KER_FMU2Ep.set(i, j, r * FNU1(r, 1.0))
-                self.KER_FMU2Em.set(i, j, r * FNU1(r, -1.0))
+        # The e+- of a muon of helicity h have the spectrum of its nu_mu-type
+        # neutrino (V-A): FNU1(x, h) for a mu+ and FNU1(x, -h) for a mu-. AM3
+        # gave the e+- of both helicities 4/3 (1 - x^3), the spectrum of
+        # h = +1. So the e+- of h = -1 got 0.40 of the muon energy, not 0.30
+        # (AM3 bug).
+        var nl = dat.nbins_lep
+        var tep = zeros(nl + nh - 1)
+        var tem = zeros(nl + nh - 1)
+        for m in range(nl + nh - 1):
+            var i: Int
+            var j: Int
+            i, j = MatD.toeplitz_entry(m, nh)
+            var r = dat.egrid_had_leptons[i] / dat.egrid_had[j]
+            tep[m] = r * FNU1(r, 1.0)
+            tem[m] = r * FNU1(r, -1.0)
+        self.KER_FMU2Ep = MatD.toeplitz(nl, nh, tep^)
+        self.KER_FMU2Em = MatD.toeplitz(nl, nh, tem^)
 
     def _rates(mut self, dat: AM3Arrays, muons: List[Int]):
-        """Decay rates of the four muon states of set k, whose mu+_L, mu+_R,
-        mu-_L, mu-_R are dat.n[muons[k] + 0 .. 3]: w_pl[k], w_pr[k], w_ml[k],
-        w_mr[k]."""
         var nh = dat.nbins_had
         var n = len(muons)
         _sized(self.w_ml, n, nh)
@@ -363,11 +369,6 @@ struct MuonDecay(Copyable, Movable):
                 self.w_pr[k][i] = MpR[i] / tdec
 
     def Calc_MUtoNU(mut self, dat: AM3Arrays, muons: List[Int]):
-        """Neutrinos of the decay of the muon sets k (see _rates):
-        NUeGen_mu[k], NUeAGen_mu[k], NUmGen_mu[k], NUmAGen_mu[k]. Each is
-        dlnE (A x + B y): all products run in parallel into temporaries (a
-        kernel takes one pass for its two rates of a set, `gemv_pair`), then
-        they are combined."""
         if self.verbose:
             print("computing muon decay to neutrinos terms")
         var n = len(muons)
@@ -415,9 +416,6 @@ struct MuonDecay(Copyable, Movable):
                 self.NUmGen_mu[k][i] = dat.dlnE * (t[b + 6][i] + t[b + 7][i])
 
     def Calc_MUtoE(mut self, dat: AM3Arrays, muons: List[Int]):
-        """e+ and e- of the decay of the muon sets k (see _rates):
-        QMU2PGen_mu[k], QMU2EGen_mu[k], each helicity with its spectrum as
-        for the nu_mu-type neutrinos; in parallel as Calc_MUtoNU."""
         if self.verbose:
             print("computing muon decay to pairs terms")
         var n = len(muons)
@@ -460,8 +458,6 @@ struct MuonDecay(Copyable, Movable):
 
 
 struct CICJob(Movable):
-    """The charm-hadron IC emission of the masses t, t + nt, ... (cic_work)."""
-
     var H: Pointer[HadIC, MutUntrackedOrigin]
     var dat: Pointer[AM3Arrays, MutUntrackedOrigin]
     var coeff: List[Float64]
@@ -478,7 +474,6 @@ struct CICJob(Movable):
 
 
 def cic_work(job: Pointer[CICJob, MutUntrackedOrigin], t: Int, nt: Int):
-    """Mass k = t, t + nt, ...: its emission into its own buffer."""
     ref H = job[].H[]
     var k = t
     while k < 3:
@@ -499,7 +494,7 @@ struct HadIC(Copyable, Movable):
     var epsilonPIC: Vec
     var epsilonPiIC: Vec
     var epsilonMuIC: Vec
-    var epsilonKIC: Vec  # charged kaons (am3_mojo addition)
+    var epsilonKIC: Vec  # am3_mojo addition
     var deltaE_p: VecI
     var jmax_p: VecI
     var deltaE_pi: VecI
@@ -509,12 +504,12 @@ struct HadIC(Copyable, Movable):
     var deltaE_K: VecI
     var jmax_K: VecI
     # charged charm hadrons (am3_mojo addition): the steps of D+-, Ds+-,
-    # Lambda_c+ and anti-Lambda_c- (one per mass) and their emission
+    # Lambda_c+ and anti-Lambda_c- (one per mass)
     var epsilonCIC: Vec
     var deltaE_C: List[VecI]
     var jmax_C: List[VecI]
     var w_in: Vec
-    var w_inC: List[Vec]  # per mass: the summed charges, and the emission
+    var w_inC: List[Vec]
     var tmpC: List[Vec]
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
@@ -539,7 +534,7 @@ struct HadIC(Copyable, Movable):
         self.w_inC = [Vec(), Vec(), Vec()]
         self.tmpC = [Vec(), Vec(), Vec()]
         self.clear_internal_arrays(dat)
-        self.reinitialize_empty_kernels(dat, True, True, True, True, True)
+        self.reinitialize_empty_kernels(dat)
 
     def clear_internal_arrays(mut self, dat: AM3Arrays):
         resize_zero(self.epsilonPIC, dat.nbins_pho)
@@ -548,31 +543,18 @@ struct HadIC(Copyable, Movable):
         resize_zero(self.epsilonKIC, dat.nbins_pho)
         resize_zero(self.epsilonCIC, dat.nbins_pho)
 
-    def reinitialize_empty_kernels(
-        mut self,
-        dat: AM3Arrays,
-        rad_P: Bool,
-        rad_Pi: Bool,
-        rad_Mu: Bool,
-        rad_K: Bool,
-        rad_C: Bool,
-    ):
-        if rad_P:
-            self.deltaE_p = zerosi(dat.nbins_pho)
-            self.jmax_p = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
-        if rad_Pi:
-            self.deltaE_pi = zerosi(dat.nbins_pho)
-            self.jmax_pi = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
-        if rad_Mu:
-            self.deltaE_mu = zerosi(dat.nbins_pho)
-            self.jmax_mu = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
-        if rad_K:
-            self.deltaE_K = zerosi(dat.nbins_pho)
-            self.jmax_K = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
-        if rad_C:
-            for k in range(3):
-                self.deltaE_C[k] = zerosi(dat.nbins_pho)
-                self.jmax_C[k] = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
+    def reinitialize_empty_kernels(mut self, dat: AM3Arrays):
+        self.deltaE_p = zerosi(dat.nbins_pho)
+        self.jmax_p = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
+        self.deltaE_pi = zerosi(dat.nbins_pho)
+        self.jmax_pi = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
+        self.deltaE_mu = zerosi(dat.nbins_pho)
+        self.jmax_mu = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
+        self.deltaE_K = zerosi(dat.nbins_pho)
+        self.jmax_K = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
+        for k in range(3):
+            self.deltaE_C[k] = zerosi(dat.nbins_pho)
+            self.jmax_C[k] = VecI(length=dat.nbins_pho, fill=dat.nbins_pho)
 
     @staticmethod
     def _steps(dat: AM3Arrays, mass: Float64, mut dE: VecI, mut jmax: VecI):
@@ -603,9 +585,9 @@ struct HadIC(Copyable, Movable):
         HadIC._steps(dat, MASS_K, self.deltaE_K, self.jmax_K)
         if self.verbose:
             print("computing charm-hadron IC rad. kernels (step approx.)")
-        var masses: List[Float64] = [MASS_D, MASS_DS, MASS_LC]
         for k in range(3):
-            HadIC._steps(dat, masses[k], self.deltaE_C[k], self.jmax_C[k])
+            var m = charm_mass(charged_charm_species(k))
+            HadIC._steps(dat, m, self.deltaE_C[k], self.jmax_C[k])
 
     @staticmethod
     def _emit(
@@ -616,12 +598,9 @@ struct HadIC(Copyable, Movable):
         coeff: Float64,
         mut out_: Vec,
     ):
-        """out[j] = dlnE coeff sum_i ph[j-dE[i]] part[i], dE[i] <= j <= jmax[i].
-
-        The step approximation puts the photons of hadron bin i at the fixed
-        shift dE[i] from their target photon bin. Each hadron bin that is not
-        empty adds them over its contiguous photon range (an axpy). The C++
-        code loops over every pair (j, i) and tests whether bin i reaches j."""
+        """The step approximation puts the photons of hadron bin i at the fixed
+        shift dE[i] from their target photon bin. The C++ code loops over every
+        pair (j, i) and tests whether bin i reaches j."""
         var ph = pd(dat.n[P_photons_on_had_grid])
         var pp = pd(part)
         var npho = dat.nbins_pho
@@ -702,8 +681,6 @@ struct HadIC(Copyable, Movable):
         )
 
     def Calc_KIC(mut self, dat: AM3Arrays):
-        """IC emission of the charged kaons (am3_mojo addition), as for pions.
-        """
         if self.verbose:
             print("computing kaon IC emission")
         var coeff_K = C_LIGHT * SIGMA_T / (MASS_K / MASS_E) / (MASS_K / MASS_E)
@@ -721,20 +698,14 @@ struct HadIC(Copyable, Movable):
         )
 
     def Calc_CIC(mut self, dat: AM3Arrays):
-        """IC emission of the charged charm hadrons (am3_mojo addition), as
-        for pions: D+-, Ds+-, Lambda_c+ and anti-Lambda_c-, each with its mass.
-        The masses run in parallel, each into its own buffer; the sum keeps the
-        order D, Ds, Lambda_c, so the result does not depend on the threads."""
         if self.verbose:
             print("computing charm-hadron IC emission")
-        var masses: List[Float64] = [MASS_D, MASS_DS, MASS_LC]
         resize_zero(self.epsilonCIC, dat.nbins_pho)
         var coeff = List[Float64]()
         for k in range(3):
-            var s0 = CDP if k == 0 else (CDSP if k == 1 else CLC)
-            coeff.append(
-                C_LIGHT * SIGMA_T / (masses[k] / MASS_E) / (masses[k] / MASS_E)
-            )
+            var s0 = charged_charm_species(k)
+            var m = charm_mass(s0)
+            coeff.append(C_LIGHT * SIGMA_T / (m / MASS_E) / (m / MASS_E))
             resize_zero(self.w_inC[k], dat.nbins_had)
             resize_zero(self.tmpC[k], dat.nbins_pho)
             for i in range(dat.nbins_had):
@@ -754,30 +725,27 @@ struct HadIC(Copyable, Movable):
                 self.epsilonCIC[i] += self.tmpC[k][i]
 
 
-# ============================================================================
+# ==============================================================================
 # Neutron decay (am3_mojo addition)
-# ============================================================================
+# ==============================================================================
 # n -> p e- anti-nu_e (100 %, PDG 2026) at the neutron solver's rate
-# 1 / (gamma tau_n) (tests/literature_checks/neutron_decay/README.md). In the
-# rest frame, the electron and antineutrino share E_0 by the allowed spectrum
-# (neutron_beta_density), and the proton takes m_n - E_0. Each product is
-# boosted exactly to every hadron bin's energy, also for slow neutrons
-# (beta < 1), so the kernels are not Toeplitz.
-# `NeutronDecay.initialize_kernels` integrates them exactly over the grids.
-# Limitations: no recoil in the lepton spectra (the proton's is at most
-# 751 eV), no weak magnetism, no radiative corrections (Sirlin's outer
-# correction) or radiative-decay photons, a point-charge Fermi function (no
-# relativistic or finite-size terms) and no bound decay into hydrogen.
-# AM3's solver keeps the two lowest bins of every grid empty: neutrons below
-# 1.2 GeV are removed there, and some electrons of the slowest decaying
-# neutrons fall into the two lowest lepton bins and are lost. As for AM3's
-# decays, a step's products come from the neutrons at its end (exact in a
-# steady state, first order in the time step otherwise).
+# 1 / (gamma tau_n) (tests/literature_checks/neutron_decay/README.md). Each
+# product is boosted exactly to the energy of every hadron bin, also for slow
+# neutrons (beta < 1). So the kernels are not Toeplitz. Limitations: no
+# recoil in the lepton spectra (the proton's is at most 751 eV), no weak
+# magnetism, no radiative corrections (Sirlin's outer correction) or
+# radiative-decay photons, a point-charge Fermi function (no relativistic or
+# finite-size terms) and no bound decay into hydrogen. AM3's solver keeps the
+# two lowest bins of every grid empty. So neutrons below 1.2 GeV are removed
+# there. Some electrons of the slowest decaying neutrons fall into the two
+# lowest lepton bins and are lost. As for AM3's decays, a step's products
+# come from the neutrons at its end. This is exact in a steady state, and
+# first order in the time step otherwise.
 
 
 def neutron_beta_endpoint() -> Float64:
     """Total energy E_0 [GeV] of the electron at the end of its spectrum in the
-    neutron's rest frame: (m_n^2 - m_p^2 + m_e^2) / (2 m_n)."""
+    neutron's rest frame."""
     var mn = MASS_N
     var mp = MASS_P
     var me = MASS_E
@@ -785,15 +753,15 @@ def neutron_beta_endpoint() -> Float64:
 
 
 def neutron_beta_density(T: Float64, Enu: Float64) -> Float64:
-    """Unnormalised electron energy distribution in the neutron's rest frame:
+    """Unnormalized electron energy distribution in the neutron's rest frame:
     the allowed spectrum F(E) p E Enu^2, with the electron's kinetic energy T,
-    E = m_e + T, momentum p and the antineutrino energy Enu = E_0 - m_e - T
-    [GeV]. F = 2 pi eta / (1 - exp(-2 pi eta)), eta = alpha E / p, is the
-    Fermi function of a charge Z = 1 (F p is finite at p = 0)."""
+    E = m_e + T, momentum p and the antineutrino energy
+    Enu = E_0 - m_e - T [GeV]. F is the Fermi function of a charge Z = 1
+    (F p is finite at p = 0)."""
     var me = MASS_E
     var E = me + T
     var p = sqrt(T * (T + 2.0 * me))
-    var c = 2.0 * PI * ALPHA * E  # 2 pi eta p
+    var c = 2.0 * PI * ALPHA * E
     var fp = c if p <= 0.0 else c / (-c_expm1(-c / p))
     return fp * E * Enu * Enu
 
@@ -807,11 +775,9 @@ def _bin_box(
     N: FPtr,
     En: FPtr,
 ):
-    """Adds products of weight w, uniform in x on [a, b], to the number N[j]
-    and energy En[j] (in units of the parent's energy) between the grid
-    points x[j] < x < x[j + 1] (n points, logarithmic, ascending). Products
-    outside [x[0], x[n - 1]] are left out. A box narrower than the rounding
-    of its ends is a point at its middle."""
+    """En[j] is in units of the parent's energy. The grid has n points,
+    logarithmic and ascending. A box narrower than the rounding of its ends
+    is a point at its middle."""
     var dl = c_log(x[unsafe_offset=1] / x[unsafe_offset=0])
     if not (b - a > 0.0):
         var m = 0.5 * (a + b)
@@ -843,9 +809,8 @@ def _bin_box(
 
 
 def _share_to_points(x: FPtr, n: Int, N: FPtr, En: FPtr, out_: FPtr):
-    """The products between x[j] and x[j + 1] (number N[j], energy En[j]) go
-    to these two grid points linearly in x, which keeps their number and
-    energy: out_[j] products per decay at grid point j."""
+    """The products between x[j] and x[j + 1] go to these two grid points
+    linearly in x. This keeps their number and energy."""
     for j in range(n):
         out_[unsafe_offset=j] = 0.0
     for j in range(n - 1):
@@ -861,11 +826,6 @@ def _share_to_points(x: FPtr, n: Int, N: FPtr, En: FPtr, out_: FPtr):
 
 
 struct NDecBuild(Movable):
-    """What the workers of `NeutronDecay.initialize_kernels` share: the grids
-    [GeV], the nodes of the rest-frame spectrum (electron kinetic energy T and
-    momentum pe, antineutrino energy Ev, normalised weight w) and the kernels
-    being filled (column-major, one column per hadron bin)."""
-
     var nh: Int
     var nl: Int
     var nn: Int
@@ -894,9 +854,9 @@ struct NDecBuild(Movable):
         self.w = zeros(N_REST)
         self.Ke = zeros(self.nl * self.nh)
         self.Knu = zeros(self.nn * self.nh)
-        # the rest-frame spectrum on the N_REST nodes of the substitution
-        # E = m_e + (E_0 - m_e) sin^2(pi u / 2) (as for the kaon decays), with
-        # both distances from the ends, T and Ev = E_0 - E, to full precision
+        # The rest-frame spectrum on the N_REST nodes of the substitution
+        # E = m_e + (E_0 - m_e) sin^2(pi u / 2) (as for the kaon decays). Both
+        # distances from the ends, T and Ev = E_0 - E, have full precision.
         var gl = GLRules()
         var me = MASS_E
         var L = neutron_beta_endpoint() - me
@@ -925,10 +885,9 @@ struct NDecBuild(Movable):
 def _ndec_column(
     ref J: NDecBuild, i: Int, xl: FPtr, xn: FPtr, N: FPtr, En: FPtr
 ):
-    """Column i of both kernels: electrons and antineutrinos per decay of a
-    neutron of hadron bin i. A product of rest-frame energy E* and momentum p*
-    is emitted isotropically, so its lab energy fraction x = E / E_n is
-    uniform on [(E* - beta p*) / m_n, (E* + beta p*) / m_n]."""
+    """A product of rest-frame energy E* and momentum p* is emitted
+    isotropically. So its lab energy fraction x = E / E_n is uniform on
+    [(E* - beta p*) / m_n, (E* + beta p*) / m_n]."""
     var mn = MASS_N
     var me = MASS_E
     var En_n = J.Eh[i]
@@ -962,7 +921,6 @@ def _ndec_column(
 def ndec_build_work(
     job: Pointer[NDecBuild, MutUntrackedOrigin], t: Int, nt: Int
 ):
-    """Columns t, t + nt, ... of the neutron decay kernels."""
     ref J = job[]
     var m = max(J.nl, J.nn)
     var xl = zeros(J.nl)
@@ -976,23 +934,18 @@ def ndec_build_work(
 
 
 struct NeutronDecay(Copyable, Movable):
-    """Sources of protons (hadron grid), electrons (lepton grid) and electron
-    antineutrinos (neutrino grid) from neutron decay. K_e[j, i] and K_nu[j, i]
-    hold the products at grid point j per decay of a neutron of hadron bin i.
-    A decay's proton goes to bins i (share ps0[i]) and i - 1 (ps1[i])."""
-
     var verbose: Bool
     var K_e: MatD
     var K_nu: MatD
     var ps0: Vec
     var ps1: Vec
-    # sources per ln E [cm^-3 s^-1] on the hadron, lepton and neutrino grids
+    # sources per ln E [cm^-3 s^-1]
     var q_p: Vec
     var q_e: Vec
     var q_nu: Vec
-    var w: Vec  # decays per ln E and second, n_n / (gamma tau_n)
+    var w: Vec  # decays per ln E and second
     var nthreads: Int
-    var built_nh: Int  # hadron bins of the grid the kernels were built for
+    var built_nh: Int
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
         self.verbose = verbose
@@ -1016,7 +969,6 @@ struct NeutronDecay(Copyable, Movable):
         self.built_nh = -1
 
     def ready(self, dat: AM3Arrays) -> Bool:
-        """Kernels built for the current grid."""
         return self.built_nh == dat.nbins_had
 
     def clear_internal_arrays(mut self, dat: AM3Arrays):
@@ -1036,9 +988,7 @@ struct NeutronDecay(Copyable, Movable):
         self.K_nu = MatD(dat.nbins_nu, nh)
         self.K_nu.data = job.Knu.copy()
         self.K_nu.analyze()
-        # the proton, at the energy fraction x_p = (m_n - E_0) / m_n, between
-        # the grid points 1 (bin i) and E_{i-1} / E_i (bin i - 1)
-        var f = neutron_beta_endpoint() / MASS_N  # 1 - x_p
+        var f = neutron_beta_endpoint() / MASS_N
         self.ps0 = zeros(nh)
         self.ps1 = zeros(nh)
         for i in range(nh):
@@ -1050,9 +1000,7 @@ struct NeutronDecay(Copyable, Movable):
         self.built_nh = nh
 
     def Calc_NtoX(mut self, dat: AM3Arrays, rate: Vec):
-        """Decay products of the neutrons dat.n[P_neutrons] (EdN/dEdV on the
-        hadron grid) decaying at the rates `rate` [1/s] (the neutron solver's
-        1 / (gamma tau_n))."""
+        """The rates `rate` [1/s] are the neutron solver's 1 / (gamma tau_n)."""
         if self.verbose:
             print("computing neutron decay terms")
         self.clear_internal_arrays(dat)
@@ -1075,17 +1023,14 @@ struct NeutronDecay(Copyable, Movable):
         gemv_d(self.K_nu, pd(self.w), 1.0, pd(self.q_nu))
 
 
-# ============================================================================
+# ==============================================================================
 # Kaon decays (am3_mojo addition)
-# ============================================================================
-# Sources of pions, muons, e+- and neutrinos from the decays of K+-, K0_S and
-# K0_L (model/particles.mojo), treated like AM3's pion and muon decays:
-#   Q(E_i) = dlnE * sum_j T(E_i / E_j) n_K(E_j) / t_dec(E_j).
-# Modes: every non-radiative one with a branching ratio above 0.1 %
-# (PDG 2026), plus the smaller K0_S semileptonic and K0_L -> pi0 pi0 modes.
-# Their lab-frame spectra follow from the matrix elements of KDecay
-# (tests/literature_checks/kaons/README.md, "Decays"). `kaon_decay_tables`
-# integrates the kernels T exactly over the grid at kernel initialisation.
+# ==============================================================================
+# The decays of K+-, K0_S and K0_L are treated like AM3's pion and muon
+# decays. Modes: every non-radiative one with a branching ratio above
+# 0.1 % (PDG 2026), plus the smaller K0_S semileptonic and K0_L -> pi0 pi0
+# modes. Their lab-frame spectra follow from the matrix elements of KDecay
+# (tests/literature_checks/kaons/README.md, "Decays").
 
 
 @inline(.always)
@@ -1109,7 +1054,6 @@ def kaon_name(s: Int) -> String:
     return "kaon_0S" if s == KS else "kaon_0L"
 
 
-# decay products and the grids they live on
 comptime PR_PIP = 0
 comptime PR_PIM = 1
 comptime PR_PI0 = 2
@@ -1136,8 +1080,7 @@ def product_grid(p: Int) -> Int:
 
 @inline(.always)
 def charge_conjugate(p: Int) -> Int:
-    """Product of the charge-conjugate decay (CP: a mu+ of helicity L becomes
-    a mu- of helicity R)."""
+    """CP: a mu+ of helicity L becomes a mu- of helicity R."""
     var cc: Array[Int, N_PROD] = [
         PR_PIM,
         PR_PIP,
@@ -1157,7 +1100,7 @@ def charge_conjugate(p: Int) -> Int:
 
 
 # Gauss-Legendre points along a Dalitz line (the densities are low-order
-# polynomials there, so this is exact) and for the rest-frame energy
+# polynomials there, so this is exact)
 comptime N_DALITZ = 24
 comptime N_REST = 256
 
@@ -1166,10 +1109,24 @@ comptime _K3PI = 1
 comptime _KL3 = 2
 
 
+def _sin2_node(
+    x: Float64, w: Float64, lo: Float64, hi: Float64
+) -> Tuple[Float64, Float64]:
+    """The substitution E = lo + (hi - lo) sin^2(pi u / 2), u in [0, 1],
+    absorbs square-root edges at both ends."""
+    var a = 0.25 * PI * (x + 1.0)  # pi u / 2
+    var s = c_sin(a)
+    var c = c_cos(a)
+    var L = hi - lo
+    # from the nearer end, so that E - lo and hi - E keep their precision
+    var E = lo + L * s * s if s < c else hi - L * c * c
+    return (E, 0.5 * PI * L * s * c * w)
+
+
 struct GLRules(Copyable, Movable):
-    var xi: Vec  # N_DALITZ nodes / weights on [-1, 1]
+    var xi: Vec
     var wi: Vec
-    var xo: Vec  # N_REST nodes / weights on [-1, 1]
+    var xo: Vec
     var wo: Vec
 
     def __init__(out self):
@@ -1183,17 +1140,7 @@ struct GLRules(Copyable, Movable):
     def rest_node(
         self, n: Int, m: Float64, Emax: Float64
     ) -> Tuple[Float64, Float64]:
-        """Node n of the rule for a rest-frame energy E on [m, Emax], after
-        the substitution E = m + (Emax - m) sin^2(pi u / 2), u in [0, 1],
-        which absorbs the square-root edges of the energy distributions at
-        both ends: (E, weight)."""
-        var a = 0.25 * PI * (self.xo[n] + 1.0)  # pi u / 2
-        var s = c_sin(a)
-        var c = c_cos(a)
-        var L = Emax - m
-        # from the nearer end, so that E - m and Emax - E keep their precision
-        var E = m + L * s * s if s < c else Emax - L * c * c
-        return (E, 0.5 * PI * L * s * c * self.wo[n])
+        return _sin2_node(self.xo[n], self.wo[n], m, Emax)
 
 
 @inline(.always)
@@ -1208,12 +1155,10 @@ def l3_density(
     pol: Bool,
 ) -> Float64:
     """|M|^2 of P -> P' l+ nu (K_l3, D -> K l nu, ...) at the parent-frame
-    energies E_pi of P' and E_l, summed over the l+ spin (pol: the part
-    proportional to its longitudinal polarisation in the parent frame), for
-    the hadronic current H = f+ (p_P + p_P') + f- (p_P - p_P') with
-    Fp = f+(t) and Fm = f-(t), t = (p_P - p_P')^2:
-    W0 = 2 (nu.H)(l.H) - H^2 (nu.l),
-    Wpol = m_l [2 (nu.H)(s.H) - H^2 (nu.s)].
+    energies E_pi of P' and E_l, summed over the l+ spin. With pol, it is the
+    part proportional to the longitudinal polarization of the l+ in the parent
+    frame. For the hadronic current H = f+ (p_P + p_P') + f- (p_P - p_P'),
+    Fp = f+(t) and Fm = f-(t), t = (p_P - p_P')^2.
     """
     var Enu = M - Epi - El
     var t = M * M + mpi * mpi - 2.0 * M * Epi
@@ -1231,7 +1176,6 @@ def l3_density(
     )
     if not pol:
         return 2.0 * nuH * lH - H2 * lnu
-    # spin 4-vector s of the l+ along its momentum in the parent frame
     var pl = sqrt(max(El * El - ml * ml, 1e-300))
     var ppi2 = Epi * Epi - mpi * mpi
     var pnu2 = Enu * Enu
@@ -1244,16 +1188,31 @@ def l3_density(
     return ml * (2.0 * nuH * Hs - H2 * nus)
 
 
+def _emax(M: Float64, mi: Float64, others: Float64) -> Float64:
+    return (M * M + mi * mi - others * others) / (2.0 * M)
+
+
+def _dalitz_line(
+    M: Float64, mi: Float64, mj: Float64, mk: Float64, E: Float64
+) -> Tuple[Float64, Float64]:
+    var P = sqrt(max(E * E - mi * mi, 0.0))
+    var mjk2 = M * M + mi * mi - 2.0 * M * E
+    var mjk = sqrt(max(mjk2, 1e-300))
+    var Ejs = (mjk2 + mj * mj - mk * mk) / (2.0 * mjk)
+    var pjs = sqrt(max(Ejs * Ejs - mj * mj, 0.0))
+    var lo = ((M - E) * Ejs - P * pjs) / mjk
+    var hi = ((M - E) * Ejs + P * pjs) / mjk
+    return (lo, hi)
+
+
 struct KDecayMode(Copyable, Movable):
     """Decay K(M) -> 0 + 1 (+ 2) with product masses m0, m1, m2.
 
-    * two-body: monochromatic in the kaon frame; P0 is the longitudinal
-      polarisation of product 0 there (-1 for the mu+ of K+ -> mu+ nu).
+    * two-body: P0 is the longitudinal polarization of product 0 in the kaon
+      frame (-1 for the mu+ of K+ -> mu+ nu).
     * K -> 3 pi (products 0, 1: even pions, 2: odd pion): PDG Dalitz-plot
-      expansion |M|^2 = 1 + g u + h u^2 + k v^2 (sym3: 1 + h (u^2 + v^2 / 3)).
-    * K_l3 (products pi, l+, nu): V-A matrix element with the form factors
-      f+(t) = 1 + l1 t / m_pi^2 + l2 / 2 (t / m_pi^2)^2 and the scalar f0
-      with slope l0; also the density of the l+ longitudinal polarisation.
+      expansion.
+    * K_l3 (products pi, l+, nu): V-A matrix element.
     """
 
     var kind: Int
@@ -1324,8 +1283,8 @@ struct KDecayMode(Copyable, Movable):
         return 1.0 + self.g * u + self.h * u * u + self.k * v * v
 
     def _kl3(self, Epi: Float64, El: Float64, pol: Bool) -> Float64:
-        """|M|^2 of l3_density with the kaon form factors f+ (quadratic in t)
-        and f- = (f0 - f+) (M^2 - m_pi^2) / t (f0 linear)."""
+        """Kaon form factors f+ (quadratic in t) and
+        f- = (f0 - f+) (M^2 - m_pi^2) / t (f0 linear)."""
         var M = self.M
         var mpi = self.m0
         var t = M * M + mpi * mpi - 2.0 * M * Epi
@@ -1346,29 +1305,19 @@ struct KDecayMode(Copyable, Movable):
     def emax(self, i: Int) -> Float64:
         var j = 1 if i == 0 else 0
         var k = 1 if i == 2 else 2
-        var mjk = self.mass(j) + self.mass(k)
-        var mi = self.mass(i)
-        return (self.M * self.M + mi * mi - mjk * mjk) / (2.0 * self.M)
+        return _emax(self.M, self.mass(i), self.mass(j) + self.mass(k))
 
     def energy_density(
         self, i: Int, E: Float64, pol: Bool, gl: GLRules
     ) -> Float64:
-        """Rest-frame energy distribution of product i (normalised to 1), or
-        (pol) its longitudinal polarisation times that distribution: the
-        Dalitz density integrated along the line E_i = E."""
+        """Rest-frame energy distribution of product i (normalized to 1), or
+        (pol) its longitudinal polarization times that distribution."""
         var j = 1 if i == 0 else 0
         var k = 1 if i == 2 else 2
         var M = self.M
-        var mi = self.mass(i)
-        var mj = self.mass(j)
-        var mk = self.mass(k)
-        var P = sqrt(max(E * E - mi * mi, 0.0))
-        var mjk2 = M * M + mi * mi - 2.0 * M * E
-        var mjk = sqrt(max(mjk2, 1e-300))
-        var Ejs = (mjk2 + mj * mj - mk * mk) / (2.0 * mjk)
-        var pjs = sqrt(max(Ejs * Ejs - mj * mj, 0.0))
-        var lo = ((M - E) * Ejs - P * pjs) / mjk
-        var hi = ((M - E) * Ejs + P * pjs) / mjk
+        var lo: Float64
+        var hi: Float64
+        lo, hi = _dalitz_line(M, self.mass(i), self.mass(j), self.mass(k), E)
         var s = 0.0
         var Es: Array[Float64, 3] = [0.0, 0.0, 0.0]
         for n in range(N_DALITZ):
@@ -1419,8 +1368,8 @@ comptime BR_KL_PIPIPI0 = 0.1254  # K0_L listing, p. 9, Gamma_7
 comptime BR_KL_PIPI = 1.967e-3  # K0_L listing, p. 9, Gamma_8
 comptime BR_KL_PI0PI0 = 8.64e-4  # K0_L listing, p. 11, Gamma_9
 # K_L charge asymmetries [G(pi- l+ nu) - G(pi+ l- nu-bar)] / sum: PDG 2026,
-# K0_L listing, A_L(e) = 0.334 +- 0.007 % (p. 35) and A_L(mu) = 0.304 +-
-# 0.025 % (p. 34), OUR AVERAGE
+# K0_L listing, A_L(e) = 0.334 +- 0.007 % (p. 35) and
+# A_L(mu) = 0.304 +- 0.025 % (p. 34), OUR AVERAGE
 comptime AL_E = 0.00334
 comptime AL_MU = 0.00304
 
@@ -1441,9 +1390,9 @@ comptime _M_KL3PI0 = 11
 
 def kaon_decay_modes(gl: GLRules) -> List[KDecayMode]:
     """The decay modes, with the K_l3 form factors and K -> 3 pi Dalitz slopes
-    of PDG 2026. Form factors: PDG's fits assuming mu-e universality (K0:
-    quadratic f+ and linear f0; K+-: linear f+ and f0, as PDG has no K+-
-    quadratic fit with universality)."""
+    of PDG 2026. Form factors: PDG's fits assuming mu-e universality. The K0
+    fit has a quadratic f+ and a linear f0. The K+- fit has a linear f+ and
+    f0, because PDG has no K+- quadratic fit with universality."""
     var mK = MASS_K
     var mK0 = MASS_K0
     var mpi = MASS_PI
@@ -1459,9 +1408,9 @@ def kaon_decay_modes(gl: GLRules) -> List[KDecayMode]:
         KDecayMode(_KL3, mK, mpi0, MASS_E, 0.0, l1=0.02959, l2=0.0, l0=0.0176),
         KDecayMode(_KL3, mK, mpi0, MASS_MU, 0.0, l1=0.02959, l2=0.0, l0=0.0176),
         # K0 l3: PDG 2026, K0_L listing, OUR FIT assuming mu-e universality,
-        # quadratic f+: lambda'_+ = (2.40 +- 0.12) x 10^-2 (p. 25), lambda''_+
-        # = (0.20 +- 0.05) x 10^-2 (p. 26), lambda_0 = (1.16 +- 0.09) x 10^-2
-        # (p. 27)
+        # quadratic f+: lambda'_+ = (2.40 +- 0.12) x 10^-2 (p. 25),
+        # lambda''_+ = (0.20 +- 0.05) x 10^-2 (p. 26),
+        # lambda_0 = (1.16 +- 0.09) x 10^-2 (p. 27)
         KDecayMode(
             _KL3, mK0, mpi, MASS_E, 0.0, l1=0.0240, l2=0.0020, l0=0.0116
         ),
@@ -1469,8 +1418,9 @@ def kaon_decay_modes(gl: GLRules) -> List[KDecayMode]:
             _KL3, mK0, mpi, MASS_MU, 0.0, l1=0.0240, l2=0.0020, l0=0.0116
         ),
         # Dalitz-plot coefficients, PDG 2026. K+- -> pi+- pi+ pi-, K+- listing
-        # (BATLEY 07B): g = -0.21134 +- 0.00017 and h = (1.848 +- 0.040) x
-        # 10^-2 (p. 33), k = (-4.63 +- 0.14) x 10^-3 (p. 34)
+        # (BATLEY 07B): g = -0.21134 +- 0.00017 and
+        # h = (1.848 +- 0.040) x 10^-2 (p. 33), k = (-4.63 +- 0.14) x 10^-3
+        # (p. 34)
         KDecayMode(_K3PI, mK, mpi, mpi, mpi, g=-0.21134, h=0.01848, k=-0.00463),
         # K+- -> pi+- pi0 pi0, K+- listing, OUR AVERAGE: g = 0.626 +- 0.007
         # (p. 34), h = 0.052 +- 0.008 and k = 0.0054 +- 0.0035 (p. 35)
@@ -1478,8 +1428,8 @@ def kaon_decay_modes(gl: GLRules) -> List[KDecayMode]:
         # K0_L -> pi+ pi- pi0, K0_L listing, OUR AVERAGE: g = 0.678 +- 0.008
         # (p. 21), h = 0.076 +- 0.006 and k = 0.0099 +- 0.0015 (p. 22)
         KDecayMode(_K3PI, mK0, mpi, mpi, mpi0, g=0.678, h=0.076, k=0.0099),
-        # K0_L -> 3 pi0, K0_L listing, p. 22 (ABOUZAID 08A): h = (0.59 +- 0.20
-        # +- 1.16) x 10^-3
+        # K0_L -> 3 pi0, K0_L listing, p. 22 (ABOUZAID 08A):
+        # h = (0.59 +- 0.20 +- 1.16) x 10^-3
         KDecayMode(_K3PI, mK0, mpi0, mpi0, mpi0, h=0.00059, sym3=True),
     ]
     for i in range(len(md)):
@@ -1489,8 +1439,9 @@ def kaon_decay_modes(gl: GLRules) -> List[KDecayMode]:
 
 @fieldwise_init
 struct KTerm(Copyable, Movable):
-    """br products p per decay from product i of mode `mode`; hel: lab
-    helicity of a muon (+1 R, -1 L, 0 both)."""
+    """hel: lab helicity of the mu+ whose energy distribution the term takes
+    (+1 R, -1 L, 0 both). A mu- term takes that of the mu+ with the opposite
+    helicity (CP)."""
 
     var br: Float64
     var p: Int
@@ -1529,9 +1480,6 @@ def _semileptonic_terms(
 
 
 def kaon_decay_terms(s: Int) -> List[KTerm]:
-    """Products of K+, K0_S and K0_L, with the multiplicities per decay
-    renormalised to the modes that are followed (K-: charge conjugates of K+).
-    """
     var T = List[KTerm]()
     var total: Float64
     if s == KS:
@@ -1601,15 +1549,10 @@ def _bin_node(
     mut N: FPtr,
     mut En: FPtr,
 ):
-    """Number N[q] and energy En[q] (in units of the kaon energy) between
-    the grid points x_{q+1} < x < x_q of the products with rest-frame energy
-    E: uniform in x on [(E - p)/M, (E + p)/M] with density M / (2 p), times
-    wg + wG htilde(x), htilde = (E M x - m^2) / (p M x) (lab helicity of a
-    muon with longitudinal polarisation 1 in the kaon frame). Over the
-    overlap [xa, xb] of the two ranges, in closed form:
-      N = M/(2p) [wg (xb - xa) + wG ((E/p)(xb - xa) - m^2/(p M) ln(xb/xa))],
-      En = M/(2p) [wg (xb^2 - xa^2)/2
-        + wG ((E/p)(xb^2 - xa^2)/2 - m^2/(p M) (xb - xa))]."""
+    """En[q] is in units of the kaon energy. The products are uniform in x,
+    times wg + wG htilde(x). Here htilde = (E M x - m^2) / (p M x) is the
+    lab helicity of a muon with longitudinal polarization 1 in the kaon
+    frame."""
     var K = len(xc) - 1
     var p = sqrt(max(E * E - m * m, 0.0))
     if p <= 0.0:
@@ -1639,20 +1582,25 @@ def _bin_node(
         En[unsafe_offset=q] += dens * e
 
 
+def _bins_to_table(N: Vec, En: Vec, off: Int, xc: Vec, dlnE: Float64) -> Vec:
+    """Products per decay per unit ln x. The products between x_(q+1) and x_q
+    are shared linearly in x, which keeps their number and energy."""
+    var K = len(xc) - 1
+    var C = zeros(K + 1)
+    for q in range(K):
+        var n = N[off + q]
+        var e = En[off + q]
+        var dx = xc[q] - xc[q + 1]
+        C[q] += (e - xc[q + 1] * n) / dx / dlnE
+        C[q + 1] += (xc[q] * n - e) / dx / dlnE
+    return C^
+
+
 def kaon_decay_tables(dlnE: Float64, K: Int) -> List[Vec]:
     """Decay kernels T[s * N_PROD + p][k], k = 0 .. K: products p per decay of
     kaon species s at the energy fraction x_k = exp(-k dlnE), per unit ln x.
 
-    Exact: for each rest-frame energy E of a product (one for two-body decays,
-    the N_REST Gauss-Legendre nodes of its distribution g for three-body ones,
-    w the node's weight), `_bin_node` integrates the number and energy of the
-    products between two grid points in closed form. A three-body product is
-    thus a sum of flat two-body spectra with the weights wg = g w. A right- or
-    left-handed muon has wg = g w/2 and wG = +-G w/2 (G: the rate-weighted
-    polarisation; the upper sign for right-handed ones).
-    The products go to the two points linearly in x, which keeps their number
-    N and energy E: x_k gets (E - x_{k+1} N) / (x_k - x_{k+1}) and x_{k+1}
-    gets (x_k N - E) / (x_k - x_{k+1})."""
+    The kernels are exact."""
     var gl = GLRules()
     var modes = kaon_decay_modes(gl)
     var xc = zeros(K + 1)
@@ -1672,7 +1620,7 @@ def kaon_decay_tables(dlnE: Float64, K: Int) -> List[Vec]:
             var Ep = pd(En).unsafe_offset(t.p * K)
             if md.kind == _TWO_BODY:
                 var mo = md.mass(1 - t.i)
-                var E = (md.M * md.M + m * m - mo * mo) / (2.0 * md.M)
+                var E = _emax(md.M, m, mo)
                 var P = md.P0 if t.i == 0 else 0.0
                 if t.hel == 0:
                     _bin_node(md.M, m, E, t.br, 0.0, xc, dlnE, Np, Ep)
@@ -1694,14 +1642,7 @@ def kaon_decay_tables(dlnE: Float64, K: Int) -> List[Vec]:
                     var h = 0.5 * Float64(t.hel) * G * w
                     _bin_node(md.M, m, E, 0.5 * g * w, h, xc, dlnE, Np, Ep)
         for p in range(N_PROD):
-            var C = zeros(K + 1)
-            for q in range(K):
-                var n = N[p * K + q]
-                var e = En[p * K + q]
-                var dx = xc[q] - xc[q + 1]
-                C[q] += (e - xc[q + 1] * n) / dx / dlnE
-                C[q + 1] += (xc[q] * n - e) / dx / dlnE
-            tabs[s * N_PROD + p] = C^
+            tabs[s * N_PROD + p] = _bins_to_table(N, En, p * K, xc, dlnE)
     return tabs^
 
 
@@ -1720,9 +1661,8 @@ comptime DECAY_ROWS = 32  # output rows per task of the kaon and charm decays
 
 
 def _row_tasks(mut tasks: List[Int], p: Int, n: Int):
-    """Append the tasks of product p, whose source has n rows: (p, r0, r1)
-    for the rows r0 .. r1 of each chunk of DECAY_ROWS rows. Each task sums its
-    rows over the species, so that the threads share the work evenly."""
+    """Each task sums its rows over the species, so that the threads share the
+    work evenly."""
     var r0 = 0
     while r0 < n:
         tasks.append(p)
@@ -1731,43 +1671,9 @@ def _row_tasks(mut tasks: List[Int], p: Int, n: Int):
         r0 += DECAY_ROWS
 
 
-def _restricted_toeplitz_add(
-    ref A: MatD,
-    x: FPtr,
-    j0: Int,
-    j1: Int,
-    r0: Int,
-    r1: Int,
-    alpha: Float64,
-    tmp: FPtr,
-    res: FPtr,
-):
-    """res[r0 .. r1) += alpha (A x)[r0 .. r1) for a Toeplitz A and x zero
-    outside the columns [j0, j1) (tmp: work space). A restricted to these rows
-    and columns is the Toeplitz matrix of the diagonal values shifted by
-    r0 + cols - j1; the other columns would add exact zeros."""
-    var off = r0 + A.cols - j1
-    var R = r1 - r0
-    var C = j1 - j0
-    var tlo = max(A.toe_lo - off, 0)
-    var thi = A.toe_hi - off
-    if thi <= 0 or tlo >= R + C - 1:
-        return
-    diagonal_gemv[False](
-        pd(A.toe).unsafe_offset(off),
-        tlo,
-        thi,
-        R,
-        C,
-        x.unsafe_offset(j0),
-        alpha,
-        tmp.unsafe_offset(r0),
-    )
-    for i in range(r0, r1):
-        res[unsafe_offset=i] += tmp[unsafe_offset=i]
-
-
-def _restricted_toeplitz_add2(
+def _restricted_toeplitz_add[
+    two: Bool
+](
     ref A: MatD,
     x0: FPtr,
     x1: FPtr,
@@ -1781,30 +1687,14 @@ def _restricted_toeplitz_add2(
     res0: FPtr,
     res1: FPtr,
 ):
-    """The same for two vectors zero outside [j0, j1), in one pass over the
-    diagonal values (`diagonal_gemv2`)."""
-    var off = r0 + A.cols - j1
-    var R = r1 - r0
-    var C = j1 - j0
-    var tlo = max(A.toe_lo - off, 0)
-    var thi = A.toe_hi - off
-    if thi <= 0 or tlo >= R + C - 1:
+    """A must be Toeplitz, and x0 and x1 zero outside the columns [j0, j1)."""
+    if toeplitz_window_zero(A, j0, j1, r0, r1):
         return
-    diagonal_gemv2[False](
-        pd(A.toe).unsafe_offset(off),
-        tlo,
-        thi,
-        R,
-        C,
-        x0.unsafe_offset(j0),
-        x1.unsafe_offset(j0),
-        alpha,
-        tmp0.unsafe_offset(r0),
-        tmp1.unsafe_offset(r0),
-    )
+    toeplitz_gemv[two](A, x0, x1, j0, j1, r0, r1, alpha, tmp0, tmp1)
     for i in range(r0, r1):
         res0[unsafe_offset=i] += tmp0[unsafe_offset=i]
-        res1[unsafe_offset=i] += tmp1[unsafe_offset=i]
+        comptime if two:
+            res1[unsafe_offset=i] += tmp1[unsafe_offset=i]
 
 
 def _species_products(
@@ -1823,15 +1713,12 @@ def _species_products(
     r1: Int,
     alpha: Float64,
 ):
-    """Add the rows r0 .. r1 of the products of the Toeplitz kernel A of one
-    species with its decay rates of both origins, w[k0] and w[k1] (active
-    where non-zero, in the hadron bins [jlo, jhi)), to res[p0] and res[p1]
-    (tmp: work space). Each acts only on its bins. A species of both origins
-    takes one pass over A, over both origins' bins (the others add zeros)."""
+    """A species of both origins takes one pass over A, over both origins' bins
+    (the others add zeros)."""
     var a0 = active[k0]
     var a1 = active[k1]
     if a0 and a1:
-        _restricted_toeplitz_add2(
+        _restricted_toeplitz_add[True](
             A,
             pd(w[k0]),
             pd(w[k1]),
@@ -1845,77 +1732,165 @@ def _species_products(
             pd(res[p0]),
             pd(res[p1]),
         )
-    elif a0:
-        _restricted_toeplitz_add(
-            A,
-            pd(w[k0]),
-            jlo[k0],
-            jhi[k0],
-            r0,
-            r1,
-            alpha,
-            pd(tmp[p0]),
-            pd(res[p0]),
-        )
-    elif a1:
-        _restricted_toeplitz_add(
-            A,
-            pd(w[k1]),
-            jlo[k1],
-            jhi[k1],
-            r0,
-            r1,
-            alpha,
-            pd(tmp[p1]),
-            pd(res[p1]),
+    elif a0 or a1:
+        # (of one origin: the second vector's pointers are not read)
+        var k = k0 if a0 else k1
+        var p = p0 if a0 else p1
+        var x = pd(w[k])
+        var t = pd(tmp[p])
+        var y = pd(res[p])
+        _restricted_toeplitz_add[False](
+            A, x, x, jlo[k], jhi[k], r0, r1, alpha, t, t, y, y
         )
 
 
-def kdec_work(job: Pointer[KDecJob, MutUntrackedOrigin], q: Int):
-    """Task q (_row_tasks): its rows of a product of both origins, summed over
-    the kaon species in a fixed order."""
-    ref D = job[].D[]
-    var p = D.tasks[3 * q]
-    for s in range(N_KAON):
-        if D.has[s * N_PROD + p]:
+def _decay_task(
+    ref K: List[MatD],
+    ref has: List[Bool],
+    ref w: List[Vec],
+    ref active: List[Bool],
+    ref jlo: List[Int],
+    ref jhi: List[Int],
+    ref tmp: List[Vec],
+    ref out: List[Vec],
+    ref tasks: List[Int],
+    q: Int,
+    dlnE: Float64,
+):
+    """The rows are summed over the species in a fixed order."""
+    var n_prod = len(out) // 2
+    var n_sp = len(w) // 2
+    var p = tasks[3 * q]
+    for s in range(n_sp):
+        if has[s * n_prod + p]:
             _species_products(
-                D.K[s * N_PROD + p],
-                D.w,
-                D.active,
-                D.jlo,
-                D.jhi,
+                K[s * n_prod + p],
+                w,
+                active,
+                jlo,
+                jhi,
                 s,
-                N_KAON + s,
-                D.tmp,
-                D.out,
+                n_sp + s,
+                tmp,
+                out,
                 p,
-                N_PROD + p,
-                D.tasks[3 * q + 1],
-                D.tasks[3 * q + 2],
-                job[].dlnE,
+                n_prod + p,
+                tasks[3 * q + 1],
+                tasks[3 * q + 2],
+                dlnE,
             )
 
 
+def _decay_kernels[
+    rows: def(AM3Arrays, Int) thin -> Int,
+    energy: def(AM3Arrays, Int, Int) thin -> Float64,
+](
+    dat: AM3Arrays,
+    T: List[Vec],
+    n_prod: Int,
+    K: Int,
+    mut kernels: List[MatD],
+    mut has: List[Bool],
+):
+    var nh = dat.nbins_had
+    for s in range(len(kernels) // n_prod):
+        for p in range(n_prod):
+            var nr = rows(dat, p)
+            var nt = nr + nh - 1
+            var t = zeros(nt)
+            var used = False
+            for m in range(nt):
+                var i: Int
+                var j: Int
+                i, j = MatD.toeplitz_entry(m, nh)
+                var k = Int(
+                    floor(
+                        -c_log(energy(dat, p, i) / dat.egrid_had[j]) / dat.dlnE
+                        + 0.5
+                    )
+                )
+                if k >= 0 and k <= K:
+                    t[m] = T[s * n_prod + p][k]
+                    used = used or t[m] != 0.0
+            has[s * n_prod + p] = used
+            kernels[s * n_prod + p] = MatD.toeplitz(
+                nr, nh, t^
+            ) if used else MatD()
+
+
+def _decay_rates[
+    mass: def(Int) thin -> Float64, lifetime: def(Int) thin -> Float64
+](
+    dat: AM3Arrays,
+    base0: Int,
+    base1: Int,
+    on0: Bool,
+    on1: Bool,
+    mut w: List[Vec],
+    mut active: List[Bool],
+    mut jlo: List[Int],
+    mut jhi: List[Int],
+) -> Bool:
+    var nh = dat.nbins_had
+    var n_sp = len(w) // 2
+    var any_active = False
+    for o in range(2):
+        var on = on0 if o == 0 else on1
+        var base = base0 if o == 0 else base1
+        for s in range(n_sp):
+            var k = o * n_sp + s
+            resize_zero(w[k], nh)
+            active[k] = False
+            jlo[k] = nh
+            jhi[k] = 0
+            if not on:
+                continue
+            var r = mass(s) / lifetime(s)
+            for i in range(nh):
+                w[k][i] = dat.n[base + s][i] * r / dat.egrid_had[i]
+                if w[k][i] != 0.0:
+                    active[k] = True
+                    jlo[k] = min(jlo[k], i)
+                    jhi[k] = i + 1
+            any_active = any_active or active[k]
+    return any_active
+
+
+def kdec_work(job: Pointer[KDecJob, MutUntrackedOrigin], q: Int):
+    ref D = job[].D[]
+    _decay_task(
+        D.K,
+        D.has,
+        D.w,
+        D.active,
+        D.jlo,
+        D.jhi,
+        D.tmp,
+        D.out,
+        D.tasks,
+        q,
+        job[].dlnE,
+    )
+
+
 struct KaonDecay(Copyable, Movable):
-    """Sources of pions, muons, e+- and neutrinos from the decay of the four
-    kaon species. T(E_i / E_j) depends only on i - j, so each (species,
-    product) kernel, summed over the decay modes, is a Toeplitz matrix stored
-    by its diagonal values."""
+    """T(E_i / E_j) depends only on i - j. So each (species, product) kernel,
+    summed over the decay modes, is a Toeplitz matrix stored by its diagonal
+    values."""
 
     var verbose: Bool
-    var K: List[MatD]  # kernel of (species s, product p) at s * N_PROD + p
+    var K: List[MatD]
     var has: List[Bool]
-    # per origin o (0: photo-hadronic, 1: pp): the source of product p (on its
-    # grid) at o * N_PROD + p, and n_K / t_dec of species s at o * N_KAON + s
+    # per origin o (0: photo-hadronic, 1: pp)
     var out: List[Vec]
     var w: List[Vec]
-    var active: List[Bool]  # species with a non-zero density
-    var jlo: List[Int]  # hadron bins [jlo, jhi) where w is non-zero
+    var active: List[Bool]
+    var jlo: List[Int]
     var jhi: List[Int]
-    var tmp: List[Vec]  # work space per product
-    var tasks: List[Int]  # (product, first row, end row) of each task
+    var tmp: List[Vec]
+    var tasks: List[Int]
     var nthreads: Int
-    var built_nh: Int  # hadron bins of the grid the kernels were built for
+    var built_nh: Int
 
     def __init__(out self, dat: AM3Arrays, verbose: Bool):
         self.verbose = verbose
@@ -1950,7 +1925,6 @@ struct KaonDecay(Copyable, Movable):
         self.built_nh = -1
 
     def ready(self, dat: AM3Arrays) -> Bool:
-        """Kernels built for the current grid."""
         return self.built_nh == dat.nbins_had
 
     @staticmethod
@@ -1976,74 +1950,37 @@ struct KaonDecay(Copyable, Movable):
         if self.verbose:
             print("computing kaon decay kernels")
         var nh = dat.nbins_had
-        # the grids are logarithmic with step dlnE, so E_i / E_j = x_k with
-        # integer k; K: the k of the lowest x on any product grid
+        # The grids are logarithmic with step dlnE, so E_i / E_j = x_k with
+        # integer k.
         var K = 0
         for p in range(N_PROD):
             var x = KaonDecay._energy(dat, p, 0) / dat.egrid_had[nh - 1]
             K = max(K, Int(floor(-c_log(x) / dat.dlnE + 0.5)))
         var T = kaon_decay_tables(dat.dlnE, K)
-        for s in range(N_KAON):
-            for p in range(N_PROD):
-                var rows = KaonDecay._rows(dat, p)
-                var nt = rows + nh - 1
-                var t = zeros(nt)
-                var used = False
-                for m in range(nt):
-                    # A[i, j] = t[i - j + nh - 1]: pick a valid (i, j)
-                    var j = max(0, nh - 1 - m)
-                    var i = m - (nh - 1) + j
-                    var k = Int(
-                        floor(
-                            -c_log(
-                                KaonDecay._energy(dat, p, i) / dat.egrid_had[j]
-                            )
-                            / dat.dlnE
-                            + 0.5
-                        )
-                    )
-                    if k >= 0 and k <= K:
-                        t[m] = T[s * N_PROD + p][k]
-                        used = used or t[m] != 0.0
-                self.has[s * N_PROD + p] = used
-                self.K[s * N_PROD + p] = MatD.toeplitz(
-                    rows, nh, t^
-                ) if used else MatD()
+        _decay_kernels[KaonDecay._rows, KaonDecay._energy](
+            dat, T, N_PROD, K, self.K, self.has
+        )
         self.built_nh = nh
 
     def Calc_KtoX(
         mut self, dat: AM3Arrays, base0: Int, base1: Int, on0: Bool, on1: Bool
     ):
-        """Decay products of the kaon densities dat.n[base + s] (EdN/dEdV on
-        the hadron grid) of both origins (base0, base1: the first species of
-        each population; on0, on1: whether it decays), in one pass."""
         if self.verbose:
             print("computing kaon decay terms")
         self.clear_internal_arrays(dat)
         if not self.ready(dat):
             return
-        var nh = dat.nbins_had
-        var any_active = False
-        for o in range(2):
-            var on = on0 if o == 0 else on1
-            var base = base0 if o == 0 else base1
-            for s in range(N_KAON):
-                var k = o * N_KAON + s
-                resize_zero(self.w[k], nh)
-                self.active[k] = False
-                self.jlo[k] = nh
-                self.jhi[k] = 0
-                if not on:
-                    continue
-                var r = kaon_mass(s) / kaon_lifetime(s)
-                for i in range(nh):
-                    self.w[k][i] = dat.n[base + s][i] * r / dat.egrid_had[i]
-                    if self.w[k][i] != 0.0:
-                        self.active[k] = True
-                        self.jlo[k] = min(self.jlo[k], i)
-                        self.jhi[k] = i + 1
-                any_active = any_active or self.active[k]
-        if not any_active:
+        if not _decay_rates[kaon_mass, kaon_lifetime](
+            dat,
+            base0,
+            base1,
+            on0,
+            on1,
+            self.w,
+            self.active,
+            self.jlo,
+            self.jhi,
+        ):
             return
         self.tasks.clear()
         for k in range(2 * N_PROD):
@@ -2056,19 +1993,15 @@ struct KaonDecay(Copyable, Movable):
         parallel_tasks[kdec_work](job, len(self.tasks) // 3, self.nthreads)
 
 
-# ============================================================================
+# ==============================================================================
 # Charm-hadron decays (am3_mojo addition)
-# ============================================================================
-# Sources of the products of the decays of D+-, D0, anti-D0, Ds+-, Lambda_c+
-# and anti-Lambda_c- (model/particles.mojo), as for the kaons:
-#   Q(E_i) = dlnE * sum_j T(E_i / E_j) n_C(E_j) / t_dec(E_j).
+# ==============================================================================
 # Modes (`charm_decay_modes`): PDG 2026, every mode above 0.5 % and every
 # exclusive semileptonic mode above 0.1 %
 # (tests/literature_checks/charm/README.md, "Decays"). The short-lived
 # particles of the modes (tau, eta, eta', omega, phi, rho, K*, f0, a1,
-# Lambda, Sigma, Xi) decay at once, so that their products count as products
-# of the charm decay. The antiparticles decay as the CP conjugates.
-# `charm_decay_tables` builds the kernels T at kernel initialisation.
+# Lambda, Sigma, Xi) decay at once. So their products count as products of
+# the charm decay. The antiparticles decay as the CP conjugates.
 
 
 @inline(.always)
@@ -2111,7 +2044,7 @@ def charm_name(s: Int) -> String:
 
 
 # products of the charm decays, in the order of the coefficient blocks of
-# simulation/coeffs.mojo, and the grids they live on
+# simulation/coeffs.mojo
 comptime CP_PIP = 0
 comptime CP_PIM = 1
 comptime CP_PI0 = 2
@@ -2151,7 +2084,7 @@ def charm_product_grid(p: Int) -> Int:
 @inline(.always)
 def charm_product_conjugate(p: Int) -> Int:
     """Product of the CP-conjugate decay (a mu+ of helicity L becomes a mu-
-    of helicity R; antinucleons count as nucleons)."""
+    of helicity R, and antinucleons count as nucleons)."""
     var cc: Array[Int, N_CPROD] = [
         CP_PIM,
         CP_PIP,
@@ -2180,7 +2113,7 @@ def charm_product_conjugate(p: Int) -> Int:
 
 
 # Particles of the decay network: the products above (a muon with its
-# polarisation, K0 and anti-K0 as half K0_S, half K0_L) and the short-lived
+# polarization, K0 and anti-K0 as half K0_S, half K0_L) and the short-lived
 # particles that decay at once (X_TAUP and later).
 comptime X_PIP = 0
 comptime X_PIM = 1
@@ -2270,7 +2203,6 @@ def x_mass(x: Int) -> Float64:
     return m[x]
 
 
-# kinematics of a mode
 comptime XK_TWO = 0  # two-body
 comptime XK_PS = 1  # n-body phase space
 comptime XK_PL3 = 2  # P -> P' l+ nu
@@ -2282,21 +2214,18 @@ comptime XK_MICHEL = 5  # tau+ -> l+ nu_l anti-nu_tau
 struct XMode(Copyable, Movable):
     """Decay mode: branching ratio br into the network particles prod (X_*),
     with the kinematics `kind`:
-    * TWO: product 0 has the longitudinal polarisation P0 in the parent frame
-      (for a lepton), and the asymmetry a0 about the spin of a polarised
-      parent (the tau): (1 + a0 P cos theta) / 2; product 1 has -a0;
-    * PS: flat n-body phase space;
+    * TWO: product 0 has the longitudinal polarization P0 in the parent frame
+      (for a lepton). It also has the asymmetry a0 about the spin of a
+      polarized parent (the tau): (1 + a0 P cos theta) / 2. Product 1 has -a0.
+    * PS: in a semileptonic mode (P0 = 1, _sl_ps), the l+ has the
+      longitudinal polarization p / E (_nodes).
     * PL3 (products P', l+, nu): the V-A matrix element (l3_density) with
-      the pole form factors f+(t) = 1 / ((1 - t / mp^2)(1 - alpha t / mp^2))
-      and f0(t) = 1 / (1 - t / m0^2), f- = (f0 - f+) (M^2 - m^2) / t;
-    * VL3 (products V, l+, nu): the V-A matrix element (vl3_density) with
-      V(t) = rV / (1 - t / mV^2), A1(t) = 1 / (1 - t / mA^2), A2(t) =
-      r2 / (1 - t / mA^2), A0(t) = A0(0) / (1 - t / m0^2), A0(0) =
-      [(M + m) - (M - m) r2] / (2 m);
+      the pole form factors.
+    * VL3 (products V, l+, nu): the V-A matrix element (vl3_density).
     * BL3 (products B, l+, nu): Lambda_c+ -> Lambda (bl = 0) or n (bl = 1)
-      with the lattice form factors of physics/lambda_c_semileptonic.mojo;
+      with the lattice form factors of physics/lambda_c_semileptonic.mojo.
     * MICHEL (products l+, nu_l, anti-nu_tau): the V-A spectra of a
-      polarised tau+ with massless products (michel_nodes)."""
+      polarized tau+ with massless products (michel_nodes)."""
 
     var kind: Int
     var br: Float64
@@ -2406,14 +2335,14 @@ def _det3(
     b0: Float64,
     b1: Float64,
     b2: Float64,
-    C_LIGHT: Float64,
+    c0: Float64,
     c1: Float64,
     c2: Float64,
 ) -> Float64:
     return (
         a0 * (b1 * c2 - b2 * c1)
-        - a1 * (b0 * c2 - b2 * C_LIGHT)
-        + a2 * (b0 * c1 - b1 * C_LIGHT)
+        - a1 * (b0 * c2 - b2 * c0)
+        + a2 * (b0 * c1 - b1 * c0)
     )
 
 
@@ -2434,7 +2363,6 @@ def _raise(e: V4) -> V4:
 
 @inline(.always)
 def _eps4(a: V4, b: V4, c: V4, d: V4) -> Float64:
-    """eps_{mu nu rho sigma} a^mu b^nu c^rho d^sigma."""
     var e = _eps_low(b, c, d)
     return a[0] * e[0] + a[1] * e[1] + a[2] * e[2] + a[3] * e[3]
 
@@ -2449,17 +2377,11 @@ def vl3_density(
     pol: Bool,
 ) -> Float64:
     """|M|^2 of P -> V l+ nu at the parent-frame energies E_V and E_l, summed
-    over the V polarisations and the l+ spin (pol: the part proportional to
-    the l+ longitudinal polarisation in the parent frame), with the hadronic
-    current of the form factors of `md` (XMode, VL3)
-    J = 2V/(M + m) eps(mu, eps*, p_P, p_V)
-        - i [(M + m) A1 eps* - A2 / (M + m) (eps*.q) (p_P + p_V)
-             - 2 m (A3 - A0) / q^2 (eps*.q) q],
+    over the V polarizations and the l+ spin. With pol, it is the part
+    proportional to the l+ longitudinal polarization in the parent frame. It
+    uses the hadronic current of the form factors of `md` (XMode, VL3),
     contracted with the V-A lepton tensor of P = p_l (pol: P = m_l s, the
-    rule |M|^2(s) = 1/2 |M|^2(p_l -> p_l + m_l s) for a massless neutrino):
-    sum over eps of 8 [2 ((nu.Jr)(P.Jr) + (nu.Ji)(P.Ji)) - (nu.P)(Jr^2 + Ji^2)]
-    + 16 eps(Jr, Ji, nu, P), J = Jr + i Ji. The V moves along z and the l+ in
-    the x-z plane."""
+    rule |M|^2(s) = 1/2 |M|^2(p_l -> p_l + m_l s) for a massless neutrino)."""
     var Enu = M - EV - El
     var pV = sqrt(max(EV * EV - mV * mV, 0.0))
     var pl = sqrt(max(El * El - ml * ml, 0.0))
@@ -2476,7 +2398,6 @@ def vl3_density(
     var t = _mdot(q, q)
     var P: V4
     if pol:
-        # helicity spin 4-vector times m_l
         P = V4(pl, El * s, 0.0, El * c)
     else:
         P = l
@@ -2520,7 +2441,6 @@ def pl3_density(
     El: Float64,
     pol: Bool,
 ) -> Float64:
-    """l3_density with the pole form factors of `md` (XMode, PL3)."""
     var t = M * M + mh * mh - 2.0 * M * Eh
     var Fp = 1.0 / (
         (1.0 - t / (md.mp * md.mp)) * (1.0 - md.alpha * t / (md.mp * md.mp))
@@ -2533,8 +2453,6 @@ def pl3_density(
 def _dalitz_density(
     md: XMode, M: Float64, E0: Float64, E1: Float64, pol: Bool
 ) -> Float64:
-    """Dalitz-plot density of a three-body semileptonic mode at the energies
-    E0 (hadron) and E1 (lepton) of products 0 and 1."""
     var mh = x_mass(md.prod[0])
     var ml = x_mass(md.prod[1])
     if md.kind == XK_PL3:
@@ -2550,10 +2468,7 @@ def _dalitz_density(
 
 def _phase_space(m: Float64, masses: List[Float64], gl: XRules) -> Float64:
     """Volume (up to a constant) of the phase space of a system of mass m
-    decaying into particles of the given masses: lambda^(1/2)(m^2, m1^2,
-    m2^2) / m^2 for two, and for more, recursively,
-    R_k(m) = int dm' 2 m' R_2(m; m1, m') R_(k-1)(m'), over the mass m' of
-    the others."""
+    decaying into particles of the given masses."""
     var n = len(masses)
     if n == 1:
         return 1.0
@@ -2586,11 +2501,6 @@ def _phase_space(m: Float64, masses: List[Float64], gl: XRules) -> Float64:
     return s
 
 
-# Gauss-Legendre points of the charm decay tables: along a Dalitz line
-# (N_DALITZ), over a product's parent-frame energy (N_CREST), over the mass of
-# the other products in the phase-space recursion (N_PSG), over the cosine of
-# the emission angle of a tau decay product (N_BOX), and over the energy
-# fraction of a tau -> l nu nu product (N_MICHEL)
 comptime N_CREST = 128
 comptime N_PSG = 16
 comptime N_BOX = 16
@@ -2626,36 +2536,18 @@ struct XRules(Copyable, Movable):
         gauss_legendre(N_BOX, self.xb, self.wb)
         gauss_legendre(N_MICHEL, self.xm, self.wm)
 
-    @staticmethod
-    def _sin2(
-        x: Float64, w: Float64, lo: Float64, hi: Float64
-    ) -> Tuple[Float64, Float64]:
-        """The node x (weight w) of a rule on [-1, 1] mapped to [lo, hi] by
-        E = lo + (hi - lo) sin^2(pi u / 2), which absorbs square-root edges at
-        both ends (as GLRules.rest_node)."""
-        var a = 0.25 * PI * (x + 1.0)
-        var s = c_sin(a)
-        var c = c_cos(a)
-        var L = hi - lo
-        var E = lo + L * s * s if s < c else hi - L * c * c
-        return (E, 0.5 * PI * L * s * c * w)
-
     def rest_node(
         self, n: Int, lo: Float64, hi: Float64
     ) -> Tuple[Float64, Float64]:
-        return XRules._sin2(self.xo[n], self.wo[n], lo, hi)
+        return _sin2_node(self.xo[n], self.wo[n], lo, hi)
 
     def ps_node(
         self, n: Int, lo: Float64, hi: Float64
     ) -> Tuple[Float64, Float64]:
-        return XRules._sin2(self.xp[n], self.wp[n], lo, hi)
+        return _sin2_node(self.xp[n], self.wp[n], lo, hi)
 
 
 struct XNodes(Movable):
-    """Nodes of a product's parent-frame energy distribution: energy E, number
-    w, longitudinal-polarisation weight G (leptons) and the asymmetry a of the
-    angular distribution about the spin of a polarised parent."""
-
     var E: Vec
     var w: Vec
     var G: Vec
@@ -2677,20 +2569,14 @@ struct XNodes(Movable):
 def _three_body_line(
     md: XMode, M: Float64, i: Int, E: Float64, pol: Bool, gl: XRules
 ) -> Float64:
-    """The Dalitz density of a three-body mode integrated along the line
-    E_i = E (as KDecayMode.energy_density)."""
     var j = 1 if i == 0 else 0
     var k = 1 if i == 2 else 2
     var mi = x_mass(md.prod[i])
     var mj = x_mass(md.prod[j])
     var mk = x_mass(md.prod[k])
-    var P = sqrt(max(E * E - mi * mi, 0.0))
-    var mjk2 = M * M + mi * mi - 2.0 * M * E
-    var mjk = sqrt(max(mjk2, 1e-300))
-    var Ejs = (mjk2 + mj * mj - mk * mk) / (2.0 * mjk)
-    var pjs = sqrt(max(Ejs * Ejs - mj * mj, 0.0))
-    var lo = ((M - E) * Ejs - P * pjs) / mjk
-    var hi = ((M - E) * Ejs + P * pjs) / mjk
+    var lo: Float64
+    var hi: Float64
+    lo, hi = _dalitz_line(M, mi, mj, mk, E)
     var s = 0.0
     var Es: Array[Float64, 3] = [0.0, 0.0, 0.0]
     for n in range(N_DALITZ):
@@ -2707,19 +2593,11 @@ def _three_body_line(
     return s
 
 
-def _emax(M: Float64, mi: Float64, others: Float64) -> Float64:
-    """Largest parent-frame energy of a product of mass mi when the others'
-    masses add up to `others`."""
-    return (M * M + mi * mi - others * others) / (2.0 * M)
-
-
 def michel_nodes(M: Float64, i: Int, gl: XRules) -> XNodes:
-    """tau+ -> l+ nu_l anti-nu_tau (V-A, massless products, x = 2E/M): the
-    l+ and the anti-nu_tau have 2 x^2 (3 - 2 x) and the asymmetry
-    (2x - 1)/(3 - 2x) about the tau spin, the nu_l 12 x^2 (1 - x) and -1;
-    the l+ is right-handed. The products are boosted as massless (p = E),
-    which keeps energy and momentum; a muon below its mass then goes to the
-    bin of its energy."""
+    """tau+ -> l+ nu_l anti-nu_tau (V-A, massless products). The l+ is
+    right-handed. The products are boosted as massless (p = E), which keeps
+    energy and momentum. A muon below its mass then goes to the bin of its
+    energy."""
     var r = XNodes()
     for n in range(N_MICHEL):
         var x = 0.5 * (gl.xm[n] + 1.0)
@@ -2745,7 +2623,7 @@ def _nodes(md: XMode, M: Float64, i: Int, gl: XRules) -> XNodes:
     var mi = x_mass(md.prod[i])
     if md.kind == XK_TWO:
         var mo = x_mass(md.prod[1 - i])
-        var E = (M * M + mi * mi - mo * mo) / (2.0 * M)
+        var E = _emax(M, mi, mo)
         var P0 = md.P0 if i == 0 else 0.0
         var a = md.a0 if i == 0 else -md.a0
         r.add(E, 1.0, P0, a)
@@ -2770,13 +2648,18 @@ def _nodes(md: XMode, M: Float64, i: Int, gl: XRules) -> XNodes:
             var p = sqrt(max(E * E - mi * mi, 0.0))
             var mrec = sqrt(max(M * M + mi * mi - 2.0 * M * E, 0.0))
             g = p * _phase_space(mrec, rest, gl)
+            # V-A with a massless neutrino makes the l+ right-handed in
+            # chirality. Its helicity is then +1 with the probability
+            # (1 + p / E) / 2. (The matrix elements of the three-body modes
+            # give 0.4-0.6 % less on average.)
+            if md.P0 != 0.0 and (md.prod[i] == X_EP or md.prod[i] == X_MUP):
+                G = md.P0 * g * p / E
         else:
             g = _three_body_line(md, M, i, E, False, gl)
             if i == 1:
                 G = _three_body_line(md, M, i, E, True, gl)
         total += g * w
         r.add(E, g * w, G * w, 0.0)
-    # normalised to one product per decay
     for k in range(len(r.w)):
         r.w[k] /= total
         r.G[k] /= total
@@ -2784,9 +2667,7 @@ def _nodes(md: XMode, M: Float64, i: Int, gl: XRules) -> XNodes:
 
 
 struct XAcc(Movable):
-    """Number and energy (in units of the parent's energy) of the products
-    between the grid points x_(q+1) < x < x_q, q = 0 .. K - 1: N_CPROD
-    products, then the short-lived particles (slot N_CPROD + x)."""
+    """The energy is in units of the parent's energy."""
 
     var K: Int
     var N: Vec
@@ -2842,8 +2723,8 @@ def _bin_any(
     mut acc: XAcc,
     slot: Int,
 ):
-    """_bin_node into a slot of the accumulator; a product at rest in the
-    parent frame (x = E / M exactly) goes to the bin that contains it."""
+    """A product at rest in the parent frame (x = E / M exactly) goes to the
+    bin that contains it."""
     var N = pd(acc.N).unsafe_offset(slot * acc.K)
     var En = pd(acc.En).unsafe_offset(slot * acc.K)
     var p = sqrt(max(E * E - m * m, 0.0))
@@ -2867,10 +2748,6 @@ def _emit(
     xc: Vec,
     dlnE: Float64,
 ):
-    """Products of parent-frame energy E (number w, polarisation weight G) of
-    network particle x, binned in the lab for a parent of mass M: muons by
-    their lab helicity, K0 as half K0_S, half K0_L, short-lived particles
-    into their own slots."""
     var m = x_mass(x)
     if x == X_MUP or x == X_MUM:
         var l = CP_MUPL if x == X_MUP else CP_MUML
@@ -2896,11 +2773,8 @@ def _emit_tau(
     dlnE: Float64,
     gl: XRules,
 ):
-    """The tau of a parent decay (parent-frame energy Etau, longitudinal
-    polarisation Ptau, number wtau) decays at once: each product of tau-frame
-    energy E' and momentum p', emitted at the angle theta to the tau's flight
-    direction with (1 + a Ptau cos theta) / 2, has the parent-frame energy
-    gamma (E' + beta p' cos theta); a muon keeps its polarisation."""
+    """The tau of a parent decay decays at once. A muon keeps its
+    polarization."""
     var mt = MASS_TAU
     var g = Etau / mt
     var b = sqrt(max(1.0 - 1.0 / (g * g), 0.0))
@@ -2923,25 +2797,10 @@ def _emit_tau(
                     _emit(acc, md.prod[j], M, ED, w, gfrac * w, xc, dlnE)
 
 
-def _bins_to_table(acc: XAcc, slot: Int, xc: Vec, dlnE: Float64) -> Vec:
-    """Products per decay per unit ln x at the grid points x_k, k = 0 .. K,
-    from the number and energy between them, shared linearly in x (which
-    keeps both, as in kaon_decay_tables)."""
-    var K = acc.K
-    var C = zeros(K + 1)
-    for q in range(K):
-        var n = acc.N[slot * K + q]
-        var e = acc.En[slot * K + q]
-        var dx = xc[q] - xc[q + 1]
-        C[q] += (e - xc[q + 1] * n) / dx / dlnE
-        C[q + 1] += (xc[q] * n - e) / dx / dlnE
-    return C^
-
-
 def _conv(A: Vec, B: Vec, dlnE: Float64) -> Vec:
     """Products per unit ln x of a cascade: A (the short-lived particle per
     unit ln x) convolved in ln x with B (its products per decay per unit
-    ln y); number and energy multiply exactly on the grid x_k = e^(-k dlnE).
+    ln y). Number and energy multiply exactly on the grid x_k = e^(-k dlnE).
     """
     var n = len(A)
     var C = zeros(n)
@@ -2976,9 +2835,8 @@ def _resolve(
     K: Int,
     gl: XRules,
 ) -> List[Vec]:
-    """Products per decay per unit ln x (N_CPROD tables, K + 1 values) of a
-    parent of mass M with these modes; the products of its short-lived
-    products x are F[x]."""
+    """Products per decay per unit ln x of a parent of mass M with these modes.
+    The products of its short-lived products x are F[x]."""
     var acc = XAcc(K)
     for d in range(len(modes)):
         ref md = modes[d]
@@ -3003,12 +2861,12 @@ def _resolve(
                     _emit(acc, x, M, nd.E[k], w, md.br * nd.G[k], xc, dlnE)
     var T = List[Vec]()
     for p in range(N_CPROD):
-        T.append(_bins_to_table(acc, p, xc, dlnE))
+        T.append(_bins_to_table(acc.N, acc.En, p * K, xc, dlnE))
     for x in range(N_XFIN + 1, N_X):
         var slot = N_CPROD + x
         if not acc.slot_nonzero(slot):
             continue
-        var TR = _bins_to_table(acc, slot, xc, dlnE)
+        var TR = _bins_to_table(acc.N, acc.En, slot * K, xc, dlnE)
         for p in range(N_CPROD):
             if _is_zero(F[x][p]):
                 continue
@@ -3044,9 +2902,9 @@ def _short_lived_order() -> List[Int]:
     return o^
 
 
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # decay modes (PDG 2026)
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 def _renormalised(var t: List[XMode]) -> List[XMode]:
     var s = 0.0
     for k in range(len(t)):
@@ -3057,14 +2915,13 @@ def _renormalised(var t: List[XMode]) -> List[XMode]:
 
 
 def tau_decay_modes() -> List[XMode]:
-    """tau+ decays: the eleven modes above 0.5 % of PDG 2026 (charge
-    conjugates of its tau- modes), renormalised to their sum (97.045 %).
-    l+ nu nu: the V-A spectra of a polarised tau with massless products;
-    pi+ (K+) anti-nu_tau with the asymmetry -1 about the tau spin; pi+ pi0
-    as rho+ and the two three-pion modes as a1+, with the asymmetry
-    -(m_tau^2 - 2 m^2)/(m_tau^2 + 2 m^2) of a spin-1 hadron (the a1+ into
-    pi+ pi0 pi0 and pi+ pi+ pi- in the ratio of the two modes); the others as
-    unpolarised phase space."""
+    """tau+ decays: the eleven modes above 0.5 % of PDG 2026 (charge conjugates
+    of its tau- modes), renormalized to their sum (97.045 %). l+ nu nu: the V-A
+    spectra of a polarized tau with massless products. pi+ (K+) anti-nu_tau:
+    the asymmetry -1 about the tau spin. pi+ pi0 as rho+ and the two
+    three-pion modes as a1+, with the asymmetry of a spin-1 hadron. The a1+
+    decays into pi+ pi0 pi0 and pi+ pi+ pi- in the ratio of the two modes. The
+    others: unpolarized phase space."""
     var mt2 = MASS_TAU * MASS_TAU
     var mr2 = MASS_RHO * MASS_RHO
     var ma2 = MASS_A1 * MASS_A1
@@ -3086,9 +2943,9 @@ def tau_decay_modes() -> List[XMode]:
 
 def short_lived_modes(x: Int) -> List[XMode]:
     """Decays of the short-lived particles: every mode of 0.5 % and above of
-    PDG 2026, renormalised to their sum; two-body modes, the others as phase
-    space. K* and f0 into their isospin shares (PDG gives none), the a1+ as
-    the tau's three-pion modes."""
+    PDG 2026, renormalized to their sum. The modes are two-body modes or
+    phase space. K* and f0 decay into their isospin shares (PDG gives none).
+    The a1+ decays as the three-pion modes of the tau."""
     var t = List[XMode]()
     if x == X_ETA:
         t.append(x_two(0.3936, X_GAM, X_GAM))
@@ -3161,7 +3018,6 @@ def _sl_pp(
     cs: Bool,
     alpha: Float64,
 ):
-    """P -> P' l+ nu for e and mu; cs: a c -> s transition (else c -> d)."""
     var mp = MASS_DS_STAR if cs else MASS_D_STAR
     var m0 = MASS_DS0_STAR if cs else MASS_D0_STAR
     t.append(x_pl3(be, h, X_EP, X_NUE, mp, alpha, m0))
@@ -3177,7 +3033,6 @@ def _sl_pv(
     rV: Float64,
     r2: Float64,
 ):
-    """P -> V l+ nu for e and mu."""
     var mV = MASS_DS_STAR if cs else MASS_D_STAR
     var mA = MASS_DS1 if cs else MASS_D1
     var m0 = MASS_DS if cs else MASS_D
@@ -3192,17 +3047,21 @@ def _sl_ps(
     var hadrons: List[Int],
 ):
     """A non-resonant semileptonic mode with more than one hadron, for e and
-    mu, as phase space."""
+    mu, as phase space with the l+ of V-A (P0 = 1)."""
     if be > 0.0:
         var pe = hadrons.copy()
         pe.append(X_EP)
         pe.append(X_NUE)
-        t.append(x_ps(be, pe^))
+        var me = x_ps(be, pe^)
+        me.P0 = 1.0
+        t.append(me^)
     if bmu > 0.0:
         var pm = hadrons^
         pm.append(X_MUP)
         pm.append(X_NUM)
-        t.append(x_ps(bmu, pm^))
+        var mm = x_ps(bmu, pm^)
+        mm.P0 = 1.0
+        t.append(mm^)
 
 
 def _scaled(var t: List[XMode], s: Float64) -> List[XMode]:
@@ -3212,24 +3071,25 @@ def _scaled(var t: List[XMode], s: Float64) -> List[XMode]:
 
 
 def charm_decay_modes(s: Int) -> List[XMode]:
-    """Decays of D+, D0, Ds+ and Lambda_c+ (PDG 2026;
-    tests/literature_checks/charm/README.md, "Decays"; the PDG names in the
-    comments).
+    """Decays of D+, D0, Ds+ and Lambda_c+ (PDG 2026,
+    tests/literature_checks/charm/README.md, "Decays"). The comments give the
+    PDG names.
 
     Semileptonic: every exclusive mode above 0.1 % that does not overlap
-    another, with its non-resonant complement (S-wave) where PDG lists one;
-    P -> P' (scalar f0 alike) and P -> V with pole form factors (alpha of
-    the modified pole: BESIII 2015; r_V = V(0)/A1(0), r_2 = A2(0)/A1(0):
-    PDG 2026, the SEMILEPTONIC FORM FACTORS of the parent's listing, cited
-    above each mode), Lambda_c+ -> Lambda, n with the lattice form factors, the
-    others as phase space. The mu modes PDG does not list (Ds+ -> K0, K*0,
-    f0) are taken equal to the e modes, Lambda_c+ -> n l+ nu (not in PDG
-    2026) from Meinel (2018, eqs. 20-21). The modes are scaled so that the
-    e+ modes add up to PDG's inclusive e+ rate (the mu+ modes by the same
-    factor). Leptonic: mu+ nu, tau+ nu. Hadronic: every mode above 0.5 %,
-    a K0S x 2 counted as a K0 or anti-K0 (two K0S x 4), less the parts
-    of their final states that come from the eta, eta', omega or phi of
-    another listed mode; renormalised to the rest of the width."""
+    another, with its non-resonant complement (S-wave) where PDG lists one.
+    P -> P' (scalar f0 alike) and P -> V have pole form factors. The alpha of
+    the modified pole is from BESIII 2015. r_V = V(0)/A1(0) and
+    r_2 = A2(0)/A1(0) are from PDG 2026, the SEMILEPTONIC FORM FACTORS of the
+    parent's listing, cited above each mode. Lambda_c+ -> Lambda, n have the
+    lattice form factors, and the others are phase space. The mu modes PDG
+    does not list (Ds+ -> K0, K*0, f0) are taken equal to the e modes.
+    Lambda_c+ -> n l+ nu (not in PDG 2026) is from Meinel (2018,
+    eqs. 20-21). The modes are scaled so that the e+ modes add up to PDG's
+    inclusive e+ rate (the mu+ modes by the same factor). Hadronic: every mode
+    above 0.5 %, less the parts of their final states that come from the eta,
+    eta', omega or phi of another listed mode. A K0S x 2 counts as a K0 or
+    anti-K0 (two K0S x 4). The hadronic modes are renormalized to the rest of
+    the width."""
     var sl = List[XMode]()
     var lep = List[XMode]()
     var had = List[XMode]()
@@ -3555,16 +3415,9 @@ def charm_decay_modes(s: Int) -> List[XMode]:
 
 
 def charm_decay_tables(dlnE: Float64, K: Int) -> List[Vec]:
-    """Decay kernels T[s * N_CPROD + p][k], k = 0 .. K: products p per decay
-    of charm species s at the energy fraction x_k = exp(-k dlnE), per unit
-    ln x (antiparticles: the CP conjugates of D+, D0, Ds+, Lambda_c+).
-
-    The products of each mode are binned exactly between the grid points for
-    each node of their parent-frame energy distribution (`_nodes`, as the
-    kaon decays), shared linearly in x. A short-lived product decays at once:
-    its own table, convolved in ln x with the table of its products (`_conv`),
-    which keeps number and energy. A tau decays in its parent's frame
-    (`_emit_tau`). Products below x_K are dropped."""
+    """Products p per decay of charm species s at the energy fraction
+    x_k = exp(-k dlnE), per unit ln x (antiparticles: the CP conjugates of D+,
+    D0, Ds+, Lambda_c+). Products below x_K are dropped."""
     var gl = XRules()
     var xc = zeros(K + 1)
     for k in range(K + 1):
@@ -3607,47 +3460,34 @@ struct CDecJob(Movable):
 
 
 def cdec_work(job: Pointer[CDecJob, MutUntrackedOrigin], q: Int):
-    """Task q (_row_tasks): its rows of a product of both origins, summed over
-    the charm species in a fixed order."""
     ref D = job[].D[]
-    var p = D.tasks[3 * q]
-    for s in range(N_CHARM):
-        if D.has[s * N_CPROD + p]:
-            _species_products(
-                D.K[s * N_CPROD + p],
-                D.w,
-                D.active,
-                D.jlo,
-                D.jhi,
-                s,
-                N_CHARM + s,
-                D.tmp,
-                D.out,
-                p,
-                N_CPROD + p,
-                D.tasks[3 * q + 1],
-                D.tasks[3 * q + 2],
-                job[].dlnE,
-            )
+    _decay_task(
+        D.K,
+        D.has,
+        D.w,
+        D.active,
+        D.jlo,
+        D.jhi,
+        D.tmp,
+        D.out,
+        D.tasks,
+        q,
+        job[].dlnE,
+    )
 
 
 struct CharmDecay(Copyable, Movable):
-    """Sources of the decay products of the eight charm species (as
-    KaonDecay): each (species, product) kernel, summed over the modes, is a
-    Toeplitz matrix stored by its diagonal values."""
-
     var verbose: Bool
-    var K: List[MatD]  # kernel of (species s, product p) at s * N_CPROD + p
+    var K: List[MatD]
     var has: List[Bool]
-    # per origin o (0: photo-hadronic, 1: pp): the source of product p (on its
-    # grid) at o * N_CPROD + p, and n_C / t_dec of species s at o * N_CHARM + s
+    # per origin o (0: photo-hadronic, 1: pp)
     var out: List[Vec]
     var w: List[Vec]
     var active: List[Bool]
-    var jlo: List[Int]  # hadron bins [jlo, jhi) where w is non-zero
+    var jlo: List[Int]
     var jhi: List[Int]
     var tmp: List[Vec]
-    var tasks: List[Int]  # (product, first row, end row) of each task
+    var tasks: List[Int]
     var nthreads: Int
     var built_nh: Int
 
@@ -3684,7 +3524,6 @@ struct CharmDecay(Copyable, Movable):
         self.built_nh = -1
 
     def ready(self, dat: AM3Arrays) -> Bool:
-        """Kernels built for the current grid."""
         return self.built_nh == dat.nbins_had
 
     @staticmethod
@@ -3714,75 +3553,38 @@ struct CharmDecay(Copyable, Movable):
         if self.verbose:
             print("computing charm decay kernels")
         var nh = dat.nbins_had
-        # the grids are logarithmic with step dlnE, so E_i / E_j = x_k with
-        # integer k; K: the k of the lowest x on the hadron, lepton and
-        # neutrino grids (photons below it are dropped)
+        # The grids are logarithmic with step dlnE, so E_i / E_j = x_k with
+        # integer k. K is the k of the lowest x on the hadron, lepton and
+        # neutrino grids (photons below it are dropped).
         var K = 0
         for p in range(CP_GAM):
             var x = CharmDecay._energy(dat, p, 0) / dat.egrid_had[nh - 1]
             K = max(K, Int(floor(-c_log(x) / dat.dlnE + 0.5)))
         var T = charm_decay_tables(dat.dlnE, K)
-        for s in range(N_CHARM):
-            for p in range(N_CPROD):
-                var rows = CharmDecay._rows(dat, p)
-                var nt = rows + nh - 1
-                var t = zeros(nt)
-                var used = False
-                for m in range(nt):
-                    # A[i, j] = t[i - j + nh - 1]: pick a valid (i, j)
-                    var j = max(0, nh - 1 - m)
-                    var i = m - (nh - 1) + j
-                    var k = Int(
-                        floor(
-                            -c_log(
-                                CharmDecay._energy(dat, p, i) / dat.egrid_had[j]
-                            )
-                            / dat.dlnE
-                            + 0.5
-                        )
-                    )
-                    if k >= 0 and k <= K:
-                        t[m] = T[s * N_CPROD + p][k]
-                        used = used or t[m] != 0.0
-                self.has[s * N_CPROD + p] = used
-                self.K[s * N_CPROD + p] = MatD.toeplitz(
-                    rows, nh, t^
-                ) if used else MatD()
+        _decay_kernels[CharmDecay._rows, CharmDecay._energy](
+            dat, T, N_CPROD, K, self.K, self.has
+        )
         self.built_nh = nh
 
     def Calc_CtoX(
         mut self, dat: AM3Arrays, base0: Int, base1: Int, on0: Bool, on1: Bool
     ):
-        """Decay products of the charm densities dat.n[base + s] (EdN/dEdV on
-        the hadron grid) of both origins (base0, base1: the first species of
-        each population; on0, on1: whether it is made), in one pass."""
         if self.verbose:
             print("computing charm decay terms")
         self.clear_internal_arrays(dat)
         if not self.ready(dat):
             return
-        var nh = dat.nbins_had
-        var any_active = False
-        for o in range(2):
-            var on = on0 if o == 0 else on1
-            var base = base0 if o == 0 else base1
-            for s in range(N_CHARM):
-                var k = o * N_CHARM + s
-                resize_zero(self.w[k], nh)
-                self.active[k] = False
-                self.jlo[k] = nh
-                self.jhi[k] = 0
-                if not on:
-                    continue
-                var r = charm_mass(s) / charm_lifetime(s)
-                for i in range(nh):
-                    self.w[k][i] = dat.n[base + s][i] * r / dat.egrid_had[i]
-                    if self.w[k][i] != 0.0:
-                        self.active[k] = True
-                        self.jlo[k] = min(self.jlo[k], i)
-                        self.jhi[k] = i + 1
-                any_active = any_active or self.active[k]
-        if not any_active:
+        if not _decay_rates[charm_mass, charm_lifetime](
+            dat,
+            base0,
+            base1,
+            on0,
+            on1,
+            self.w,
+            self.active,
+            self.jlo,
+            self.jhi,
+        ):
             return
         self.tasks.clear()
         for k in range(2 * N_CPROD):

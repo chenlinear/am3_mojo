@@ -7,7 +7,7 @@ from am3_mojo.model.runparams import RunParams
 from am3_mojo.utils.buffers import *
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
-from am3_mojo.utils.linalg import DOT_BLOCK, MatD, MatI, dot_nonzero, gemv_d
+from am3_mojo.utils.linalg import MatD, MatI, DOT_BLOCK, dot_nonzero, gemv_d
 from am3_mojo.utils.parallel import parallel_run
 from am3_mojo.utils.specfun import beta, signf
 
@@ -28,9 +28,8 @@ struct PairInitJob(Movable):
 def pair_init_work(
     job: Pointer[PairInitJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
-    """The rows of KER_RggD1 that pair_lep_work reads, for the lepton bins
-    i = t, t + nt, ...: k from KER_innerPP(i, j) for j from KER_outerPP[i],
-    each cut to the blocks of `dot_nonzero` that reach its non-zero values."""
+    """The rows of KER_RggD1 that pair_lep_work reads. Each row is cut to the
+    blocks of `dot_nonzero` that reach its non-zero values."""
     ref P = job[].P[]
     ref dat = job[].dat[]
     var n = dat.nbins_pho
@@ -84,9 +83,8 @@ struct PairLepJob(Movable):
 def pair_lep_work(
     job: Pointer[PairLepJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
-    """epspairL(i) = sum_j n(j) sum_k K_i(j, k) n(k) for i = 1 + t,
-    1 + t + nt, ...: the sums over k skip the blocks of `dot` that hold only
-    zeros of the kernel (outside the kinematic limits, most of the range)."""
+    """The sums over k skip the blocks of `dot` that hold only zeros of the
+    kernel (outside the kinematic limits, most of the range)."""
     ref P = job[].P[]
     ref dat = job[].dat[]
     var png = pd(P.PP_NG)
@@ -117,21 +115,18 @@ struct Pair(Copyable, Movable):
     var afpairG: Vec
     var epspairL: Vec
     var PP_NG: Vec
-    var KER_phibarD: MatD  # (nbins_pho x nbins_pho)
-    # Full pair-production kernel K_i(j, k) for the full (non 8-bin)
-    # treatment, outgoing lepton bin i, target photons j and k: KER_RggD1[i]
-    # holds the part of row j that pair_lep_work reads, element k at
-    # KER_start[i * nbins_pho + j] + k. The row is zero outside
-    # [KER_nzlo, KER_nzhi)[i * nbins_pho + j]. The C++ code allocates one
-    # dense matrix per photon bin, nbins_pho^3 doubles (~1.9 GB; only the
-    # first nbins_lep = 340 are used), even when it is never used: braces are
-    # missing after `if(!feedback_8bin)` in PairProduction.cc.
+    var KER_phibarD: MatD
+    # The C++ code allocates one dense matrix per photon bin,
+    # nbins_pho^3 doubles (~1.9 GB). Only the first nbins_lep = 340 matrices
+    # are used. The C++ code allocates them even when the kernel is never
+    # used: braces are missing after `if(!feedback_8bin)` in PairProduction.cc.
     var KER_RggD1: List[Vec]
     var KER_start: VecI
     var KER_nzlo: VecI
     var KER_nzhi: VecI
     var KER_outerPP: VecI
     var KER_innerPP: MatI
+    var full_built: Bool
     var A0V: Vec
     var A_A0_hV: Vec
     var REG: Float64
@@ -149,6 +144,7 @@ struct Pair(Copyable, Movable):
         self.KER_nzhi = VecI()
         self.KER_outerPP = VecI()
         self.KER_innerPP = MatI()
+        self.full_built = False
         self.REG = rp.REG
         self.A0V = zeros(2101)
         self.A_A0_hV = zeros(2101)
@@ -166,14 +162,17 @@ struct Pair(Copyable, Movable):
     def reinitialize_empty_kernels(
         mut self, dat: AM3Arrays, feedback_8bin: Bool
     ):
-        self.KER_phibarD = MatD(dat.nbins_pho, dat.nbins_pho)
+        # (no photon loss kernel until initialize_kernels: with the process
+        #  off at init_kernels, it takes no photons and makes no pairs, as
+        #  with AM3's zero kernel)
+        self.KER_phibarD = MatD()
         if not feedback_8bin:
             self.KER_outerPP = zerosi(dat.nbins_lep)
         self.KER_innerPP = MatI(dat.nbins_lep, dat.nbins_pho)
-        self.KER_RggD1 = List[Vec]()  # lazily allocated (all zeros)
+        self.KER_RggD1 = List[Vec]()
+        self.full_built = False
 
     def _alloc_full_kernel(mut self, dat: AM3Arrays):
-        # an all-zero kernel (every row empty) until initialize_kernels fills it
         if len(self.KER_RggD1) != dat.nbins_lep or len(self.KER_nzlo) != (
             dat.nbins_lep * dat.nbins_pho
         ):
@@ -183,60 +182,67 @@ struct Pair(Copyable, Movable):
             self.KER_nzhi = zerosi(dat.nbins_lep * dat.nbins_pho)
 
     def initialize_kernels(
-        mut self,
-        rp: RunParams,
-        dat: AM3Arrays,
-        photonLoss: Bool,
-        feedback: Bool,
-        feedback_8bin: Bool,
+        mut self, rp: RunParams, dat: AM3Arrays, feedback_8bin: Bool
     ):
+        """Both kernels, whatever the cooling (photon loss) and emission
+        switches: the pairs take their number from the photon loss rates.
+        Also, a switch turned on after init_kernels finds its kernel. (AM3
+        built each kernel only with its switch on, so with the photon loss
+        off no pairs were made.)"""
         self.REG = rp.REG
-        if photonLoss:
-            if self.verbose:
-                print("computing photon to pair annihilation kernel")
-            for i in range(dat.nbins_pho):
-                for j in range(dat.nbins_pho):
-                    var ei = dat.egrid_pho[i]
-                    var ej = dat.egrid_pho[j]
-                    self.KER_phibarD.set(
-                        i, j, 0.375 * self.phibar(ei, ej) / ei / ei / ej / ej
-                    )
-        if feedback:
-            if not feedback_8bin:
-                if self.verbose:
-                    print("computing full e+/- pair production kernel")
-                self._alloc_full_kernel(dat)
-                for i in range(dat.nbins_lep):
-                    self.KER_outerPP[i] = self.outerPP(dat, i)
-                    for j in range(dat.nbins_pho):
-                        self.KER_innerPP.set(
-                            i,
-                            j,
-                            min(
-                                self.innerPP(
-                                    dat, dat.egrid_pho[j], dat.egrid_lep[i]
-                                ),
-                                dat.nbins_pho - 1,
-                            ),
-                        )
-                # the R_gg kernel rows within these limits
-                var job = PairInitJob(
-                    Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
-                    Pointer(to=dat)
-                    .unsafe_mut_cast[True]()
-                    .unsafe_origin_cast[MutUntrackedOrigin](),
+        if self.verbose:
+            print("computing photon to pair annihilation kernel")
+        self.KER_phibarD = MatD(dat.nbins_pho, dat.nbins_pho)
+        for i in range(dat.nbins_pho):
+            for j in range(dat.nbins_pho):
+                var ei = dat.egrid_pho[i]
+                var ej = dat.egrid_pho[j]
+                self.KER_phibarD.set(
+                    i, j, 0.375 * self.phibar(ei, ej) / ei / ei / ej / ej
                 )
-                parallel_run[pair_init_work](job, self.nthreads)
-                if self.verbose:
-                    var size = 0
-                    for i in range(dat.nbins_lep):
-                        size += len(self.KER_RggD1[i])
-                    print("full pair kernel:", size, "values")
-            elif self.verbose:
-                print(
-                    "using eight-bin approx. for e+- distribution from pair"
-                    " production"
+        if not feedback_8bin:
+            self.build_full_kernel(dat)
+        elif self.verbose:
+            print(
+                "using eight-bin approx. for e+- distribution from pair"
+                " production"
+            )
+
+    def build_full_kernel(mut self, dat: AM3Arrays):
+        """The full pair-emission kernel is built at init_kernels without the
+        eight-bin approximation. Otherwise, it is built at the first step after
+        the approximation is switched off (Calc_Pair_Lep), if init_kernels built
+        the photon loss kernel. (AM3 then read a kernel that it did not
+        allocate.)"""
+        if self.verbose:
+            print("computing full e+/- pair production kernel")
+        self._alloc_full_kernel(dat)
+        if len(self.KER_outerPP) < dat.nbins_lep:
+            self.KER_outerPP = zerosi(dat.nbins_lep)
+        for i in range(dat.nbins_lep):
+            self.KER_outerPP[i] = self.outerPP(dat, i)
+            for j in range(dat.nbins_pho):
+                self.KER_innerPP.set(
+                    i,
+                    j,
+                    min(
+                        self.innerPP(dat, dat.egrid_pho[j], dat.egrid_lep[i]),
+                        dat.nbins_pho - 1,
+                    ),
                 )
+        var job = PairInitJob(
+            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=dat)
+            .unsafe_mut_cast[True]()
+            .unsafe_origin_cast[MutUntrackedOrigin](),
+        )
+        parallel_run[pair_init_work](job, self.nthreads)
+        self.full_built = True
+        if self.verbose:
+            var size = 0
+            for i in range(dat.nbins_lep):
+                size += len(self.KER_RggD1[i])
+            print("full pair kernel:", size, "values")
 
     def Calc_Pair_Phot(mut self, dat: AM3Arrays):
         if self.verbose:
@@ -255,16 +261,14 @@ struct Pair(Copyable, Movable):
         elif x > 1.0 and x <= 1.1:
             return self.phibar1(x)
         elif x > 1.1 and x < 5.0:
-            return self.phibar2(
-                x, -1.0 + 2.0 * x * (1.0 + sqrt(1.0 - 1.0 / x))
-            )
+            return self.phibar2(x, -1.0 + 2.0 * x * (1.0 + sqrt(1.0 - 1.0 / x)))
         else:
             return self.phibar3(x)
 
     def phibar1(self, s: Float64) -> Float64:
         var s1 = s - 1.0
         var s2 = s1 * sqrt(s1)
-        return s2 * (1.333333 + 1.2 * s1 - 253.0 / 70.0 * s1 * s1)
+        return s2 * (4.0 / 3.0 + 1.2 * s1 - 253.0 / 70.0 * s1 * s1)
 
     def phibar2(self, s: Float64, w: Float64) -> Float64:
         var v = c_log(w)
@@ -278,7 +282,9 @@ struct Pair(Copyable, Movable):
 
     def phibar3(self, s: Float64) -> Float64:
         var w = c_log(4.0 * s)
-        return (2.0 * s + w) * (w - 2.0) + (w + 1.125) / s - 0.289868
+        return (
+            (2.0 * s + w) * (w - 2.0) + (w + 1.125) / s - (PI * PI / 3.0 - 3.0)
+        )
 
     def phisum(self, w: Float64) -> Float64:
         var k = 0.0
@@ -291,11 +297,16 @@ struct Pair(Copyable, Movable):
     def Calc_Pair_Lep(mut self, dat: AM3Arrays, max_com_energy_factor: Int):
         if self.verbose:
             print(" Calculate pair feedback full")
-        self._alloc_full_kernel(dat)
-        if len(self.KER_outerPP) < dat.nbins_lep:
-            self.KER_outerPP = zerosi(dat.nbins_lep)
         for i in range(dat.nbins_lep):
             self.epspairL[i] = 0.0
+        # The pairs take their number from the photon loss rates. Without the
+        # photon loss kernel (the process off at init_kernels), there are no
+        # pairs. So the full kernel is not built either (1.2 s and 330 MB on
+        # the default grids).
+        if self.KER_phibarD.rows == 0:
+            return
+        if not self.full_built:
+            self.build_full_kernel(dat)
         for i in range(dat.nbins_pho):
             self.PP_NG[i] = (
                 dat.n[P_photons][i] / dat.egrid_pho[i] / dat.egrid_pho[i]
@@ -308,8 +319,11 @@ struct Pair(Copyable, Movable):
             max_com_energy_factor,
         )
         parallel_run[pair_lep_work](job, self.nthreads)
+        # The energy of all absorbed photons. (AM3 summed those above m_e c^2
+        # only. So the pairs missed the energy of the softer partners, 6 % of
+        # it for photons of 0.1 to 10 MeV: AM3 bug.)
         var r_alpha_phot = 0.0
-        for i in range(dat.ind_min_energy_pho, dat.nbins_pho):
+        for i in range(dat.nbins_pho):
             r_alpha_phot += (
                 dat.egrid_pho[i] * self.afpairG[i] * dat.n[P_photons][i]
             )
@@ -345,10 +359,15 @@ struct Pair(Copyable, Movable):
     def innerPP(self, dat: AM3Arrays, x: Float64, gm: Float64) -> Int:
         if x <= 0.5:
             var f = self.Fpp_m(x, gm)
+            # x below xL(gm), the threshold of the pairs: the first bin of
+            # KER_outerPP can lie there. (AM3 takes the logarithm of a negative
+            # number and converts the NaN to an int: undefined, 0 on arm64.)
+            if f <= 0.0:
+                return 0
+            var arg = gm - x + 0.5 * (f + 1.0 / f)
+            debug_assert(arg > 0.0, "innerPP: logarithm of arg <= 0")
             var q = Int(
-                c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
-                + Float64(dat.ind_min_energy_pho)
-                + 1.0
+                c_log(arg) / dat.dlnE + Float64(dat.ind_min_energy_pho) + 1.0
             )
             return min(max(q, 0), dat.nbins_pho)
         elif x > 0.5 and x < 1.0 and gm < self.gmB(x):
@@ -360,9 +379,12 @@ struct Pair(Copyable, Movable):
             )
             return min(max(q, 0), dat.nbins_pho)
         elif x > 1.0 and gm < self.gmB(x):
+            # gm - x + (f + 1/f) / 2 as the same xL(gm) + 1 / (2 f). AM3's
+            # difference cancels where x and gm are large, to a value of the
+            # rounding, 0 or below (AM3 bug).
             var f = self.Fpp_p(x, gm)
             var q = Int(
-                c_log(gm - x + 0.5 * (f + 1.0 / f)) / dat.dlnE
+                c_log(self.xL(gm) + 0.5 / f) / dat.dlnE
                 + Float64(dat.ind_min_energy_pho)
                 + 1.0
             )
@@ -377,49 +399,51 @@ struct Pair(Copyable, Movable):
         return min(max(q, 0), dat.nbins_pho - 1)
 
     def xL(self, gm: Float64) -> Float64:
-        return 0.5 * gm * (1.0 - beta(gm, self.REG))
+        # gm (1 - beta) as 1 / (gm (1 + beta)). AM3's difference 1 - beta
+        # cancels at large gm. It is 74 % too large at gm = 8.8e7, and 0 from
+        # 9.5e7 on, where log(xL) is -inf (AM3 bug).
+        return 0.5 / gm / (1.0 + beta(gm, self.REG))
 
     def gmB(self, x: Float64) -> Float64:
         return x - (x - 1.0) / (2.0 * x - 1.0)
 
     def Fpp_m(self, x: Float64, gp: Float64) -> Float64:
-        return 2.0 * x - gp * (1.0 - beta(gp, self.REG))
+        # (gp (1 - beta) as in xL)
+        return 2.0 * x - 1.0 / gp / (1.0 + beta(gp, self.REG))
 
     def Fpp_p(self, x: Float64, gp: Float64) -> Float64:
         return 2.0 * x - gp * (1.0 + beta(gp, self.REG))
 
     def RggD1(self, gm: Float64, x: Float64, x1: Float64) -> Float64:
         var gp = x + x1 - gm
-        var KU: Float64
-        var KL: Float64
+        var x_hi: Float64
+        var x_lo: Float64
         if gp > 10.0 and gm > 10.0:
-            KL = (
+            x_lo = (
                 0.25 / gp
                 + 0.09375 / gp / gp / gp
                 + 0.25 / gm
                 + 0.09375 / gm / gm / gm
             )
-            KU = 0.5 * (
-                gp + sqrt(gp * gp - 1.0) + gm + sqrt(gm * gm - 1.0)
-            )
+            x_hi = 0.5 * (gp + sqrt(gp * gp - 1.0) + gm + sqrt(gm * gm - 1.0))
         elif gp > 10.0 and gm <= 10.0:
             var sgm = sqrt(gm * gm - 1.0)
-            KL = 0.5 * (0.5 / gp + gm - sgm)
-            KU = gp + 0.5 * (gm + sgm)
+            x_lo = 0.5 * (0.5 / gp + gm - sgm)
+            x_hi = gp + 0.5 * (gm + sgm)
         elif gp <= 10.0 and gm > 10.0:
             var sgp = sqrt(gp * gp - 1.0)
-            KL = 0.5 * (gp - sgp + 0.5 / gm)
-            KU = gm + 0.5 * (gp + sgp)
+            x_lo = 0.5 * (gp - sgp + 0.5 / gm)
+            x_hi = gm + 0.5 * (gp + sgp)
         else:
             var sgp = sqrt(gp * gp - 1.0)
             var sgm = sqrt(gm * gm - 1.0)
-            KL = 0.5 * (gp - sgp + gm - sgm)
-            KU = 0.5 * (gp + sgp + gm + sgm)
+            x_lo = 0.5 * (gp - sgp + gm - sgm)
+            x_hi = 0.5 * (gp + sgp + gm + sgm)
         if gp <= 1.000 or gm <= 1.000:
             return 0.0
-        elif x < KL or x1 < KL:
+        elif x < x_lo or x1 < x_lo:
             return 0.0
-        elif x > KU or x1 > KU:
+        elif x > x_hi or x1 > x_hi:
             return 0.0
         var T = x + x1
         var XUpper = self.XcmU(gm, x, x1)
@@ -485,7 +509,13 @@ struct Pair(Copyable, Movable):
         var h = ((gm - x) * (gm - x) - 1.0) * q * q
         var b = (x * x + gm * (x1 - x)) / y2
         if h > 1000.0:
-            var s = c_log(h) + xcm * xcm + h / (xcm * xcm) + 0.886294 - 0.5 * b
+            var s = (
+                c_log(h)
+                + xcm * xcm
+                + h / (xcm * xcm)
+                + (2.0 * c_log(2.0) - 0.5)
+                - 0.5 * b
+            )
             return -s * q / sqrt(h)
         elif h < -0.999:
             return q * (
@@ -500,13 +530,13 @@ struct Pair(Copyable, Movable):
         if h <= 20.0:
             var i = 100 + Int(h / 0.01)
             return self.A_A0_hV[i]
-        return -(1.0 - (0.693147 + 0.5 * c_log(h)) / h) / sqrt(h)
+        return -(1.0 - (c_log(2.0) + 0.5 * c_log(h)) / h) / sqrt(h)
 
     def A0(self, h: Float64) -> Float64:
         if h < 20.0:
             var i = 100 + Int(h / 0.01)
             return self.A0V[i]
-        return (0.693147 + 0.5 * c_log(h)) / sqrt(h)
+        return (c_log(2.0) + 0.5 * c_log(h)) / sqrt(h)
 
     def A0f(self, h: Float64) -> Float64:
         if h > 1.0e-6:
@@ -517,5 +547,5 @@ struct Pair(Copyable, Movable):
 
     def A_A0_hf(self, h: Float64) -> Float64:
         if h >= -0.1 and h <= 0.1:
-            return -0.666667 + h * (0.2 + h * (-0.107143 + 0.0694444 * h))
+            return -2.0 / 3.0 + h * (0.2 + h * (-3.0 / 28.0 + 5.0 / 72.0 * h))
         return (self.A0f(h) - sqrt(1.0 + h + 1.0e-8)) / h

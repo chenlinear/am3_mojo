@@ -1,8 +1,9 @@
-"""Special functions used by AM3 (port of AM3/math.cc and the parts of GSL
-that AM3 calls: `gsl_sf_bessel_Knu`)."""
+"""Port of AM3/math.cc and the parts of GSL that AM3 calls:
+`gsl_sf_bessel_Knu`."""
 
 from std.builtin.globals import global_constant
 from std.math import floor, sqrt
+from std.utils.numerics import nan
 from am3_mojo.utils.buffers import *
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
@@ -13,10 +14,9 @@ comptime GSL_SQRT_DBL_MIN: Float64 = 1.4916681462400413e-154
 comptime GSL_LOG_DBL_MAX: Float64 = 7.0978271289338397e02
 comptime GSL_LOG_DBL_MIN: Float64 = -7.0839641853226408e02
 
-
-# ----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 # GSL: Chebyshev series for the Temme gamma functions (specfunc/bessel_temme.c)
-# ----------------------------------------------------------------------------
+# ------------------------------------------------------------------------------
 comptime _G1: Array[Float64, 14] = [
     -1.14516408366268311786898152867,
     0.00636085311347084238122955495,
@@ -97,8 +97,7 @@ def _cheb_eval_g2(x: Float64) -> Float64:
 
 
 def _bessel_K_scaled_temme(nu: Float64, x: Float64) -> Tuple[Float64, Float64]:
-    """GSL gsl_sf_bessel_K_scaled_temme: returns (K_nu, K_nup1) scaled by e^x.
-    """
+    """GSL gsl_sf_bessel_K_scaled_temme."""
     comptime max_iter = 15000
     var half_x = 0.5 * x
     var ln_half_x = c_log(half_x)
@@ -185,7 +184,7 @@ def _bessel_K_scaled_steed_temme_CF2(
 
 
 def _exp_mult(x: Float64, y: Float64) -> Float64:
-    """gsl_sf_exp_mult_err_e of GSL, value only (underflow 0, overflow MAX)."""
+    """gsl_sf_exp_mult_err_e of GSL, value only."""
     var ay = abs(y)
     if y == 0.0:
         return 0.0
@@ -198,9 +197,9 @@ def _exp_mult(x: Float64, y: Float64) -> Float64:
         var ly = c_log(ay)
         var lnr = x + ly
         if lnr > GSL_LOG_DBL_MAX - 0.01:
-            return Float64.MAX  # GSL would signal an overflow error
+            return Float64.MAX  # GSL signals an overflow error here
         elif lnr < GSL_LOG_DBL_MIN + 0.01:
-            return 0.0  # GSL would signal an underflow error
+            return 0.0  # GSL signals an underflow error here
         else:
             var sy = 1.0 if y >= 0.0 else -1.0
             var M = floor(x)
@@ -215,7 +214,8 @@ def _exp_mult(x: Float64, y: Float64) -> Float64:
 def gsl_bessel_Knu(nu: Float64, x: Float64) -> Float64:
     """Port of gsl_sf_bessel_Knu(nu, x) for x > 0, nu >= 0."""
     if x <= 0.0 or nu < 0.0:
-        return Float64.MAX  # GSL domain error -> NaN; not reachable in AM3
+        # GSL signals a domain error and returns NaN. AM3 never gets here.
+        return Float64.MAX
     var N = Int(nu + 0.5)
     var mu = nu - Float64(N)
     var K_mu: Float64
@@ -257,7 +257,6 @@ def gsl_bessel_Knu(nu: Float64, x: Float64) -> Float64:
 def beta(g: Float64, REG: Float64) -> Float64:
     if g < 10.0:
         return sqrt(1.0 - (1.0 / (g * g)) + REG)
-    # second-order expansion of sqrt(1 - 1/g^2) for large g
     var ig2 = 1.0 / (g * g)
     return 1.0 - 0.5 * ig2 * (1.0 + 0.25 * ig2)
 
@@ -270,73 +269,122 @@ def signf(a: Int) -> Int:
         return -1
 
 
-def int_bk53l(x: Float64) -> Float64:
-    return (1.253314 + 0.139338 / x) / (c_exp(x) * sqrt(x))
-
-
 def int_bk53m(x: Float64) -> Float64:
-    """Integral of K_5/3 from x to 10 as a 100-step left Riemann sum in
-    ln t, plus the tail beyond t = 10."""
-    comptime N = 100
-    var yi = c_log(x)
-    var dy = (c_log(10.0) - yi) / Float64(N)
-    var result = 0.0
-    for i in range(N):
-        var t = c_exp(yi + Float64(i) * dy)
-        result += t * gsl_bessel_Knu(5.0 / 3.0, t)
-    return result * dy + 0.0000192
+    """The integral of K_5/3 from x to infinity for x > 1e-3, as int_0^inf
+    exp(-x cosh u) cosh(5u/3) / cosh(u) du (from K_nu(t) = int_0^inf
+    exp(-t cosh u) cosh(nu u) du) by the trapezoidal rule. The integrand is
+    even and analytic for |Im u| < pi/2, so the rule converges exponentially.
+    With the step h = min(1/4, 0.4 / sqrt(x)) (the integrand's width is
+    1/sqrt(x) at large x), it converges to 2e-15 for 1e-3 <= x <= 1e3, in at
+    most 46 nodes.
+    (AM3 summed 100 rectangles in ln t from x to 10, 1.9 to 3.1 % too much.
+    Above x = 10, AM3 took (1.253314 + 0.139338 / x) e^-x / sqrt(x), 5.4 %
+    too little right above x = 10, where AM3's value jumped. The 1/x term of
+    the asymptotic series is sqrt(pi/2) 55/72 = 0.957 / x.)"""
+    var h = min(0.25, 0.4 / sqrt(x))
+    var s = 0.5  # (the node u = 0, at the end of the range)
+    for k in range(1, 100):
+        var u = Float64(k) * h
+        var sh = c_sinh(0.5 * u)
+        var v = (
+            c_exp(-2.0 * x * sh * sh)
+            * c_cosh(u * (5.0 / 3.0))
+            / (1.0 + 2.0 * sh * sh)
+        )
+        s += v
+        if v < 1e-17 * s:
+            break
+    return h * s * c_exp(-x)
 
 
 def int_bk53s(x: Float64) -> Float64:
+    """The integral of K_5/3 from x to infinity for x <= 1e-3: the series of
+    K_5/3 = (pi/sqrt3) (I_-5/3 - I_5/3) integrated term by term, within 3e-14.
+    The constant term: 2 K_2/3(x) - int_x^inf K_1/3 at small x,
+    int_0^inf K_1/3 = pi/sqrt3. (AM3 had 2.14953, 1.814 and 0.142393 and no
+    x^(4/3) term: 1.9e-7 too little at x = 1e-3.)"""
+    var c = c_pow(2.0, 2.0 / 3.0) * 1.3541179394264004169  # Gamma(2/3)
+    var a = PI / sqrt(3.0)
     return (
-        2.14953 * c_pow(x, -0.66666667)
-        - 0.142393 * c_pow(x, 2.66666667)
-        - 1.814
+        c * c_pow(x, -2.0 / 3.0)
+        - a
+        + 0.1875 * c * c_pow(x, 4.0 / 3.0)
+        - 27.0 / 160.0 * a / c * c_pow(x, 8.0 / 3.0)
     )
 
 
 def int_bessel_k53(x: Float64) -> Float64:
-    if x > 10.0:
-        return int_bk53l(x)
-    elif x <= 10.0 and x > 0.001:
+    """The integral of K_5/3 from x to infinity, x > 0."""
+    if x > 0.001:
         return int_bk53m(x)
-    else:
-        return int_bk53s(x)
+    return int_bk53s(x)
 
 
-def polylog(z_in: Float64) -> Float64:
-    """AM3 math.cc polylog: returns Li_2(-z)."""
-    var z = -z_in
-    var z1 = z - 1.0
-    if z1 < 0.0:
-        var a = 0.0
-        for n in range(1, 50):
-            a += Float64(signf(n)) * c_pow(z, Float64(n)) / Float64(n * n)
-        return a
-    elif z1 > 0.0 and z < 10.0:
-        var b = PI * PI / 12.0
-        var z2 = 0.01 * z1
-        for m in range(1, 100):
-            var mf = Float64(m)
-            b += z2 * c_log(2.0 + mf * z2) / (1.0 + mf * z2)
-        return -b
-    else:
-        return -0.5 * c_log(z) * c_log(z) - 1.6
+# B_2k / (2k + 1)!, k = 1 .. 9 (B_2k: the Bernoulli numbers): the series of
+# Li_2 in u = -ln(1 - z)
+comptime _LI2_SERIES: Array[Float64, 9] = [
+    1.0 / 36.0,
+    -1.0 / 3600.0,
+    1.0 / 211680.0,
+    -1.0 / 10886400.0,
+    1.0 / 526901760.0,
+    -691.0 / 16999766784000.0,
+    1.0 / 1120863744000.0,
+    -3617.0 / 181400588328960000.0,
+    43867.0 / 97072790126247936000.0,
+]
+
+
+def _li2_series(z: Float64) -> Float64:
+    """Li_2(z) for -1 <= z <= 1/2 by its series in u = -ln(1 - z), where
+    |u| <= ln 2. The terms after k = 9 add less than 1e-20 of the sum."""
+    var u = -c_log1p(-z)
+    var u2 = u * u
+    var s = 0.0
+    var k = 8
+    while k >= 0:
+        s = s * u2 + global_constant[_LI2_SERIES]()[k]
+        k -= 1
+    return u - 0.25 * u2 + u * u2 * s
+
+
+def polylog(z: Float64) -> Float64:
+    """The dilogarithm Li_2(z) = -int_0^z ln(1 - t) / t dt for real z <= 1, to
+    rounding. NaN for z > 1, where Li_2 is complex, and for a NaN, so that the
+    solver's checks of its rates see such an argument, which a finite value
+    would hide. (AM3's math.cc sums 49 terms of the power series for z > -1. It
+    takes 99 rectangles of the integral from -1 for -10 < z < -1, and
+    -ln^2(-z)/2 - 1.6 for the others. This is up to 1 % off at the arguments of
+    the inverse-Compton photon loss, 2.2 % at z = -10, and -1.6 at z = -1, where
+    Li_2 = -pi^2/12.)"""
+    if z < -1.0:
+        var l = c_log(-z)
+        return -PI * PI / 6.0 - 0.5 * l * l - _li2_series(1.0 / z)
+    if z <= 0.5:
+        return _li2_series(z)
+    if z < 1.0:
+        return PI * PI / 6.0 - c_log(z) * c_log1p(-z) - _li2_series(1.0 - z)
+    if z == 1.0:
+        return PI * PI / 6.0
+    return nan[DType.float64]()
 
 
 @inline(.always)
 def number_split(x: Float64, dlnE: Float64) -> Tuple[Int, Float64]:
-    """Split x into integer part i and weight r (AM3 math.cc number_split)."""
+    """The split of a product at the position x (in bins) between the grid
+    points i and i + 1 around it. The share r for point i + 1 and 1 - r for
+    point i keep its number and its energy, E_i e^(f dlnE) with f the
+    fraction of x. (AM3's math.cc takes r = f + f (1 - f) dlnE / 2, the weight
+    of an interpolation between two points. This books the product
+    f (1 - f) dlnE^2 too high in energy, up to 0.25 %: AM3 bug.)"""
     if x > 0.0 or x < 0.0:
         var i = Int(floor(x))
-        var r = x - 1.0 * Float64(i)
-        r += 0.5 * r * (1.0 - r) * dlnE
-        return (i, r)
+        var f = x - 1.0 * Float64(i)
+        return (i, c_expm1(f * dlnE) / c_expm1(dlnE))
     return (0, 0.0)
 
 
 def gauss_legendre(n: Int, mut x: Vec, mut w: Vec):
-    """Nodes x and weights w of the n-point Gauss-Legendre rule on [-1, 1]."""
     x = zeros(n)
     w = zeros(n)
     for i in range(n):

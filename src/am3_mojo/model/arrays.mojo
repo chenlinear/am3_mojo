@@ -1,4 +1,4 @@
-"""Port of AM3Arrays: energy grids and particle density spectra."""
+"""Port of AM3Arrays."""
 
 from std.math import floor
 from am3_mojo.model.particles import *
@@ -26,10 +26,7 @@ struct AM3Arrays(Copyable, Movable):
     var ind_min_energy_pho_hadgrid: Int
     var egrid_had_photons: Vec
 
-    # particle densities, indexed by the P_* constants of model/particles.mojo
     var n: List[Vec]
-    # interpolation between the hadron- and lepton-anchored grids: bin i reads
-    # (1 - w) * val[lo] + w * val[lo + 1] (precomputed by update_energy_grids)
     var h2l_lo: VecI
     var h2l_w: Vec
     var l2h_lo: VecI
@@ -95,8 +92,8 @@ struct AM3Arrays(Copyable, Movable):
         self._build_grid_maps()
 
     def _build_grid_maps(mut self):
-        """Interpolation index and weight of every bin for grid_had2lep /
-        grid_lep2had (they depend only on the grids, not on the values)."""
+        """The interpolation index and weight of every bin depend only on the
+        grids, not on the values."""
         var n = max(self.nbins_pho, max(self.nbins_nu, self.nbins_lep))
         var origin_ratio = c_log(MASS_E / 1.0) / self.dlnE
         self.h2l_lo = zerosi(n)
@@ -123,19 +120,25 @@ struct AM3Arrays(Copyable, Movable):
     def update_energy_grid_parameters(
         mut self, Egamma_min_eV: Float64, Enu_min_eV: Float64, E_max_eV: Float64
     ):
-        self.nbins_lep = Int(c_log(E_max_eV / MEC2_EV) / self.dlnE)
+        # AM3 truncates only. For some values of E_max, the lepton or hadron
+        # grid then ended two bins below it. For some values of Egamma_min or
+        # Enu_min, the photon or neutrino grid started one bin above its
+        # minimum: AM3 bug.
+        self.nbins_lep = self.eV_to_lep_grid_index(E_max_eV)
         if self.nbins_lep % 2 != 0:
             self.nbins_lep += 1
-        self.nbins_had = Int(c_log(E_max_eV / 1e9) / self.dlnE)
+        self.nbins_had = self.eV_to_had_grid_index(E_max_eV)
         if self.nbins_had % 2 != 0:
             self.nbins_had += 1
-        self.ind_min_energy_pho = Int(
+        self.ind_min_energy_pho = Self._grid_index(
             c_log(MEC2_EV / Egamma_min_eV) / self.dlnE
         )
         self.nbins_pho = self.nbins_lep + self.ind_min_energy_pho
         if self.nbins_pho % 2 != 0:
             self.nbins_pho += 1
-        self.ind_min_energy_nu = Int(c_log(1e9 / Enu_min_eV) / self.dlnE)
+        self.ind_min_energy_nu = Self._grid_index(
+            c_log(1e9 / Enu_min_eV) / self.dlnE
+        )
         self.nbins_nu = self.nbins_had + self.ind_min_energy_nu
         if self.nbins_nu % 2 != 0:
             self.nbins_nu += 1
@@ -144,17 +147,16 @@ struct AM3Arrays(Copyable, Movable):
             c_log(1e9 / MEC2_EV) / self.dlnE
         )
         self.nbins_pho_hadgrid = self.nbins_pho
-        # as in the constructor, the photon grid is shifted like the lepton
+        # As in the constructor, the photon grid is shifted like the lepton
         # grid, which grid_lep2had / grid_had2lep assume. AM3 took
         # 1 + int(ln(1e9 / Egamma_min) / dlnE), one more for 79 % of the values
-        # of Egamma_min, every power of ten among them, so that its photons on
-        # the hadron grid were labelled e^-dlnE times their energy: AM3 bug.
+        # of Egamma_min, every power of ten among them. So its photons on the
+        # hadron grid were labeled e^-dlnE times their energy: AM3 bug.
         self.ind_min_energy_pho_hadgrid = (
             self.ind_min_energy_lep_hadgrid + self.ind_min_energy_pho
         )
 
     def nbins_of_particle(self, id: Int) -> Int:
-        """Grid size of particle array `id`."""
         if id < P_HAD_END or (id >= P_EXT_HAD_BEGIN and id < P_EXT_HAD_END):
             return self.nbins_had
         if id >= P_EXT_LEP_BEGIN and id < P_EXT_LEP_END:
@@ -168,14 +170,12 @@ struct AM3Arrays(Copyable, Movable):
         return self.nbins_pho
 
     def clear_all_particle_arrays(mut self):
-        """Resize every particle array to its grid and set it to zero."""
         for id in range(P_COUNT):
             resize_zero(self.n[id], self.nbins_of_particle(id))
 
     # ---------------- grid shifts between hadronic / leptonic origin ----------
     @inline(.always)
     def grid_had2lep(self, i: Int, val: FPtr, nmax: Int) -> Float64:
-        """Value of `val` (on the hadron-anchored grid) at leptonic index i."""
         var lo = self.h2l_lo[i]
         if lo > 0 and lo < nmax - 1:
             var w = self.h2l_w[i]
@@ -186,10 +186,8 @@ struct AM3Arrays(Copyable, Movable):
 
     @inline(.always)
     def grid_lep2had(self, i: Int, val: FPtr, nmax: Int) -> Float64:
-        """Value of `val` (on the lepton-anchored grid) at hadronic index i,
-        read in place with the index and weight computed once per grid (l2h_lo,
-        l2h_w). The C++ Grid_Lep2Had takes the whole spectrum by value: a copy
-        of its 620 values for each of the 620 bins it fills, every step."""
+        """The C++ Grid_Lep2Had takes the whole spectrum by value: a copy of its
+        620 values for each of the 620 bins it fills, every step."""
         var lo = self.l2h_lo[i]
         if lo > 0 and lo < nmax - 1:
             var w = self.l2h_w[i]
@@ -198,18 +196,29 @@ struct AM3Arrays(Copyable, Movable):
             ]
         return 0.0
 
+    @staticmethod
+    def _grid_index(x: Float64) -> Int:
+        """AM3 truncates only. The logarithm of a grid point's energy, divided
+        by the spacing, comes out slightly below its index for 2 to 4 % of the
+        points. For these points, truncation then gave the point below:
+        AM3 bug."""
+        var r = floor(x + 0.5)
+        if abs(x - r) < 1e-9:
+            return Int(r)
+        return Int(x)
+
     def eV_to_lep_grid_index(self, E_eV: Float64) -> Int:
-        return Int(c_log(E_eV / MEC2_EV) / self.dlnE)
+        return Self._grid_index(c_log(E_eV / MEC2_EV) / self.dlnE)
 
     def eV_to_photon_grid_index(self, E_eV: Float64) -> Int:
-        return Int(
+        return Self._grid_index(
             c_log(E_eV / MEC2_EV) / self.dlnE + Float64(self.ind_min_energy_pho)
         )
 
     def eV_to_had_grid_index(self, E_eV: Float64) -> Int:
-        return Int(c_log(E_eV / 1e9) / self.dlnE)
+        return Self._grid_index(c_log(E_eV / 1e9) / self.dlnE)
 
     def eV_to_neutrino_grid_index(self, E_eV: Float64) -> Int:
-        return Int(
+        return Self._grid_index(
             c_log(E_eV / 1e9) / self.dlnE + Float64(self.ind_min_energy_nu)
         )

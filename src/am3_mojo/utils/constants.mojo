@@ -1,38 +1,39 @@
-"""Physical and mathematical constants: the values of PDG 2026 (its Table 1.1,
-from CODATA 2022, and its particle listings), in cgs units with masses in GeV.
+"""The values of PDG 2026 (its Table 1.1, from CODATA 2022, and its particle
+listings), in cgs units with masses in GeV.
 
 PDG 2026 is the Review of Particle Physics of the Particle Data Group, F.
 Takahashi et al., Int. J. Mod. Phys. A 41, 2630011 (2026). The comment above
-each constant cites its entry: "Table 1.1" is the table of Section 1,
-"Physical Constants" (p. 1); "<particle> listing, p. N" is the printed page N
-of that particle's Particle Listing (pdg.lbl.gov/2026/listings), with the data
-block, the value as printed and its label (OUR FIT, OUR AVERAGE, OUR
-EVALUATION, OUR ESTIMATE) or the measurement the listing gives. A value derived
-here names the constants it is derived from.
+each constant cites its entry. "Table 1.1" is the table of Section 1,
+"Physical Constants" (p. 1). "<particle> listing, p. N" is the printed page N
+of that particle's Particle Listing (pdg.lbl.gov/2026/listings). Such a
+citation also gives the data block, the value as printed and its label
+(OUR FIT, OUR AVERAGE, OUR EVALUATION, OUR ESTIMATE) or the measurement that
+the listing gives. A value derived here names the constants it is derived
+from.
 
 The mathematical constants come first. The physical quantities follow the order
 in which the pages of the added processes introduce them
-(tests/literature_checks/<process>/README.md, in the order of README.md); one
-that no page names follows the quantities it is derived from or used with. In
-the sections Hadrons and Charm hadrons, the masses and mean lives go from the
-lepton up in mass (muon, pions, kaons; tau, D, D_s, Lambda_c), and the other
-products of the charm decays follow the list of the charm page (its section
-Decays). Within a family, charged particles come before neutral ones, and each
-mass comes before its mean life."""
+(tests/literature_checks/<process>/README.md, in the order of README.md). A
+quantity that no page names follows the quantities it is derived from or used
+with. In the section Hadrons (muon, pions, kaons) and in the section
+Charm hadrons (tau, D, D_s, Lambda_c), the masses and mean lives go from the
+lepton up in mass. The other products of the charm decays follow the list of
+the charm page (its section Decays). Within a family, charged particles come
+before neutral ones, and each mass comes before its mean life."""
 
 from std.math import sqrt
 
-# ============================================================================
+# ==============================================================================
 # Mathematical constants
-# ============================================================================
+# ==============================================================================
 # pi = 3.141 592 653 589 793 238...: PDG 2026, Table 1.1
 comptime PI: Float64 = 3.141592653589793
 # ln 10, the Float64 nearest to it (not in PDG 2026)
 comptime LN10: Float64 = 2.302585092994046
 
-# ============================================================================
+# ==============================================================================
 # Electron-positron annihilation
-# ============================================================================
+# ==============================================================================
 # Thomson cross section [cm^2]: PDG 2026, Table 1.1, sigma_T = 8 pi r_e^2/3 =
 # 0.665 245 870 51(62) barn, with 1 barn = 1e-28 m^2 (Table 1.1)
 comptime SIGMA_T: Float64 = 0.66524587051e-24
@@ -42,9 +43,9 @@ comptime C_LIGHT: Float64 = 2.99792458e10
 # e listing, p. 1, e MASS: 0.51099895069 +- 0.00000000016 MeV (MOHR 25, the
 # 2022 CODATA value)
 comptime MASS_E: Float64 = 0.51099895069e-3
-# the code units of the leptons and photons (AM3's SSC units, sigma_T c = 1):
+# The code units of the leptons and photons (AM3's SSC units, sigma_T c = 1):
 # length sqrt(sigma_T) [cm], time sqrt(sigma_T) / c [s], density [cm^-3] and
-# rate [cm^-3 s^-1]; their energies are in m_e c^2
+# rate [cm^-3 s^-1]. Their energies are in m_e c^2.
 comptime L_SSC: Float64 = sqrt(SIGMA_T)
 comptime T_SSC: Float64 = L_SSC / C_LIGHT
 comptime N_SSC: Float64 = 1.0 / (L_SSC * L_SSC * L_SSC)
@@ -52,7 +53,6 @@ comptime RATE_SSC: Float64 = N_SSC / T_SSC
 # GeV per erg: PDG 2026, Table 1.1, 1 eV = 1.602 176 634 x 10^-19 J (exact)
 # and 1 erg = 1e-7 J
 comptime GEV_PER_ERG: Float64 = 1.0 / 1.602176634e-3
-# m_e c^2 in eV (the lepton and photon grids start at it) and in erg
 comptime MEC2_EV: Float64 = MASS_E * 1.0e9
 comptime MEC2_ERG: Float64 = MASS_E / GEV_PER_ERG
 # Planck constant [GeV s]: PDG 2026, Table 1.1, h = 6.626 070 15 x 10^-34 J s
@@ -71,21 +71,19 @@ comptime B_CRIT: Float64 = MEC2_ERG * MEC2_ERG / (
 # the unit of Svensson's annihilation rate and spectrum
 comptime PI_RE2: Float64 = 0.375
 
-# ============================================================================
+# ==============================================================================
 # Triplet pair production
-# ============================================================================
-# fine-structure constant: PDG 2026, Table 1.1, alpha = e^2/(4 pi epsilon_0
-# hbar c) = 1/137.035 999 177(21); also in the Coulomb correction of the
-# neutron's beta spectrum and in AM3's Bethe-Heitler and quantum-synchrotron
-# rates
+# ==============================================================================
+# Fine-structure constant: PDG 2026, Table 1.1, alpha = e^2/(4 pi epsilon_0
+# hbar c) = 1/137.035 999 177(21).
 comptime ALPHA: Float64 = 1.0 / 137.035999177
 # alpha r_e^2 [sigma_T] = 3 alpha/(8 pi), from sigma_T = 8 pi r_e^2/3: the
 # unit of the triplet tables' cross sections
 comptime ALPHA_RE2: Float64 = 3.0 * ALPHA / (8.0 * PI)
 
-# ============================================================================
+# ==============================================================================
 # Neutron decay
-# ============================================================================
+# ==============================================================================
 # neutron mean life [s]: PDG 2026, n listing, p. 3, n MEAN LIFE: 878.3 +- 0.4
 # s, OUR AVERAGE
 comptime TAU_N: Float64 = 878.3
@@ -97,9 +95,9 @@ comptime MASS_N: Float64 = 0.93956542194
 # p listing, p. 1, p MASS: 938.27208943 +- 0.00000029 MeV, OUR EVALUATION
 comptime MASS_P: Float64 = 0.93827208943
 
-# ============================================================================
+# ==============================================================================
 # Hadrons
-# ============================================================================
+# ==============================================================================
 # microbarn and millibarn [cm^2]: PDG 2026, Table 1.1, 1 barn = 1e-28 m^2
 comptime MICROBARN: Float64 = 1.0e-30
 comptime MILLIBARN: Float64 = 1.0e-27
@@ -132,9 +130,9 @@ comptime TAU_KS: Float64 = 8.954e-11
 # OUR FIT
 comptime TAU_KL: Float64 = 5.116e-8
 
-# ============================================================================
+# ==============================================================================
 # Charm hadrons
-# ============================================================================
+# ==============================================================================
 # the mass [GeV] of the tau (D(s) -> tau nu), and the masses [GeV] and mean
 # lives [s] of D+- and D0, of Ds+- and of Lambda_c+
 # PDG 2026, tau listing, p. 1, tau MASS: 1776.93 +- 0.09 MeV, OUR AVERAGE
@@ -160,20 +158,20 @@ comptime MASS_LC: Float64 = 2.28646
 # PDG 2026, Lambda_c+ listing, p. 2, Lambda_c+ MEAN LIFE: (202.6 +- 1.0) x
 # 10^-15 s, OUR AVERAGE
 comptime TAU_LC: Float64 = 2.026e-13
-# fractions f(c -> D+, D0, Ds+, Lambda_c+) of charm quarks (and, alike, of
-# anti-quarks) that hadronise into each species, the global average of e+e-,
-# ep and pp data (Lisovyi et al. 2016, Table 12, "constrained S"), renormalised
-# to one hadron per quark (the charm-strange baryons, 0.9 %, left out); for the
-# pgamma and the pp charm hadrons
+# Fractions f(c -> D+, D0, Ds+, Lambda_c+) of charm quarks (and, alike, of
+# anti-quarks) that hadronize into each species, for the pgamma and the pp
+# charm hadrons. They are the global average of e+e-, ep and pp data
+# (Lisovyi et al. 2016, Table 12, "constrained S"), renormalized to one
+# hadron per quark. The charm-strange baryons (0.9 %) are left out.
 comptime _FRAG_SUM: Float64 = 0.2404 + 0.6086 + 0.0802 + 0.0623
 comptime FRAG_D: Float64 = 0.2404 / _FRAG_SUM
 comptime FRAG_D0: Float64 = 0.6086 / _FRAG_SUM
 comptime FRAG_DS: Float64 = 0.0802 / _FRAG_SUM
 comptime FRAG_LC: Float64 = 0.0623 / _FRAG_SUM
-# masses [GeV] of the other short-lived products of the charm decays, which
-# decay at once in the code (physics/decays.mojo): the listings' averages
-# (rho+- and rho0, K*+- hadroproduced and K*0 apart), the estimates of f0(980)
-# and a1(1260)
+# Masses [GeV] of the other short-lived products of the charm decays, which
+# decay at once in the code (physics/decays.mojo). They are the listings'
+# averages (rho+- and rho0, K*+- hadroproduced and K*0 apart), and the
+# estimates of f0(980) and a1(1260).
 # PDG 2026, eta listing, p. 1, eta MASS: 547.862 +- 0.017 MeV, OUR AVERAGE
 comptime MASS_ETA: Float64 = 0.547862
 # PDG 2026, eta'(958) listing, p. 1, eta'(958) MASS: 957.78 +- 0.06 MeV, OUR

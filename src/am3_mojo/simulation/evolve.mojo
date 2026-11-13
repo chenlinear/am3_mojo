@@ -1,12 +1,9 @@
-"""Table-driven evolution of particle species.
-
-Each `Evolution` row names a solver, the density it advances in place and the
-coefficient arrays it uses. The rows of a group are independent (distinct
-solvers and densities), so they run in parallel on the Mojo worker pool.
+"""The `Evolution` rows of a group are independent (distinct solvers and
+densities), so they run in parallel on the Mojo worker pool.
 """
 
 from am3_mojo.solver.solver import SolverAlgorithm
-from am3_mojo.utils.buffers import WD, Vec
+from am3_mojo.utils.buffers import Vec, WD
 from am3_mojo.utils.parallel import parallel_tasks
 
 comptime VPtr = Pointer[Vec, MutUntrackedOrigin]
@@ -24,9 +21,6 @@ def vp(ref v: Vec) -> VPtr:
 
 @fieldwise_init
 struct Evolution(Copyable, ImplicitlyCopyable, Movable):
-    """One species update, with cooling rates from the photon density
-    `n[nphot]`: `n[target] <- solver.evolve(c[a], c[A], c[q], n[target])`."""
-
     var solver: Int
     var target: Int
     var a: Int
@@ -36,7 +30,7 @@ struct Evolution(Copyable, ImplicitlyCopyable, Movable):
 
 
 struct EvolveJob(Copyable, Movable):
-    """A row resolved to pointers (inputs are read-only, `n` is updated)."""
+    """The inputs are read-only, and `n` is updated."""
 
     var sa: SPtr
     var a: VPtr
@@ -44,6 +38,7 @@ struct EvolveJob(Copyable, Movable):
     var q: VPtr
     var n: VPtr
     var failed: Bool
+    var msg: String
 
     def __init__(out self, sa: SPtr, a: VPtr, A: VPtr, q: VPtr, n: VPtr):
         self.sa = sa
@@ -52,45 +47,39 @@ struct EvolveJob(Copyable, Movable):
         self.q = q
         self.n = n
         self.failed = False
+        self.msg = String()
 
 
 def _work(jobs: Pointer[List[EvolveJob], MutUntrackedOrigin], k: Int):
     ref J = jobs[][k]
     try:
         J.sa[].evolve(J.a[], J.A[], J.q[], J.n[])
-    except:
+    except e:
         J.failed = True
+        J.msg = String(e)
 
 
 def run_jobs(mut jobs: List[EvolveJob], nthreads: Int) raises:
-    """Run independent jobs, in parallel when more than one thread is allowed.
-    """
     parallel_tasks[_work](jobs, len(jobs), nthreads)
     for i in range(len(jobs)):
         if jobs[i].failed:
-            raise Error("error in SolverAlgorithm.evolve")
+            raise Error(
+                String("error in SolverAlgorithm.evolve: ", jobs[i].msg)
+            )
 
 
 struct CoolJob(Copyable, Movable):
-    """A solver whose synchrotron and inverse-Compton cooling rates are
-    computed for this step, with the target photons `n` and the field `b`."""
-
     var sa: SPtr
     var n: VPtr
     var b: Float64
-    var failed: Bool
 
     def __init__(out self, sa: SPtr, n: VPtr, b: Float64):
         self.sa = sa
         self.n = n
         self.b = b
-        self.failed = False
 
 
 struct CoolTasks(Movable):
-    """The cooling rates of `jobs` in `nch` bin ranges each: task k is range
-    k % nch of job k // nch (the jobs whose cooling is on)."""
-
     var jobs: Pointer[List[CoolJob], MutUntrackedOrigin]
     var on: List[Int]
     var nch: Int
@@ -111,26 +100,18 @@ def _cool_work(tasks: Pointer[CoolTasks, MutUntrackedOrigin], k: Int):
     ref J = T.jobs[][T.on[k // T.nch]]
     var nb8 = J.sa[].N_BINS // WD
     var c = k % T.nch
-    # ranges of whole SIMD blocks, the last one up to N_BINS
     var i0 = c * nb8 // T.nch * WD
     var i1 = (c + 1) * nb8 // T.nch * WD if c + 1 < T.nch else J.sa[].N_BINS
     J.sa[].compute_syn_ic(J.b, J.n[], i0, i1)
 
 
-def run_cooling(mut jobs: List[CoolJob], nthreads: Int) raises:
-    """Compute the cooling rates of distinct solvers, in parallel when more
-    than one thread is allowed: each solver's bins in up to nthreads ranges
-    (each task writes only its own bins' rates)."""
+def run_cooling(mut jobs: List[CoolJob], nthreads: Int):
+    """Compute the cooling rates of distinct solvers in parallel. Each task
+    writes only the rates of its own bins."""
     var on = List[Int]()
     for i in range(len(jobs)):
-        try:
-            if jobs[i].sa[].start_cooling(jobs[i].b, jobs[i].n[], nthreads):
-                on.append(i)
-        except:
-            jobs[i].failed = True
-    for i in range(len(jobs)):
-        if jobs[i].failed:
-            raise Error("error in SolverAlgorithm.update_cooling")
+        if jobs[i].sa[].start_cooling(jobs[i].b, jobs[i].n[]):
+            on.append(i)
     if len(on) == 0:
         return
     var nch = max(1, nthreads // len(on))

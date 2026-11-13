@@ -3,11 +3,11 @@
 # the reference for tests/reference and the benchmark:
 #   work/build/serial/libpython   the unmodified original (serial build)
 #   work/build/fixed/libpython    the same with am3_fixes.patch (the AM3 bugs
-#                                 am3_mojo fixes): the like-for-like reference
-#                                 for the comparisons
+#                                 that am3_mojo fixes): the like-for-like
+#                                 reference for the comparisons
 # GSL 2.8, Eigen 3.4.0 and, on macOS, LLVM libomp 19.1.7 are downloaded and
-# built into work/deps; cmake, ninja and pybind11 come from the Python
-# environment (`uv sync`). A step whose result exists (for the AM3 builds: a
+# built into work/deps. The Python environment (`uv sync`) provides cmake,
+# ninja and pybind11. A step whose result exists (for the AM3 builds: a
 # module for this Python) is skipped, so the script can be re-run.
 #
 # Environment variables:
@@ -24,37 +24,73 @@ export PATH="$ROOT/.venv/bin:$PATH"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
 DEPS="$WORK/deps"
 PREFIX="$DEPS/install"
+# GSL's libtool and the compiler flags of the AM3 build split a path at a
+# space
+case "$WORK" in
+    *[[:space:]]*)
+        echo "the work directory ($WORK) holds a space, which the builds of" \
+            "GSL and AM3 cannot take: set AM3_REFERENCE_DIR to a folder" \
+            "without one"
+        exit 1 ;;
+esac
 mkdir -p "$WORK" "$DEPS"
 
 say() { printf '\n==> %s\n' "$*"; }
-fetch() { [ -f "$2" ] || curl -fL --retry 3 -o "$2" "$1"; }
-[ -x "$PY" ] || { echo "Python environment not found: run 'uv sync' first"; exit 1; }
-command -v cmake >/dev/null && command -v ninja >/dev/null || { echo "cmake/ninja missing: run 'uv sync'"; exit 1; }
+# (into place only when complete: an interrupted download is not kept)
+fetch() {
+    [ -f "$2" ] \
+        || { curl -fL --retry 3 -o "$2.part" "$1" && mv "$2.part" "$2"; }
+}
+[ -x "$PY" ] \
+    || { echo "Python environment not found: run 'uv sync' first"; exit 1; }
+command -v cmake >/dev/null && command -v ninja >/dev/null \
+    || { echo "cmake/ninja missing: run 'uv sync'"; exit 1; }
 
-# 1. AM3 source
 SRC="${AM3_SOURCE_DIR:-$WORK/am3}"
 if [ ! -f "$SRC/CMakeLists.txt" ]; then
+    [ ! -e "$SRC" ] \
+        || { echo "$SRC holds no AM3 source: remove it, or set AM3_SOURCE_DIR"
+             exit 1; }
     say "cloning AM3 ($COMMIT)"
-    git clone -q https://gitlab.desy.de/am3/am3.git "$SRC"
-    git -C "$SRC" checkout -q "$COMMIT"
+    # (into place only at the commit: an interrupted clone is not kept)
+    rm -rf "$SRC.part"
+    git clone -q https://gitlab.desy.de/am3/am3.git "$SRC.part"
+    git -C "$SRC.part" checkout -q "$COMMIT"
+    mv "$SRC.part" "$SRC"
+fi
+# Without these checks, a git checkout at another commit, or with changes to
+# its files, is built and patched as AM3 v1.2.0. A worktree or submodule, whose
+# .git is a file, is also a git checkout.
+if [ -e "$SRC/.git" ]; then
+    if [ "$(git -C "$SRC" rev-parse HEAD)" != "$COMMIT" ]; then
+        echo "$SRC is not at AM3 commit $COMMIT: check it out there"
+        exit 1
+    fi
+    if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
+        echo "$SRC has local changes: AM3 must be built unmodified"
+        exit 1
+    fi
 fi
 
-# 2. dependencies
 if [ ! -f "$PREFIX/lib/libgsl.a" ]; then
     say "building GSL 2.8"
     fetch https://ftp.gnu.org/gnu/gsl/gsl-2.8.tar.gz "$DEPS/gsl-2.8.tar.gz"
     tar -xzf "$DEPS/gsl-2.8.tar.gz" -C "$DEPS"
-    (cd "$DEPS/gsl-2.8" && CFLAGS="-O2 -fPIC" ./configure --prefix="$PREFIX" --disable-shared --enable-static >/dev/null \
+    (cd "$DEPS/gsl-2.8" && CFLAGS="-O2 -fPIC" ./configure --prefix="$PREFIX" \
+        --disable-shared --enable-static >/dev/null \
         && make -j"$JOBS" >/dev/null && make install >/dev/null)
 fi
 if [ ! -d "$PREFIX/share/eigen3/cmake" ]; then
     say "installing Eigen 3.4.0"
-    fetch https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz "$DEPS/eigen-3.4.0.tar.gz"
+    fetch \
+        https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.tar.gz \
+        "$DEPS/eigen-3.4.0.tar.gz"
     tar -xzf "$DEPS/eigen-3.4.0.tar.gz" -C "$DEPS"
-    cmake -S "$DEPS/eigen-3.4.0" -B "$DEPS/eigen-build" -G Ninja -DCMAKE_INSTALL_PREFIX="$PREFIX" >/dev/null
+    cmake -S "$DEPS/eigen-3.4.0" -B "$DEPS/eigen-build" -G Ninja \
+        -DCMAKE_INSTALL_PREFIX="$PREFIX" >/dev/null
     cmake --install "$DEPS/eigen-build" >/dev/null
 fi
-# AM3's CMakeLists requires OpenMP, but the reference is serial: the OpenMP
+# AM3's CMakeLists requires OpenMP, but the reference is serial. The OpenMP
 # flags leave out -fopenmp (on macOS they only point at the headers), so the
 # pragmas are ignored.
 if [ "$(uname)" = Darwin ]; then
@@ -64,42 +100,67 @@ if [ "$(uname)" = Darwin ]; then
         fetch "$R/openmp-19.1.7.src.tar.xz" "$DEPS/openmp-19.1.7.src.tar.xz"
         fetch "$R/cmake-19.1.7.src.tar.xz" "$DEPS/cmake-19.1.7.src.tar.xz"
         mkdir -p "$DEPS/llvm"
-        tar -xJf "$DEPS/openmp-19.1.7.src.tar.xz" -C "$DEPS/llvm" && rm -rf "$DEPS/llvm/openmp" && mv "$DEPS/llvm/openmp-19.1.7.src" "$DEPS/llvm/openmp"
-        tar -xJf "$DEPS/cmake-19.1.7.src.tar.xz" -C "$DEPS/llvm" && rm -rf "$DEPS/llvm/cmake" && mv "$DEPS/llvm/cmake-19.1.7.src" "$DEPS/llvm/cmake"
-        cmake -S "$DEPS/llvm/openmp" -B "$DEPS/omp-build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$PREFIX" -DLIBOMP_INSTALL_ALIASES=OFF -DOPENMP_ENABLE_LIBOMPTARGET=OFF >/dev/null
-        cmake --build "$DEPS/omp-build" >/dev/null && cmake --install "$DEPS/omp-build" >/dev/null
+        # (one command per line: set -e does not stop at a failure inside an
+        #  && list but its last command)
+        tar -xJf "$DEPS/openmp-19.1.7.src.tar.xz" -C "$DEPS/llvm"
+        rm -rf "$DEPS/llvm/openmp"
+        mv "$DEPS/llvm/openmp-19.1.7.src" "$DEPS/llvm/openmp"
+        tar -xJf "$DEPS/cmake-19.1.7.src.tar.xz" -C "$DEPS/llvm"
+        rm -rf "$DEPS/llvm/cmake"
+        mv "$DEPS/llvm/cmake-19.1.7.src" "$DEPS/llvm/cmake"
+        cmake -S "$DEPS/llvm/openmp" -B "$DEPS/omp-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+            -DLIBOMP_INSTALL_ALIASES=OFF -DOPENMP_ENABLE_LIBOMPTARGET=OFF \
+            >/dev/null
+        cmake --build "$DEPS/omp-build" >/dev/null
+        cmake --install "$DEPS/omp-build" >/dev/null
     fi
-    OMP_ARGS=(-DOpenMP_CXX_FLAGS="-I$PREFIX/include" -DOpenMP_CXX_LIB_NAMES=omp -DOpenMP_omp_LIBRARY="$PREFIX/lib/libomp.dylib")
+    OMP_ARGS=(-DOpenMP_CXX_FLAGS="-I$PREFIX/include" -DOpenMP_CXX_LIB_NAMES=omp
+              -DOpenMP_omp_LIBRARY="$PREFIX/lib/libomp.dylib")
 else
     GOMP="$(c++ -print-file-name=libgomp.so)"
-    OMP_ARGS=(-DOpenMP_CXX_FLAGS="-DAM3_SERIAL_REFERENCE" -DOpenMP_CXX_LIB_NAMES=gomp -DOpenMP_gomp_LIBRARY="$GOMP")
+    OMP_ARGS=(-DOpenMP_CXX_FLAGS="-DAM3_SERIAL_REFERENCE"
+              -DOpenMP_CXX_LIB_NAMES=gomp -DOpenMP_gomp_LIBRARY="$GOMP")
 fi
 
-# 3. AM3 builds
 PYBIND="$("$PY" -c 'import pybind11; print(pybind11.get_cmake_dir())')"
-EXT="$("$PY" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
+EXT="$("$PY" -c \
+    'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')"
 build() {  # build <name> <source dir>
     local out="$WORK/build/$1"
     if [ -f "$out/libpython/am3$EXT" ]; then return; fi
-    # none for this Python (another Python's module, or an unfinished build):
-    # configure afresh, as CMake caches the Python it found
+    # no module for this Python (another Python's module, or an unfinished
+    # build): configure afresh, because CMake caches the Python that it found
     rm -rf "$out"
     say "building AM3 ($1)"
-    cmake -S "$2" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
-        -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH="$PREFIX/lib" -DCMAKE_PREFIX_PATH="$PREFIX" \
-        -DEigen3_DIR="$PREFIX/share/eigen3/cmake" -DGSL_ROOT_DIR="$PREFIX" "${OMP_ARGS[@]}" \
-        -DPython_EXECUTABLE="$PY" -Dpybind11_DIR="$PYBIND" >/dev/null
-    cmake --build "$out" >/dev/null
-    # the module loads libomp through @rpath; keep a copy next to it
-    if [ "$(uname)" = Darwin ]; then cp "$PREFIX/lib/libomp.dylib" "$out/libpython/"; fi
+    cmake -S "$2" -B "$out" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+        -DCMAKE_INSTALL_RPATH="$PREFIX/lib" -DCMAKE_PREFIX_PATH="$PREFIX" \
+        -DEigen3_DIR="$PREFIX/share/eigen3/cmake" -DGSL_ROOT_DIR="$PREFIX" \
+        "${OMP_ARGS[@]}" -DPython_EXECUTABLE="$PY" -Dpybind11_DIR="$PYBIND" \
+        >/dev/null
+    # (ninja prints the compiler's errors to its standard output)
+    cmake --build "$out" >"$out.log" 2>&1 \
+        || { tail -n 40 "$out.log"
+             echo "AM3 ($1) failed to build: see $out.log"; exit 1; }
+    # the module loads libomp through @rpath, so keep a copy next to it
+    if [ "$(uname)" = Darwin ]; then
+        cp "$PREFIX/lib/libomp.dylib" "$out/libpython/"
+    fi
 }
 build serial "$SRC"
 # (rebuilt whenever the patch changes)
-if [ ! -f "$WORK/src-fixed/.patch" ] || ! cmp -s "$HERE/am3_fixes.patch" "$WORK/src-fixed/.patch"; then
+if [ ! -f "$WORK/src-fixed/.patch" ] \
+        || ! cmp -s "$HERE/am3_fixes.patch" "$WORK/src-fixed/.patch"; then
     rm -rf "$WORK/src-fixed" "$WORK/build/fixed"
-    cp -R "$SRC" "$WORK/src-fixed" && rm -rf "$WORK/src-fixed/.git"
-    patch -s -d "$WORK/src-fixed" -p1 < "$HERE/am3_fixes.patch"
+    # Without the /., cp -R copies a symlinked $SRC as the link. The steps
+    # below then change the checkout that it points to.
+    mkdir "$WORK/src-fixed"
+    cp -R "$SRC/." "$WORK/src-fixed"
+    rm -rf "$WORK/src-fixed/.git"
+    # (fuzz 0: a hunk whose context differs fails instead of landing
+    #  elsewhere)
+    patch -F0 -d "$WORK/src-fixed" -p1 < "$HERE/am3_fixes.patch"
     cp "$HERE/am3_fixes.patch" "$WORK/src-fixed/.patch"
 fi
 build fixed "$WORK/src-fixed"
@@ -109,9 +170,12 @@ import os, subprocess, sys
 ok = True
 for b in ('serial', 'fixed'):
     d = os.path.join(sys.argv[1], 'build', b, 'libpython')
-    r = subprocess.run([sys.executable, '-c', f'import sys; sys.path.insert(0, {d!r}); import am3; am3.AM3()'],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        [sys.executable, '-c',
+         f'import sys; sys.path.insert(0, {d!r}); import am3; am3.AM3()'],
+        capture_output=True, text=True)
     ok &= r.returncode == 0
-    print(f'reference {b:7s}', 'OK' if r.returncode == 0 else 'FAILED\n' + r.stderr[-2000:])
+    print(f'reference {b:7s}',
+          'OK' if r.returncode == 0 else 'FAILED\n' + r.stderr[-2000:])
 sys.exit(0 if ok else 1)
 PYEOF

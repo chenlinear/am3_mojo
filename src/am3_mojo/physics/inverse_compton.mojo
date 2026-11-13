@@ -1,4 +1,4 @@
-"""Port of Comp (InverseCompton.cc): IC photon emission/loss by e+/-."""
+"""Port of Comp (InverseCompton.cc)."""
 
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.particles import *
@@ -8,39 +8,38 @@ from am3_mojo.utils.linalg import MatD, gemv_d
 from am3_mojo.utils.parallel import parallel_run, parallel_tasks
 from am3_mojo.utils.specfun import polylog
 
-comptime QD = 8  # rows d of an emission block (the SIMD lanes)
-comptime LJ = 4  # electron bins of an emission block
-comptime QK = 4  # emitted photon bins of an output block (the SIMD lanes)
-comptime UPAD = 8  # zeros on either side of the reversed target photons
-comptime RAMP0 = 32  # Comp.ramp[x] = 1 for x > RAMP0, else 0
+comptime QD = 8
+comptime LJ = 4
+comptime QK = 4
+comptime UPAD = 8
+comptime RAMP0 = 32
 
 
 struct ICKernel2D(Copyable, Movable):
     """The IC emission kernel K[k](j, i) (outgoing photon k, electron j, target
-    photon i) in factorised form.
+    photon i) in factorized form.
 
-    On AM3's logarithmic grids every cross-section branch is
-    (1/gamma_j^2)(1/eps_i) * Phi(L, K) with L = 2 gamma eps and K = eps1/gamma,
-    a function of s = i + j and d = k - j only. So
-        K[k](j, i) = w[j] * u[i] * phi(d, s)   for i < min(k, ihi[j])
-    (i < k: the photon gains energy; ihi[j]: the C++ zeroing of low-gamma
-    columns). Entries that deviate are stored exactly as per-k exceptions.
-    The small table makes the emission a cache-resident SIMD computation
-    instead of a memory-bandwidth-bound stream.
+    On AM3's logarithmic grids, every cross-section branch is
+    (1/gamma_j^2)(1/eps_i) * Phi(L, K) with L = 2 gamma eps and K = eps1/gamma.
+    Phi(L, K) is then a function of s = i + j and d = k - j only. The mask
+    i < k means that the photon gains energy, and ihi[j] is the C++ zeroing of
+    low-gamma columns. Entries that deviate are stored exactly as per-k
+    exceptions. The small table makes the emission a cache-resident SIMD
+    computation instead of a memory-bandwidth-bound stream.
 
     The table keeps the rows d <= ipho, where bin k is not above the energy
-    of bin j (the others are zero). They are stored in groups of 8 rows
+    of bin j (the others are zero). The rows are stored in groups of 8,
     interleaved by s, the order in which ic_rows_work reads them. On the
-    default grids that is 528 x 620 Float64 values (2.62 MB). With the
-    exceptions and index arrays, the kernel takes 2,705,744 bytes, against
-    236,096,000 for the C++ kernel (one dense 340 x 280 float32 matrix per
-    outgoing photon bin). Of the 49.5 million entries of the 520 matrices of
-    the emitted bins, 2,745 are exceptions: 2,487 on the i == k diagonal,
-    whose inclusion the C++ decides by round-off; 181 at i == k - 1 of the top
-    electron bin, whose phi no other entry gives; and 77 just below the
-    kinematic limit, which differ from the table by round-off (1-11e-12).
-    init_kernels() with set_verbosity_level(True) prints the table's size and
-    the number of exceptions."""
+    default grids, with the exceptions and index arrays, the kernel takes
+    2,705,744 bytes. The C++ kernel takes 236,096,000 bytes (one dense
+    340 x 280 float32 matrix per outgoing photon bin). Of the 49.5 million
+    entries of the 520 matrices of the emitted bins, 2,745 are exceptions. Of
+    these, 2,487 lie on the i == k diagonal, whose inclusion the C++ decides
+    by round-off. Another 181 lie at i == k - 1 of the top electron bin, whose
+    phi no other entry gives. The other 77 lie right below the kinematic limit
+    and differ from the table by round-off (1-11e-12). With
+    set_verbosity_level(True), init_kernels() prints the table's size and the
+    number of exceptions."""
 
     var valid: Bool
     var npho: Int
@@ -48,16 +47,16 @@ struct ICKernel2D(Copyable, Movable):
     var ipho: Int
     var inmax: Int
     var outmin: Int
-    var ns: Int  # s = i + j in [0, ns)
-    var d0: Int  # d = k - j in [d0, d0 + nd), up to ipho
+    var ns: Int
+    var d0: Int
     var nd: Int
-    var phi: Vec  # phi(d0 + 8 g + q, s) at [(g * ns + s) * 8 + q]
-    var slo: VecI  # phi(d, s) is zero outside s in [slo[d - d0], shi[d - d0])
+    var phi: Vec
+    var slo: VecI
     var shi: VecI
-    var w: Vec  # 1 / gamma_j^2
-    var u: Vec  # 1 / eps_i
-    var ihi: VecI  # columns i >= ihi[j] are zero
-    var ex_start: VecI  # exceptions of bin k: [ex_start[k], ex_start[k + 1])
+    var w: Vec
+    var u: Vec
+    var ihi: VecI
+    var ex_start: VecI
     var ex_j: VecI
     var ex_i: VecI
     var ex_v: Vec
@@ -85,23 +84,15 @@ struct ICKernel2D(Copyable, Movable):
 
 
 struct ICJob(Movable):
-    """Per-step IC emission, in two parallel phases:
-
-    1. rows: for every d = k - j (outgoing photon minus electron bin)
-           RT[d][j] = sum_i U[i] * phi(d, i + j)       (U_i = v_i / eps_i)
-       over the allowed i, in increasing i. With s = i + j this is
-       sum_s phi(d, s) U[s - j], a matrix product: ic_rows_work takes blocks
-       of 8 rows d and 4 electron bins j, which reuse each loaded value of
-       phi for 4 products and each of U for 8.
-    2. outputs: out_m[k] = pref_k * (sum_j RT[k - j][j] * w_j * E_m[j]
-                                     + exception terms), in increasing j."""
+    """ic_rows_work takes blocks of 8 rows d and 4 electron bins j. These blocks
+    reuse each loaded value of phi for 4 products and each of U for 8."""
 
     var K: Pointer[ICKernel2D, MutUntrackedOrigin]
-    var Ur: FPtr  # U[i] at ur0 - i, zero outside [ulo, uhi)
+    var Ur: FPtr
     var ur0: Int
     var ramp: FPtr
-    var v: FPtr  # normalised target photons
-    var RT: FPtr  # RT[d][j] at j * ndp + (d - d0)
+    var v: FPtr
+    var RT: FPtr
     var ndp: Int
     var outs: Array[FPtr, N_LEP_IN]
     var ins: Array[FPtr, N_LEP_IN]
@@ -113,7 +104,6 @@ struct ICJob(Movable):
     var ehi: Int
     var ulo: Int
     var uhi: Int
-    var outmin: Int  # first emitted photon bin (current setting)
 
     def __init__(
         out self,
@@ -134,7 +124,6 @@ struct ICJob(Movable):
         ehi: Int,
         ulo: Int,
         uhi: Int,
-        outmin: Int,
     ):
         self.K = K
         self.Ur = Ur
@@ -153,15 +142,12 @@ struct ICJob(Movable):
         self.ehi = ehi
         self.ulo = ulo
         self.uhi = uhi
-        self.outmin = outmin
 
 
 def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], g: Int):
-    """RT of the rows d = d0 + 8 g + q (q < 8), in blocks of 4 electron bins.
-
-    The 8 x 4 sums of a block run over the union s of their ranges; outside
-    its own range a sum adds exact zeros (phi or U is zero there) except
-    where the masks i < k and i < ihi[j] cut, at the end of the range. There
+    """The 8 x 4 sums of a block run over the union s of their ranges. Outside
+    its own range, a sum adds exact zeros (phi or U is zero there). This is not
+    so at the end of the range, where the masks i < k and i < ihi[j] cut. There,
     the ramp table zeroes the cut lanes."""
     ref J = job[]
     ref K = J.K[]
@@ -169,12 +155,11 @@ def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], g: Int):
     var jA = Array[Int, QD](fill=0)
     var jB = Array[Int, QD](fill=0)
     var nrow = min(QD, K.nd - dd0)
-    # electrons whose outgoing bin k = d + j is emitted
     var jlo = K.nl
     var jhi = 0
     for q in range(nrow):
         var d = K.d0 + dd0 + q
-        jA[q] = max(max(J.elo, J.outmin - d), 0)
+        jA[q] = max(max(J.elo, K.outmin - d), 0)
         jB[q] = min(J.ehi, K.npho - d)
         if jB[q] > jA[q]:
             jlo = min(jlo, jA[q])
@@ -186,7 +171,6 @@ def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], g: Int):
     var pg = pd(K.phi).unsafe_offset(g * K.ns * QD)
     var j0 = jlo
     while j0 < jhi:
-        # the s ranges of the block's sums; from s_m on, masks cut
         var s_lo = K.ns
         var s_hi = 0
         var s_m = K.ns
@@ -201,7 +185,6 @@ def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], g: Int):
                     s_lo = min(s_lo, i0 + j)
                     s_hi = max(s_hi, i1 + j)
         var a = Array[SIMD[DType.float64, QD], LJ](fill=zero)
-        # U[s - j0 - l] at ub[l - s]
         var ub = J.Ur.unsafe_offset(J.ur0 + j0)
         var s = s_lo
         var s_end = min(s_m, s_hi)
@@ -212,9 +195,6 @@ def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], g: Int):
                 a[l] = p.fma(SIMD[DType.float64, QD](u[unsafe_offset=l]), a[l])
             s += 1
         if s < s_hi:
-            # lane q of bin j = j0 + l takes phi while s < d + 2 j (i < k),
-            # the ramp at d0 + dd0 + q + 2 j - s + RAMP0, and U while
-            # s < ihi[j] + j
             var ihs = Array[Int, LJ](fill=0)
             comptime for l in range(LJ):
                 ihs[l] = K.ihi[min(j0 + l, K.nl - 1)] + j0 + l
@@ -238,15 +218,13 @@ def ic_rows_work(job: Pointer[ICJob, MutUntrackedOrigin], g: Int):
 
 
 def _ic_out_block[n: Int](job: Pointer[ICJob, MutUntrackedOrigin], kb: Int):
-    """Outputs k0 .. k0 + 3 of the first n inputs, k0 = outmin + 4 kb. The
-    lanes start at the first electron bin of k0; for a later lane those
-    below its own first bin read rows d > ipho, which are zero."""
+    """The lanes start at the first electron bin of k0. For a later lane, the
+    bins below its own first bin read rows d > ipho, which are zero."""
     ref J = job[]
     ref K = J.K[]
-    var k0 = J.outmin + kb * QK
+    var k0 = K.outmin + kb * QK
     var jlo = max(max(k0 - K.ipho, 0), J.elo)
     var acc = Array[SIMD[DType.float64, QK], n](fill=SIMD[DType.float64, QK](0))
-    # RT[k0 - j][j] at rk + j * (ndp - 1)
     var rk = J.RT.unsafe_offset(k0 - K.d0)
     for j in range(jlo, J.ehi):
         var r = (
@@ -275,7 +253,7 @@ def _ic_out_block[n: Int](job: Pointer[ICJob, MutUntrackedOrigin], kb: Int):
 
 def ic_out_work(job: Pointer[ICJob, MutUntrackedOrigin], t: Int, nt: Int):
     comptime assert N_LEP_IN <= 8, "the register blocks have up to 8 inputs"
-    var nkb = (job[].K[].npho - job[].outmin + QK - 1) // QK
+    var nkb = (job[].K[].npho - job[].K[].outmin + QK - 1) // QK
     var kb = t
     while kb < nkb:
         # the inputs' register block, sized at compile time
@@ -300,17 +278,9 @@ def ic_out_work(job: Pointer[ICJob, MutUntrackedOrigin], t: Int, nt: Int):
 
 
 struct ICBuildJob(Movable):
-    """build_factorised_kernel's sweeps over the electron bins j = t, t + nt,
-    ...: per thread t, the first of its bins with a regular value of every
-    table entry (first: entry x at t * nx + x, -1 for none); the table
-    (written by that first bin of all threads, first[x]); per bin its
-    exceptions."""
-
     var C: Pointer[Comp, MutUntrackedOrigin]
     var dat: Pointer[AM3Arrays, MutUntrackedOrigin]
     var K: Pointer[ICKernel2D, MutUntrackedOrigin]
-    var inmax: Int
-    var outmin: Int
     var first: List[Int32]
     var table: FPtr
     var ex_k: List[VecI]
@@ -322,16 +292,12 @@ struct ICBuildJob(Movable):
         C: Pointer[Comp, MutUntrackedOrigin],
         dat: Pointer[AM3Arrays, MutUntrackedOrigin],
         K: Pointer[ICKernel2D, MutUntrackedOrigin],
-        inmax: Int,
-        outmin: Int,
         nt: Int,
         nl: Int,
     ):
         self.C = C
         self.dat = dat
         self.K = K
-        self.inmax = inmax
-        self.outmin = outmin
         var nx = K[].nd * K[].ns
         self.first = List[Int32](length=nt * nx, fill=-1)
         self.table = pd(K[].w)  # (the table, set before it is filled)
@@ -343,19 +309,19 @@ struct ICBuildJob(Movable):
 def ic_build_first_work(
     job: Pointer[ICBuildJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
-    """Sweep 1: thread t's first bin of every table entry; on one thread,
-    that bin writes the entry too (sweep 2 is then not needed)."""
+    """On one thread, the first bin of every table entry also writes the entry
+    (sweep 2 is then not needed)."""
     ref J = job[]
     ref K = J.K[]
     ref dat = J.dat[]
     var npho = K.npho
-    var inmax = J.inmax
+    var inmax = K.inmax
     var first = J.first.unsafe_ptr().unsafe_offset(t * K.nd * K.ns)
     var sl = zeros(npho * inmax)
     var j = t
     while j < K.nl:
-        J.C[].kernel_slice(dat, j, inmax, J.outmin, sl)
-        for k in range(J.outmin, min(npho, j + K.ipho + 1)):
+        J.C[].kernel_slice(dat, j, inmax, K.outmin, sl)
+        for k in range(K.outmin, min(npho, j + K.ipho + 1)):
             var d = k - j
             for i in range(min(min(k - 1, K.ihi[j]), inmax)):
                 var x = (d - K.d0) * K.ns + (i + j)
@@ -376,12 +342,12 @@ def ic_build_table_work(
     ref K = J.K[]
     ref dat = J.dat[]
     var npho = K.npho
-    var inmax = J.inmax
+    var inmax = K.inmax
     var sl = zeros(npho * inmax)
     var j = t
     while j < K.nl:
-        J.C[].kernel_slice(dat, j, inmax, J.outmin, sl)
-        for k in range(J.outmin, min(npho, j + K.ipho + 1)):
+        J.C[].kernel_slice(dat, j, inmax, K.outmin, sl)
+        for k in range(K.outmin, min(npho, j + K.ipho + 1)):
             var d = k - j
             for i in range(min(min(k - 1, K.ihi[j]), inmax)):
                 var x = (d - K.d0) * K.ns + (i + j)
@@ -399,12 +365,12 @@ def ic_build_exceptions_work(
     ref K = J.K[]
     ref dat = J.dat[]
     var npho = K.npho
-    var inmax = J.inmax
+    var inmax = K.inmax
     var sl = zeros(npho * inmax)
     var j = t
     while j < K.nl:
-        J.C[].kernel_slice(dat, j, inmax, J.outmin, sl)
-        for k in range(J.outmin, npho):
+        J.C[].kernel_slice(dat, j, inmax, K.outmin, sl)
+        for k in range(K.outmin, npho):
             var d = k - j
             var n = min(min(k, K.ihi[j]), inmax) if d <= K.ipho else 0
             for i in range(inmax):
@@ -429,8 +395,8 @@ struct Comp(Copyable, Movable):
     var aficG: Vec
     var K2: ICKernel2D
     var nthreads: Int
-    var KER_IC_s_tot: MatD  # (nbins_pho x nbins_lep)
-    var ramp: Vec  # 0 up to RAMP0, then 1 (the masks of ic_rows_work)
+    var KER_IC_s_tot: MatD
+    var ramp: Vec
     var w_Ur: Vec
     var w_v: Vec
     var w_RT: Vec
@@ -454,13 +420,15 @@ struct Comp(Copyable, Movable):
 
     def reinitialize_empty_kernels(mut self, dat: AM3Arrays):
         self.K2 = ICKernel2D()
-        self.KER_IC_s_tot = MatD(dat.nbins_pho, dat.nbins_lep)
+        var npho = dat.nbins_pho
+        var nl = dat.nbins_lep
+        self.KER_IC_s_tot = MatD.hankel(npho, nl, zeros(npho + nl - 1))
 
     def kernel_slice(
         self, dat: AM3Arrays, j: Int, inmax: Int, outmin: Int, mut sl: Vec
     ):
-        """Electron column j of the original (C++) kernel, sl[k * inmax + i],
-        evaluated in double precision exactly as InverseCompton.cc builds it."""
+        """Electron column j of the original (C++) kernel, evaluated in double
+        precision exactly as InverseCompton.cc builds it."""
         var npho = dat.nbins_pho
         var ipho = dat.ind_min_energy_pho
         for x in range(npho * inmax):
@@ -523,30 +491,34 @@ struct Comp(Copyable, Movable):
     def initialize_kernels(
         mut self,
         dat: AM3Arrays,
-        rad: Bool,
         photonLoss: Bool,
         outmin: Int,
         inmax: Int,
     ):
-        if rad:
-            if self.verbose:
-                print(
-                    "computing electron IC photon generation kernel"
-                    " (factorised)"
-                )
-            self.build_factorised_kernel(dat, inmax, outmin)
+        if self.verbose:
+            print("computing electron IC photon generation kernel (factorised)")
+        self.build_factorised_kernel(dat, inmax, outmin)
         if photonLoss:
             if self.verbose:
                 print("computing IC photon loss kernel")
-            for j in range(dat.nbins_lep):
-                for i in range(dat.nbins_pho):
-                    var L = 2.0 * dat.egrid_pho[i] * dat.egrid_lep[j]
-                    if L < 0.001:
-                        self.KER_IC_s_tot.set(i, j, self.s_tot_th(L))
-                    elif 0.001 <= L and L <= 1000.0:
-                        self.KER_IC_s_tot.set(i, j, self.s_tot_full(L))
-                    else:
-                        self.KER_IC_s_tot.set(i, j, self.s_tot_KN(L))
+            # L = 2 E_i gamma_j depends only on i + j on the logarithmic grids.
+            # Each anti-diagonal i + j = m takes the value of its entry of the
+            # lowest electron bin. So the matrix is exactly Hankel. (Without
+            # this, the rounding of L leaves 3e-8 differences along an
+            # anti-diagonal.)
+            var npho = dat.nbins_pho
+            var nl = dat.nbins_lep
+            var t = zeros(npho + nl - 1)
+            for m in range(npho + nl - 1):
+                var j0 = max(0, m - npho + 1)
+                var L = 2.0 * dat.egrid_pho[m - j0] * dat.egrid_lep[j0]
+                if L < 0.001:
+                    t[m] = self.s_tot_th(L)
+                elif 0.001 <= L and L <= 1000.0:
+                    t[m] = self.s_tot_full(L)
+                else:
+                    t[m] = self.s_tot_KN(L)
+            self.KER_IC_s_tot = MatD.hankel(npho, nl, t^)
 
     def build_factorised_kernel(
         mut self, dat: AM3Arrays, inmax_in: Int, outmin: Int
@@ -563,7 +535,6 @@ struct Comp(Copyable, Movable):
         K.ns = inmax + nl
         K.d0 = outmin - nl
         K.nd = K.ipho - K.d0 + 1
-        # phi[(d - d0) * ns + s] while it is built
         var phi = zeros(K.nd * K.ns)
         K.w = zeros(nl)
         K.u = zeros(inmax)
@@ -580,10 +551,8 @@ struct Comp(Copyable, Movable):
                     n = i
                     break
             K.ihi[j] = n
-        # pass 1: phi(d, s) from the first regular entry (i <= k - 2, below the
-        # zeroed columns) of every (d, s). The electron bins run in parallel:
-        # each thread notes the first of its bins that has the entry, and the
-        # first of all bins then writes it
+        # phi(d, s) from the first regular entry (i <= k - 2, below the zeroed
+        # columns) of every (d, s).
         var nt = max(1, min(self.nthreads, nl))
         var nx = K.nd * K.ns
         var job = ICBuildJob(
@@ -592,8 +561,6 @@ struct Comp(Copyable, Movable):
             .unsafe_mut_cast[True]()
             .unsafe_origin_cast[MutUntrackedOrigin](),
             Pointer(to=K).unsafe_origin_cast[MutUntrackedOrigin](),
-            inmax,
-            outmin,
             nt,
             nl,
         )
@@ -610,8 +577,6 @@ struct Comp(Copyable, Movable):
             job.first.resize(nx, 0)
             parallel_run[ic_build_table_work](job, nt)
         job.first = List[Int32]()
-        # pass 2: every entry the factorised form does not reproduce to 1e-12
-        # becomes an exception (in parallel, kept in the order of the bins)
         parallel_run[ic_build_exceptions_work](job, nt)
         var ek = VecI()
         for j in range(nl):
@@ -620,19 +585,12 @@ struct Comp(Copyable, Movable):
                 K.ex_j.append(j)
                 K.ex_i.append(job.ex_i[j][x])
                 K.ex_v.append(job.ex_v[j][x])
-        # non-zero band of every phi(d, .)
         K.slo = zerosi(K.nd)
         K.shi = zerosi(K.nd)
         for dd in range(K.nd):
-            var lo = K.ns
-            var hi = 0
-            for x in range(K.ns):
-                if phi[dd * K.ns + x] != 0.0:
-                    lo = min(lo, x)
-                    hi = x + 1
-            K.slo[dd] = lo
-            K.shi[dd] = hi
-        # groups of 8 rows interleaved by s (ic_rows_work), zero-padded
+            K.slo[dd], K.shi[dd] = nonzero_range(
+                pd(phi).unsafe_offset(dd * K.ns), K.ns
+            )
         var ng = (K.nd + QD - 1) // QD
         K.phi = zeros(ng * K.ns * QD)
         for dd in range(K.nd):
@@ -640,7 +598,6 @@ struct Comp(Copyable, Movable):
                 K.phi[((dd // QD) * K.ns + x) * QD + dd % QD] = phi[
                     dd * K.ns + x
                 ]
-        # bucket the exceptions by k
         var cnt = zerosi(npho + 1)
         for x in range(len(ek)):
             cnt[ek[x] + 1] += 1
@@ -681,13 +638,10 @@ struct Comp(Copyable, Movable):
         outs: Array[FPtr, N_LEP_IN],
         ins: Array[FPtr, N_LEP_IN],
         only_first: Bool,
-        outmin_now: Int,
-        inmax_now: Int,
     ):
-        """IC emission. The kernel covers the emitted photon bins from the
-        minimum, and the target photon bins up to the maximum, of
-        init_kernels. The current settings narrow them further, as in the
-        C++, which loops over the current ranges."""
+        """The kernel covers the emitted photon bins from the minimum of the
+        optimization limits that it was built for. It covers the target photon
+        bins up to the maximum of these limits."""
         if self.verbose:
             print(" Calculate IC Photon Emission term")
         var N_calc = 1 if only_first else N_LEP_IN
@@ -697,28 +651,26 @@ struct Comp(Copyable, Movable):
             for i in range(npho):
                 outs[m][unsafe_offset=i] = 0.0
         if not self.K2.valid:
-            return  # no kernel: no emission
+            return
         var RN = 1.0e-50
         for i in range(npho):
             RN += dat.n[P_photons][i]
         var inmax = self.K2.inmax
-        var in_now = min(inmax, inmax_now)
         resize_zero(self.w_v, inmax)
-        # U_i = v_i / eps_i, reversed (U[i] at ur0 - i) and padded with zeros
         var ur0 = inmax + UPAD - 1
         resize_zero(self.w_Ur, inmax + 2 * UPAD)
         var ulo = inmax
         var uhi = 0
-        for i in range(in_now):
+        for i in range(inmax):
             self.w_v[i] = dat.n[P_photons][i] / RN
             var U = self.w_v[i] * self.K2.u[i]
             self.w_Ur[ur0 - i] = U
             if U != 0.0:
                 ulo = min(ulo, i)
                 uhi = i + 1
-        # electron bins where every input spectrum is zero contribute nothing,
-        # and inputs that are zero everywhere are left out (their outputs stay
-        # zero): the workers take the first n_in of ins_nz / outs_nz
+        # Electron bins where every input spectrum is zero contribute nothing.
+        # Inputs that are zero everywhere are left out (their outputs stay
+        # zero).
         var elo = nl
         var ehi = 0
         var ins_nz = ins.copy()
@@ -736,7 +688,6 @@ struct Comp(Copyable, Movable):
                 ins_nz[n_in] = ins[m]
                 outs_nz[n_in] = outs[m]
                 n_in += 1
-        # RT of the rows d0 .. d0 + ndp - 1 (those past the table are zero)
         var ng = (self.K2.nd + QD - 1) // QD
         var ndp = (ng + 1) * QD
         if len(self.w_RT) != nl * ndp:
@@ -759,7 +710,6 @@ struct Comp(Copyable, Movable):
             ehi,
             ulo,
             uhi,
-            max(self.K2.outmin, outmin_now),
         )
         parallel_tasks[ic_rows_work](job, ng, self.nthreads)
         parallel_run[ic_out_work](job, self.nthreads)
@@ -808,7 +758,7 @@ struct Comp(Copyable, Movable):
         gemv_d(self.KER_IC_s_tot, pd(dat.n[P_pairs]), dat.dlnE, pd(self.aficG))
 
     def s_tot_th(self, L: Float64) -> Float64:
-        return 1.0 - 1.333333 * L
+        return 1.0 - 4.0 / 3.0 * L
 
     def s_tot_full(self, L: Float64) -> Float64:
         var a1 = -2.0 * L * (4.0 + 9.0 * L + L * L)

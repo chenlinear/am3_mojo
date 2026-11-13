@@ -1,27 +1,16 @@
-"""Matrices and SIMD matrix-vector products.
-
-* `MatD` / `gemv_d`: column-major float64 matrices. Toeplitz and Hankel
-  matrices are multiplied as a SIMD convolution (`diagonal_gemv`), others by a
-  product vectorised over rows that skips all-zero row ranges.
-* `Mat3F` / `PackedGemvF`: float32 3D kernels stored as packed non-zero row
-  windows (used by the Bethe-Heitler pair emission).
-"""
-
 from std.math import fma
 from am3_mojo.utils.buffers import *
 from am3_mojo.utils.parallel import parallel_run, parallel_tasks
 
 
 struct MatD(Copyable, Movable):
-    """Column-major Float64 matrix.
-
-    `analyze()` records the non-zero row range of every column block of the
-    GEMV kernel, so gemv_d skips rows that would only add exact zeros. It also
-    detects Toeplitz matrices (A[i, j] a function of i - j, as for every kernel
-    of an energy ratio on AM3's logarithmic grids) and Hankel matrices (of
-    i + j, for kernels of an energy product). gemv_d then uses the ~rows + cols
-    diagonal values instead of streaming the matrix. The dense data is kept as
-    well (about 10 MB for AM3's decay matrices).
+    """`analyze()` records the non-zero row range of every column block of the
+    GEMV kernel, so gemv_d skips rows that add only exact zeros. It also
+    detects Toeplitz matrices (A[i, j] a function of i - j) and Hankel
+    matrices (of i + j). Every kernel of an energy ratio on AM3's logarithmic
+    grids is Toeplitz, and kernels of an energy product are Hankel. gemv_d
+    then uses the ~rows + cols diagonal values instead of streaming the
+    matrix.
     """
 
     var rows: Int
@@ -30,8 +19,6 @@ struct MatD(Copyable, Movable):
     var sp_lo: VecI
     var sp_hi: VecI
     var sp_valid: Bool
-    # diagonal form: Toeplitz A[i, j] = toe[i - j + cols - 1] or Hankel
-    # A[i, j] = toe[i + j], non-zero for indices in [toe_lo, toe_hi)
     var is_toeplitz: Bool
     var is_hankel: Bool
     var toe: Vec
@@ -66,27 +53,34 @@ struct MatD(Copyable, Movable):
 
     @staticmethod
     def toeplitz(rows: Int, cols: Int, var t: Vec) -> MatD:
-        """rows x cols Toeplitz matrix A[i, j] = t[i - j + cols - 1] given by
-        its diagonal values only (no dense storage)."""
+        """Toeplitz matrix A[i, j] = t[i - j + cols - 1] given by its diagonal
+        values only (no dense storage)."""
         var A = MatD()
         A.rows = rows
         A.cols = cols
-        var lo = len(t)
-        var hi = 0
-        for m in range(len(t)):
-            if t[m] != 0.0:
-                lo = min(lo, m)
-                hi = m + 1
+        A.toe_lo, A.toe_hi = nonzero_range(pd(t), len(t))
         A.toe = t^
-        A.toe_lo = lo if hi > 0 else 0
-        A.toe_hi = hi
         A.is_toeplitz = True
         A.sp_valid = True
         return A^
 
+    @staticmethod
+    def hankel(rows: Int, cols: Int, var t: Vec) -> MatD:
+        """Hankel matrix A[i, j] = t[i + j] given by its diagonal values only
+        (no dense storage)."""
+        var A = MatD.toeplitz(rows, cols, t^)
+        A.is_toeplitz = False
+        A.is_hankel = True
+        return A^
+
+    @staticmethod
+    def toeplitz_entry(m: Int, cols: Int) -> Tuple[Int, Int]:
+        """The entry (i, j) of diagonal m of a Toeplitz matrix whose value
+        `analyze()` takes for it: the first in column-major order."""
+        var j = max(0, cols - 1 - m)
+        return (m - (cols - 1) + j, j)
+
     def _detect_structure(mut self):
-        """Toeplitz (A[i, j] = t[i - j + cols - 1]) or Hankel (A[i, j] =
-        t[i + j]) if every such diagonal is constant to 1e-12 (relative)."""
         self.is_toeplitz = False
         self.is_hankel = False
         if self.rows == 0 or self.cols == 0:
@@ -111,15 +105,8 @@ struct MatD(Copyable, Movable):
                     break
             if not ok:
                 continue
-            var lo = nt
-            var hi = 0
-            for m in range(nt):
-                if t[m] != 0.0:
-                    lo = min(lo, m)
-                    hi = m + 1
+            self.toe_lo, self.toe_hi = nonzero_range(pd(t), nt)
             self.toe = t^
-            self.toe_lo = lo
-            self.toe_hi = hi
             self.is_toeplitz = kind == 0
             self.is_hankel = kind == 1
             return
@@ -161,8 +148,6 @@ struct MatD(Copyable, Movable):
 
 
 struct MatI(Copyable, Movable):
-    """Column-major Int matrix."""
-
     var rows: Int
     var cols: Int
     var data: VecI
@@ -186,42 +171,11 @@ struct MatI(Copyable, Movable):
         self.data[j * self.rows + i] = v
 
 
-struct Mat3F(Copyable, Movable):
-    """A stack of `nmat` column-major float matrices of
-    identical shape stored back to back."""
-
-    var nmat: Int
-    var rows: Int
-    var cols: Int
-    var data: VecF
-
-    def __init__(out self):
-        self.nmat = 0
-        self.rows = 0
-        self.cols = 0
-        self.data = VecF()
-
-    def __init__(out self, nmat: Int, rows: Int, cols: Int):
-        self.nmat = nmat
-        self.rows = rows
-        self.cols = cols
-        self.data = zerosf(nmat * rows * cols)
-
-    @inline(.always)
-    def mat(ref self, k: Int) -> F32Ptr:
-        return pf(self.data).unsafe_offset(k * self.rows * self.cols)
-
-    @inline(.always)
-    def set(mut self, k: Int, i: Int, j: Int, v: Float32):
-        self.data[(k * self.cols + j) * self.rows + i] = v
-
-
 comptime DOT_BLOCK = 4 * WD  # elements per step of `dot`'s main loop
 
 
 def dot(a: FPtr, b: FPtr, n: Int) -> Float64:
-    """sum_i a[i] * b[i] over i < n, with four independent SIMD partial sums
-    (a single running sum would be limited by the latency of each add)."""
+    """A single running sum is limited by the latency of each add."""
     comptime W = WD
     var s0 = SIMD[DType.float64, W](0)
     var s1 = SIMD[DType.float64, W](0)
@@ -263,15 +217,15 @@ def dot(a: FPtr, b: FPtr, n: Int) -> Float64:
 
 
 def dot_nonzero(a: FPtr, b: FPtr, n: Int, lo: Int, hi: Int) -> Float64:
-    """`dot(a, b, n)` for an `a` that is zero outside [lo, hi), bitwise: the
+    """`dot(a, b, n)` for an `a` that is zero outside [lo, hi), bitwise. The
     blocks of `dot` (32 elements, then 8, then single ones) that lie outside
-    would add exact zeros to its partial sums, so they are skipped."""
+    add exact zeros to its partial sums, so they are skipped."""
     comptime W = WD
     var s0 = SIMD[DType.float64, W](0)
     var s1 = SIMD[DType.float64, W](0)
     var s2 = SIMD[DType.float64, W](0)
     var s3 = SIMD[DType.float64, W](0)
-    var nb = n - n % (4 * W)  # end of the 32-element blocks
+    var nb = n - n % (4 * W)
     var i = max(lo, 0) // (4 * W) * (4 * W)
     var iend = min(nb, hi)
     while i < iend:
@@ -311,8 +265,8 @@ def dot_nonzero(a: FPtr, b: FPtr, n: Int, lo: Int, hi: Int) -> Float64:
 
 @inline(.always)
 def gemv_block_cols[elt_size: Int](rows: Int, cols: Int) -> Int:
-    """Column-block width of the blocked GEMV: narrow matrices form one block;
-    otherwise 16 columns, or 4 when a block of 16 would not stay in cache."""
+    """Narrow matrices form one block. Others take 16 columns, or 4 when a block
+    of 16 does not stay in cache."""
     if cols < 128:
         return cols
     return 16 if rows * elt_size < 32000 else 4
@@ -331,7 +285,6 @@ def gemv_block_rows[
     r0: Int,
     r1: Int,
 ):
-    """One column block [j2, jend) applied to rows [r0, r1)."""
     var i = r0
     var valpha = SIMD[dtype, W](alpha)
     while i + W <= r1:
@@ -365,8 +318,6 @@ def gemv_block_rows[
 def _diag_cols[
     hankel: Bool
 ](tlo: Int, thi: Int, C: Int, c1: Int, i0: Int, nb: Int) -> Tuple[Int, Int]:
-    """Columns j whose diagonal index i +- j + c1 lies in [tlo, thi) for some
-    row i in [i0, i0 + nb)."""
     comptime if hankel:
         return (max(0, tlo - (i0 + nb - 1)), min(C, thi - i0))
     else:
@@ -386,11 +337,7 @@ def diagonal_gemv[
     res: FPtr,
 ):
     """res = alpha * A x for the R x C matrix A[i, j] = t[i - j + C - 1]
-    (Toeplitz) or t[i + j] (Hankel), with t zero outside [tlo, thi).
-
-    Output rows go in blocks of 4 x W, then W, then single rows, each
-    accumulated in registers: every column that reaches a block adds x[j]
-    times a contiguous slice of t (loads and FMAs only)."""
+    (Toeplitz) or t[i + j] (Hankel), with t zero outside [tlo, thi)."""
     comptime W = WD
     comptime sgn = 1 if hankel else -1
     var c1 = 0 if hankel else C - 1
@@ -442,9 +389,7 @@ def diagonal_gemv[
         res[unsafe_offset=i] = acc * alpha
 
 
-def diagonal_gemv2[
-    hankel: Bool
-](
+def diagonal_gemv2(
     t: FPtr,
     tlo: Int,
     thi: Int,
@@ -456,20 +401,18 @@ def diagonal_gemv2[
     res0: FPtr,
     res1: FPtr,
 ):
-    """`diagonal_gemv` for two vectors in one pass over t: res0 = alpha A x0
-    and res1 = alpha A x1. Each result is bitwise that of `diagonal_gemv`:
-    every row adds the same products in the same order (the columns a row
-    block reaches beyond a row's own band add exact zeros, so the blocks may
-    differ). Output rows go in blocks of 2 x W, then W, then single rows."""
+    """`diagonal_gemv` for two vectors in one pass over t. Each result is
+    bitwise that of `diagonal_gemv`: every row adds the same products in the
+    same order. (The columns that a row block reaches beyond a row's own band
+    add exact zeros, so the blocks can differ.)"""
     comptime W = WD
-    comptime sgn = 1 if hankel else -1
-    var c1 = 0 if hankel else C - 1
+    var c1 = C - 1
     var av = SIMD[DType.float64, W](alpha)
     var i0 = 0
     while i0 + 2 * W <= R:
         var jlo: Int
         var jhi: Int
-        jlo, jhi = _diag_cols[hankel](tlo, thi, C, c1, i0, 2 * W)
+        jlo, jhi = _diag_cols[False](tlo, thi, C, c1, i0, 2 * W)
         var a0 = SIMD[DType.float64, W](0)
         var a1 = SIMD[DType.float64, W](0)
         var b0 = SIMD[DType.float64, W](0)
@@ -477,7 +420,7 @@ def diagonal_gemv2[
         for j in range(jlo, jhi):
             var xv = SIMD[DType.float64, W](x0[unsafe_offset=j])
             var yv = SIMD[DType.float64, W](x1[unsafe_offset=j])
-            var base = t.unsafe_offset(i0 + sgn * j + c1)
+            var base = t.unsafe_offset(i0 - j + c1)
             var t0 = base.unsafe_load[width=W]()
             var t1 = base.unsafe_offset(W).unsafe_load[width=W]()
             a0 = t0.fma(xv, a0)
@@ -492,11 +435,11 @@ def diagonal_gemv2[
     while i0 + W <= R:
         var jlo: Int
         var jhi: Int
-        jlo, jhi = _diag_cols[hankel](tlo, thi, C, c1, i0, W)
+        jlo, jhi = _diag_cols[False](tlo, thi, C, c1, i0, W)
         var a0 = SIMD[DType.float64, W](0)
         var b0 = SIMD[DType.float64, W](0)
         for j in range(jlo, jhi):
-            var t0 = t.unsafe_offset(i0 + sgn * j + c1).unsafe_load[width=W]()
+            var t0 = t.unsafe_offset(i0 - j + c1).unsafe_load[width=W]()
             a0 = t0.fma(SIMD[DType.float64, W](x0[unsafe_offset=j]), a0)
             b0 = t0.fma(SIMD[DType.float64, W](x1[unsafe_offset=j]), b0)
         res0.unsafe_offset(i0).unsafe_store(a0 * av)
@@ -505,32 +448,99 @@ def diagonal_gemv2[
     for i in range(i0, R):
         var jlo: Int
         var jhi: Int
-        jlo, jhi = _diag_cols[hankel](tlo, thi, C, c1, i, 1)
+        jlo, jhi = _diag_cols[False](tlo, thi, C, c1, i, 1)
         var acc0 = 0.0
         var acc1 = 0.0
         for j in range(jlo, jhi):
-            var tv = t[unsafe_offset=i + sgn * j + c1]
+            var tv = t[unsafe_offset=i - j + c1]
             acc0 = fma(tv, x0[unsafe_offset=j], acc0)
             acc1 = fma(tv, x1[unsafe_offset=j], acc1)
         res0[unsafe_offset=i] = acc0 * alpha
         res1[unsafe_offset=i] = acc1 * alpha
 
 
+@inline(.always)
+def _toeplitz_window(A: MatD, j1: Int, r0: Int) -> Tuple[Int, Int, Int]:
+    """A on its rows from r0 and its columns up to j1 is the Toeplitz matrix of
+    the diagonal values of A from off = r0 + cols - j1 on."""
+    var off = r0 + A.cols - j1
+    return (off, max(A.toe_lo - off, 0), A.toe_hi - off)
+
+
+def toeplitz_window_zero(A: MatD, j0: Int, j1: Int, r0: Int, r1: Int) -> Bool:
+    var w = _toeplitz_window(A, j1, r0)
+    return w[2] <= 0 or w[1] >= (r1 - r0) + (j1 - j0) - 1
+
+
+def toeplitz_gemv[
+    two: Bool
+](
+    A: MatD,
+    x0: FPtr,
+    x1: FPtr,
+    j0: Int,
+    j1: Int,
+    r0: Int,
+    r1: Int,
+    alpha: Float64,
+    res0: FPtr,
+    res1: FPtr,
+):
+    """x0 must be zero outside the columns [j0, j1): the other columns add
+    exact zeros."""
+    var off: Int
+    var tlo: Int
+    var thi: Int
+    off, tlo, thi = _toeplitz_window(A, j1, r0)
+    var t = pd(A.toe).unsafe_offset(off)
+    comptime if two:
+        diagonal_gemv2(
+            t,
+            tlo,
+            thi,
+            r1 - r0,
+            j1 - j0,
+            x0.unsafe_offset(j0),
+            x1.unsafe_offset(j0),
+            alpha,
+            res0.unsafe_offset(r0),
+            res1.unsafe_offset(r0),
+        )
+    else:
+        diagonal_gemv[False](
+            t,
+            tlo,
+            thi,
+            r1 - r0,
+            j1 - j0,
+            x0.unsafe_offset(j0),
+            alpha,
+            res0.unsafe_offset(r0),
+        )
+
+
 def gemv_d(mut A: MatD, x: FPtr, alpha: Float64, res: FPtr):
-    """res = alpha * A x, skipping all-zero row ranges of each column block
-    (the structure is analysed lazily and cached); Toeplitz and Hankel
-    matrices use `diagonal_gemv`."""
     if not A.sp_valid:
         A.analyze()
-    if A.is_toeplitz:
-        diagonal_gemv[False](
-            pd(A.toe), A.toe_lo, A.toe_hi, A.rows, A.cols, x, alpha, res
-        )
-        return
-    if A.is_hankel:
-        diagonal_gemv[True](
-            pd(A.toe), A.toe_lo, A.toe_hi, A.rows, A.cols, x, alpha, res
-        )
+    if A.is_toeplitz or A.is_hankel:
+        var j0: Int
+        var j1: Int
+        j0, j1 = nonzero_range(x, A.cols)
+        if A.is_toeplitz:
+            toeplitz_gemv[False](A, x, x, j0, j1, 0, A.rows, alpha, res, res)
+        else:
+            # A on the columns [j0, j1): the Hankel matrix of the diagonal
+            # values from j0 on
+            diagonal_gemv[True](
+                pd(A.toe).unsafe_offset(j0),
+                max(A.toe_lo - j0, 0),
+                A.toe_hi - j0,
+                A.rows,
+                j1 - j0,
+                x.unsafe_offset(j0),
+                alpha,
+                res,
+            )
         return
     for i in range(A.rows):
         res[unsafe_offset=i] = 0
@@ -548,9 +558,10 @@ def gemv_d(mut A: MatD, x: FPtr, alpha: Float64, res: FPtr):
 
 
 def gemv_rows(A: MatD, x: FPtr, alpha: Float64, res: FPtr, r0: Int, r1: Int):
-    """Rows [r0, r1) of `gemv_d` (A analysed), bitwise: every row adds the
-    same products in the same order, in whichever block of rows it falls
-    (the columns a block reaches beyond a row's own band add exact zeros)."""
+    """Rows [r0, r1) of `gemv_d` (A analyzed), bitwise. Every row adds the
+    same products in the same order, in whichever block of rows it falls.
+    (The columns that a block reaches beyond a row's own band add exact
+    zeros.)"""
     if r1 <= r0:
         return
     if A.is_toeplitz or A.is_hankel:
@@ -605,7 +616,6 @@ def _gemv_rows_work(
     job: Pointer[_GemvRowsJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
     ref J = job[]
-    # chunks of whole 4 x WD row blocks
     var nb = (J.A[].rows + 4 * WD - 1) // (4 * WD)
     var r0 = t * nb // nt * 4 * WD
     var r1 = min((t + 1) * nb // nt * 4 * WD, J.A[].rows)
@@ -613,8 +623,7 @@ def _gemv_rows_work(
 
 
 def gemv_d_par(mut A: MatD, x: FPtr, alpha: Float64, res: FPtr, nthreads: Int):
-    """`gemv_d` on up to nthreads threads, each taking a range of rows: the
-    same values (gemv_rows)."""
+    """`gemv_d` on up to nthreads threads: the same values (gemv_rows)."""
     if not A.sp_valid:
         A.analyze()
     var job = _GemvRowsJob(
@@ -627,65 +636,30 @@ def gemv_d_par(mut A: MatD, x: FPtr, alpha: Float64, res: FPtr, nthreads: Int):
 def gemv_pair(
     mut A: MatD, x0: FPtr, x1: FPtr, alpha: Float64, res0: FPtr, res1: FPtr
 ):
-    """res0 = alpha A x0 and res1 = alpha A x1, each bitwise that of gemv_d.
-    Toeplitz and Hankel matrices take one pass over their diagonals for both
-    vectors (`diagonal_gemv2`)."""
-    if not A.sp_valid:
-        A.analyze()
+    """Each result is bitwise that of gemv_d. Toeplitz matrices take one pass
+    over their diagonals for both vectors. A is analyzed (run_gemv_pairs)."""
     if A.is_toeplitz:
-        diagonal_gemv2[False](
-            pd(A.toe),
-            A.toe_lo,
-            A.toe_hi,
-            A.rows,
-            A.cols,
-            x0,
-            x1,
-            alpha,
-            res0,
-            res1,
-        )
-    elif A.is_hankel:
-        diagonal_gemv2[True](
-            pd(A.toe),
-            A.toe_lo,
-            A.toe_hi,
-            A.rows,
-            A.cols,
-            x0,
-            x1,
-            alpha,
-            res0,
-            res1,
-        )
+        var lo0: Int
+        var hi0: Int
+        var lo1: Int
+        var hi1: Int
+        lo0, hi0 = nonzero_range(x0, A.cols)
+        lo1, hi1 = nonzero_range(x1, A.cols)
+        var j0 = lo1 if hi0 == 0 else (lo0 if hi1 == 0 else min(lo0, lo1))
+        var j1 = max(hi0, hi1)
+        toeplitz_gemv[True](A, x0, x1, j0, j1, 0, A.rows, alpha, res0, res1)
     else:
         gemv_d(A, x0, alpha, res0)
         gemv_d(A, x1, alpha, res1)
 
 
 struct GemvPair(Copyable, Movable):
-    """res0 = alpha A x0 and, for a pair, res1 = alpha A x1 (run_gemv_pairs)."""
-
     var A: Pointer[MatD, MutUntrackedOrigin]
     var x0: FPtr
     var x1: FPtr
     var alpha: Float64
     var res0: FPtr
     var res1: FPtr
-    var two: Bool
-
-    def __init__(out self, ref A: MatD, x0: FPtr, alpha: Float64, res0: FPtr):
-        self.A = (
-            Pointer(to=A)
-            .unsafe_mut_cast[True]()
-            .unsafe_origin_cast[MutUntrackedOrigin]()
-        )
-        self.x0 = x0
-        self.x1 = x0
-        self.alpha = alpha
-        self.res0 = res0
-        self.res1 = res0
-        self.two = False
 
     def __init__(
         out self,
@@ -706,21 +680,17 @@ struct GemvPair(Copyable, Movable):
         self.alpha = alpha
         self.res0 = res0
         self.res1 = res1
-        self.two = True
 
 
 def _gemv_pairs_work(jobs: Pointer[List[GemvPair], MutUntrackedOrigin], k: Int):
     ref J = jobs[][k]
-    if J.two:
-        gemv_pair(J.A[], J.x0, J.x1, J.alpha, J.res0, J.res1)
-    else:
-        gemv_d(J.A[], J.x0, J.alpha, J.res0)
+    gemv_pair(J.A[], J.x0, J.x1, J.alpha, J.res0, J.res1)
 
 
 def run_gemv_pairs(mut jobs: List[GemvPair], nthreads: Int):
-    """Every product of `jobs` on up to nthreads workers. The matrices are
-    analysed first, so that the workers only read them. Each product writes
-    its own outputs: the results do not depend on the threads."""
+    """The matrices are analyzed first, so that the workers only read them.
+    Each product writes its own outputs: the results do not depend on the
+    threads."""
     for k in range(len(jobs)):
         if not jobs[k].A[].sp_valid:
             jobs[k].A[].analyze()
@@ -728,13 +698,9 @@ def run_gemv_pairs(mut jobs: List[GemvPair], nthreads: Int):
 
 
 struct SparseGemvF(Copyable, Movable):
-    """Non-zero structure of a stack of float matrices, which PackedGemvF
-    packs so that the blocked GEMV skips the all-zero rows of every column
-    block.
-
-    `lo[k*nb+b]`..`hi[k*nb+b]` is the row range holding all non-zeros of
-    column block b of matrix k (within the rows the caller needs). Skipped
-    rows would only add exact zeros: the result equals the dense product.
+    """PackedGemvF packs the matrices so that the blocked GEMV skips the
+    all-zero rows of every column block. Skipped rows add only exact zeros:
+    the result equals the dense product.
     """
 
     var nmat: Int
@@ -745,69 +711,56 @@ struct SparseGemvF(Copyable, Movable):
     var lo: VecI
     var hi: VecI
 
-    def __init__(out self, K: Mat3F, row_min: VecI, nthreads: Int):
-        """`row_min[k]`: rows below it are never read for matrix k. The
-        matrices are scanned on up to nthreads threads."""
-        self.nmat = K.nmat
-        self.rows = K.rows
-        self.cols = K.cols
-        self.block = gemv_block_cols[4](K.rows, K.cols)
-        self.nb = (K.cols + self.block - 1) // self.block if K.cols > 0 else 0
-        self.lo = zerosi(self.nmat * self.nb)
-        self.hi = zerosi(self.nmat * self.nb)
-        var job = _PackJob(
-            Pointer(to=K)
-            .unsafe_mut_cast[True]()
-            .unsafe_origin_cast[MutUntrackedOrigin](),
-            Pointer(to=row_min)
-            .unsafe_mut_cast[True]()
-            .unsafe_origin_cast[MutUntrackedOrigin](),
-            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
-        )
-        parallel_run[_sparse_scan_work](job, max(1, min(nthreads, K.nmat)))
+    def __init__(out self, nmat: Int, rows: Int, cols: Int):
+        self.nmat = nmat
+        self.rows = rows
+        self.cols = cols
+        self.block = gemv_block_cols[4](rows, cols)
+        self.nb = (cols + self.block - 1) // self.block if cols > 0 else 0
+        self.lo = zerosi(nmat * self.nb)
+        self.hi = zerosi(nmat * self.nb)
 
 
-struct _PackJob(Movable):
-    """SparseGemvF's scan and PackedGemvF's copy of the matrices k = t,
-    t + nt, ... of K."""
-
-    var K: Pointer[Mat3F, MutUntrackedOrigin]
+struct _PackJob[T: AnyType](Movable):
+    var src: Pointer[Self.T, MutUntrackedOrigin]
     var row_min: Pointer[VecI, MutUntrackedOrigin]
     var sp: Pointer[SparseGemvF, MutUntrackedOrigin]
+    var P: Pointer[PackedGemvF, MutUntrackedOrigin]
 
     def __init__(
         out self,
-        K: Pointer[Mat3F, MutUntrackedOrigin],
+        src: Pointer[Self.T, MutUntrackedOrigin],
         row_min: Pointer[VecI, MutUntrackedOrigin],
         sp: Pointer[SparseGemvF, MutUntrackedOrigin],
+        P: Pointer[PackedGemvF, MutUntrackedOrigin],
     ):
-        self.K = K
+        self.src = src
         self.row_min = row_min
         self.sp = sp
+        self.P = P
 
 
-def _sparse_scan_work(
-    job: Pointer[_PackJob, MutUntrackedOrigin], t: Int, nt: Int
-):
-    ref K = job[].K[]
+def _sparse_scan_work[
+    T: AnyType,
+    entry: def(Pointer[T, MutUntrackedOrigin], Int, Int, Int) thin -> Float32,
+](job: Pointer[_PackJob[T], MutUntrackedOrigin], t: Int, nt: Int):
+    """Row by row, so that a source stored by rows reads its memory in order."""
     ref S = job[].sp[]
+    var src = job[].src
     var k = t
     while k < S.nmat:
-        var A = K.mat(k)
         var rmin = job[].row_min[][k]
         for b in range(S.nb):
             var j2 = b * S.block
             var jend = min(j2 + S.block, S.cols)
             var lo = S.rows
             var hi = 0
-            for j in range(j2, jend):
-                var colp = A.unsafe_offset(j * S.rows)
-                for i in range(rmin, S.rows):
-                    if colp[unsafe_offset=i] != 0.0:
-                        if i < lo:
-                            lo = i
-                        if i + 1 > hi:
-                            hi = i + 1
+            for i in range(rmin, S.rows):
+                for j in range(j2, jend):
+                    if entry(src, k, i, j) != 0.0:
+                        lo = min(lo, i)
+                        hi = i + 1
+                        break
             if hi <= lo:
                 lo = 0
                 hi = 0
@@ -816,34 +769,20 @@ def _sparse_scan_work(
         k += nt
 
 
-comptime PW = 16  # rows per packed SIMD chunk
+comptime PW = 16
 
 
-struct _PackedCopyJob(Movable):
-    var job: Pointer[_PackJob, MutUntrackedOrigin]
-    var P: Pointer[PackedGemvF, MutUntrackedOrigin]
-
-    def __init__(
-        out self,
-        job: Pointer[_PackJob, MutUntrackedOrigin],
-        P: Pointer[PackedGemvF, MutUntrackedOrigin],
-    ):
-        self.job = job
-        self.P = P
-
-
-def _packed_copy_work(
-    job: Pointer[_PackedCopyJob, MutUntrackedOrigin], t: Int, nt: Int
-):
-    """PackedGemvF's chunks of the matrices k = t, t + nt, ... (each matrix
-    has its own range of the data)."""
-    ref K = job[].job[].K[]
-    ref sp = job[].job[].sp[]
+def _packed_copy_work[
+    T: AnyType,
+    entry: def(Pointer[T, MutUntrackedOrigin], Int, Int, Int) thin -> Float32,
+](job: Pointer[_PackJob[T], MutUntrackedOrigin], t: Int, nt: Int):
+    """Each matrix has its own range of the data."""
+    ref sp = job[].sp[]
     ref P = job[].P[]
+    var src = job[].src
     var dp = pf(P.data)
     var k = t
     while k < P.nmat:
-        var A = K.mat(k)
         for b in range(P.nb):
             var t2 = k * P.nb + b
             var j2 = b * P.block
@@ -851,23 +790,19 @@ def _packed_copy_work(
             var hi = sp.hi[t2]
             for c in range(P.nch[t2]):
                 for j in range(bw):
-                    var colp = A.unsafe_offset((j2 + j) * P.rows)
                     var dst = dp.unsafe_offset(P.off[t2] + (c * bw + j) * PW)
                     for l in range(PW):
                         var r = P.lo[t2] + c * PW + l
-                        dst[unsafe_offset=l] = colp[
-                            unsafe_offset=r
-                        ] if r < hi else Float32(0.0)
+                        dst[unsafe_offset=l] = entry(
+                            src, k, r, j2 + j
+                        ) if r < hi else Float32(0.0)
         k += nt
 
 
 struct PackedGemvF(Copyable, Movable):
-    """Stack of float matrices re-packed for a streaming blocked GEMV.
-
-    Only the non-zero row range [lo, hi) of every column block is kept, in
-    chunks of PW rows; within a chunk, each of the block's columns holds PW
-    contiguous rows, so the kernel reads memory strictly sequentially:
-        data[off + (c * bw + j) * PW + l] = K[k][lo + c*PW + l][j2 + j]
+    """Only the non-zero row range [lo, hi) of every column block is kept, in
+    chunks of PW rows. Within a chunk, each of the block's columns holds PW
+    contiguous rows, so the kernel reads memory strictly sequentially.
     Rows >= hi in the last chunk are zero padding and receive exact zeros.
     """
 
@@ -892,49 +827,71 @@ struct PackedGemvF(Copyable, Movable):
         self.off = VecI()
         self.data = VecF()
 
-    def __init__(out self, K: Mat3F, row_min: VecI, nthreads: Int):
-        """Pack K (on up to nthreads threads)."""
-        var sp = SparseGemvF(K, row_min, nthreads)
-        self.nmat = K.nmat
-        self.rows = K.rows
-        self.cols = K.cols
-        self.block = sp.block
-        self.nb = sp.nb
-        self.lo = zerosi(self.nmat * self.nb)
-        self.nch = zerosi(self.nmat * self.nb)
-        self.off = zerosi(self.nmat * self.nb)
-        var total = 0
-        for t in range(self.nmat * self.nb):
-            var b = t % self.nb if self.nb > 0 else 0
-            var bw = min(self.block, self.cols - b * self.block)
-            var n = sp.hi[t] - sp.lo[t]
-            var nc = (n + PW - 1) // PW if n > 0 else 0
-            self.lo[t] = sp.lo[t]
-            self.nch[t] = nc
-            self.off[t] = total
-            total += nc * bw * PW
-        self.data = zerosf(total)
-        var job = _PackJob(
-            Pointer(to=K)
+    @staticmethod
+    def pack[
+        T: AnyType,
+        //,
+        entry: def(
+            Pointer[T, MutUntrackedOrigin], Int, Int, Int
+        ) thin -> Float32,
+    ](
+        src: T, nmat: Int, rows: Int, cols: Int, row_min: VecI, nthreads: Int
+    ) -> PackedGemvF:
+        """The matrices K[k][i][j] = entry(src, k, i, j) are packed without
+        storing them densely. `row_min[k]`: rows below it are never read for
+        matrix k."""
+        var sp = SparseGemvF(nmat, rows, cols)
+        # (a source can read the rows through an unchecked pointer)
+        for k in range(nmat):
+            debug_assert(row_min[k] >= 0, "PackedGemvF: row_min below 0")
+        var P = PackedGemvF()
+        P.nmat = nmat
+        P.rows = rows
+        P.cols = cols
+        P.block = sp.block
+        P.nb = sp.nb
+        var job = _PackJob[T](
+            Pointer(to=src)
             .unsafe_mut_cast[True]()
             .unsafe_origin_cast[MutUntrackedOrigin](),
             Pointer(to=row_min)
             .unsafe_mut_cast[True]()
             .unsafe_origin_cast[MutUntrackedOrigin](),
             Pointer(to=sp).unsafe_origin_cast[MutUntrackedOrigin](),
+            Pointer(to=P).unsafe_origin_cast[MutUntrackedOrigin](),
         )
-        var pj = _PackedCopyJob(
-            Pointer(to=job).unsafe_origin_cast[MutUntrackedOrigin](),
-            Pointer(to=self).unsafe_origin_cast[MutUntrackedOrigin](),
-        )
-        parallel_run[_packed_copy_work](pj, max(1, min(nthreads, K.nmat)))
-        # (read by the workers through pointers)
-        _ = job^
-        _ = sp^
+        var nt = max(1, min(nthreads, nmat))
+        parallel_run[_sparse_scan_work[T, entry]](job, nt)
+        P.lo = zerosi(nmat * P.nb)
+        P.nch = zerosi(nmat * P.nb)
+        P.off = zerosi(nmat * P.nb)
+        var total = 0
+        for t in range(nmat * P.nb):
+            var b = t % P.nb if P.nb > 0 else 0
+            var bw = min(P.block, cols - b * P.block)
+            var n = sp.hi[t] - sp.lo[t]
+            var nc = (n + PW - 1) // PW if n > 0 else 0
+            P.lo[t] = sp.lo[t]
+            P.nch[t] = nc
+            P.off[t] = total
+            total += nc * bw * PW
+        P.data = zerosf(total)
+        parallel_run[_packed_copy_work[T, entry]](job, nt)
+        _ = sp^  # (read by the workers through a pointer)
+        return P^
+
+    def get(self, k: Int, i: Int, j: Int) -> Float32:
+        var b = j // self.block
+        var t = k * self.nb + b
+        var r = i - self.lo[t]
+        if r < 0 or r >= self.nch[t] * PW:
+            return 0.0
+        var j2 = b * self.block
+        var bw = min(self.block, self.cols - j2)
+        return self.data[self.off[t] + ((r // PW) * bw + j - j2) * PW + r % PW]
 
     @inline(.always)
     def res_len(self) -> Int:
-        """Length the result buffer must have (rows + padding)."""
         return self.rows + PW
 
     def apply(
@@ -946,12 +903,10 @@ struct PackedGemvF(Copyable, Movable):
         row_lo: Int = 0,
         row_hi: Int = Int.MAX,
     ):
-        """res[0:rows] = alpha * K[k] x; res needs res_len().
-
-        Only rows in [row_lo, row_hi) are guaranteed: whole PW-row chunks
-        outside are skipped, for callers that multiply those rows by exact
-        zeros afterwards."""
-        for i in range(self.rows + PW):
+        """res must have the length res_len(). Only rows in [row_lo, row_hi) are
+        computed, for callers that read no others. Only these rows start from
+        zero, and whole PW-row chunks outside are skipped."""
+        for i in range(max(row_lo, 0), min(row_hi, self.rows + PW)):
             res[unsafe_offset=i] = 0
         var dp = pf(self.data)
         var valpha = SIMD[DType.float32, PW](alpha)

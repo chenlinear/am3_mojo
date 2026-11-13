@@ -69,7 +69,7 @@
 ],
 [
 "get_electron_neutrinos",
-"get_electron_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of electron-flavored neutrinos\n"
+"get_electron_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of electron-flavored neutrinos\nOnly electron neutrinos: it does not include the electron anti-neutrinos (`get_electron_anti_neutrinos`).\n"
 ],
 [
 "get_electron_neutrinos_photopion",
@@ -281,7 +281,7 @@
 ],
 [
 "get_muon_neutrinos",
-"get_muon_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of muon-flavored neutrinos\n"
+"get_muon_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm\u00b3] of muon-flavored neutrinos\nOnly muon neutrinos: it does not include the muon anti-neutrinos (`get_muon_anti_neutrinos`).\n"
 ],
 [
 "get_muon_neutrinos_photopion",

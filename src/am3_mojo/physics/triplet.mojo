@@ -1,56 +1,59 @@
-"""Triplet pair production, e+- + gamma -> e+- + e+ + e- (am3_mojo addition;
+"""Triplet pair production, e+- + gamma -> e+- + e+ + e- (am3_mojo addition:
 AM3 does not have the process).
 
-The total cross section sigma(k) and the products' energy distributions come
-from tables computed with the exact lowest-order QED matrix element, all
-eight Feynman diagrams (tools/triplet, physics/triplet_tables.mojo). k is the
-photon energy in the rest frame of the target lepton [m_e c^2].
+The total cross section sigma(k) and the energy distributions of the products
+come from tables (tools/triplet, physics/triplet_tables.mojo). The tables are
+computed with the exact lowest-order QED matrix element, which includes all
+eight Feynman diagrams. k is the photon energy in the rest frame of the target
+lepton [m_e c^2].
 
-For gamma >> 1 and a soft photon (eps << gamma, here eps <= m_e c^2), a
-product's lab energy is the fraction x = (p.k)/(p1.k) of the lepton's, which
-does not depend on the photon direction. In an isotropic photon field, the
-rate and the products then depend only on P = gamma eps:
-    rate     R(P)    = 1/(2 P^2) int_4^{2P} dk k sigma(k)
-    products G(P, x) = 1/(2 P^2) int_4^{2P} dk k sigma(k) f(k, x)
-with f(k, x) dx the products of one interaction: the positron, the electron
-of lower energy and that of higher energy. The latter counts as the target
-after the interaction: it keeps the fraction 1 - xi, with xi = x+ + x_low
-the energy the pair takes.
+For gamma >> 1 and a soft photon (eps << gamma, here eps <= m_e c^2), the lab
+energy of a product is the fraction x = (p.k)/(p1.k) of the energy of the
+lepton. This fraction does not depend on the photon direction. In an isotropic
+photon field, the rate and the products then depend only on P = gamma eps. The
+electron of higher energy counts as the target after the interaction. It keeps
+the fraction 1 - xi, where xi = x+ + x_low is the energy that the pair takes.
 
-Kinetic terms: the pairs are sources, shared between grid points to keep
-each product's number and energy. The photon disappears (sink of the photon
-solver). The returning lepton loses the energy the pair takes as a
-continuous loss (a cooling term of the lepton solvers) at the rate
-    sum_eps n(eps) dlnE R(gamma eps) <x+ + x_low>(gamma eps).
+Kinetic terms: the pairs are sources, which are shared between grid points to
+keep the number and energy of each product. The photon disappears (sink of the
+photon solver). The returning lepton loses the energy that the pair takes as a
+continuous loss (a cooling term of the lepton solvers).
 Rates are in sigma_T c (= 1 in the code units of the leptons and photons).
 
-The loss is continuous because where the triplet loss exceeds the
-inverse-Compton loss (gamma eps >~ 3e8), the lepton loses <~6e-7 of its
-energy per interaction (7e-5 at gamma eps = 1e6, where the process takes half
-as much as inverse Compton). Where the lepton loses much (<xi> = 0.018 at
-gamma eps = 1e3, 0.085 at 1e2), the inverse-Compton loss dominates, which AM3
-treats as continuous too. Re-adding the lepton as a source at the energy it
-keeps would move it down by at most one interaction per step, as sources come
-from the densities at the step's start. Yet the process often cools the
-leptons through more than one bin per step, even at short steps: in
-leptohadronic_all at the end of its run (step 300), the triplet energy-loss
-time of the pairs from 1e14 to 1e16 eV is 3-7 s, against a step of 30 s
-(3e-3 R/c). AM3's solver integrates a continuous loss within the step, also
-where it is fast.
+The loss is continuous for these reasons. Where the triplet loss exceeds the
+inverse-Compton loss (gamma eps >~ 3e8), the lepton loses <~6e-7 of its energy
+per interaction. At gamma eps = 1e6, where the process takes half as much as
+inverse Compton, this fraction is 7e-5. Where the lepton loses much
+(<xi> = 0.018 at gamma eps = 1e3, 0.085 at 1e2), the inverse-Compton loss
+dominates. AM3 treats that loss as continuous too. If the lepton is re-added
+as a source at the energy that it keeps, it moves down by at most one
+interaction per step. This is because sources come from the densities at the
+start of the step. But the process often cools the leptons through more than
+one bin per step, even at short steps. An example is leptohadronic_all at the
+end of its run (step 300). There, the triplet energy-loss time of the pairs
+from 1e14 to 1e16 eV is 3-7 s, but the step is 30 s (3e-3 R/c). AM3's solver
+integrates a continuous loss within the step, also where the loss is fast.
 
 Limitations (tests/literature_checks/triplet/README.md gives their size at
 the steps that make them):
-  * soft photons only (eps <= m_e c^2, gamma >> 1): the lab energies x gamma
+  * Soft photons only (eps <= m_e c^2, gamma >> 1): the lab energies x gamma
     neglect the photon's energy and direction. On photons above about
-    0.25 m_e c^2, some products fall below the lepton grid into bin 0, which
-    AM3's solver empties every step; their photons are still absorbed and
-    the lepton still loses their energy;
-  * the spread of the energy the returning lepton loses per interaction is
-    neglected;
-  * the pairs of a step come from the leptons at its start (as AM3's other
-    sources), so each generation of a cascade takes one step;
-  * above the last table node (k = 1e10) the distributions are extrapolated;
-  * lowest order (Born): radiative corrections (relative order alpha) and
+    0.25 m_e c^2, some products fall below the lepton grid into bin 0. AM3's
+    solver empties bin 0 every step. Their photons are still absorbed, and the
+    lepton still loses their energy.
+  * The spread of the energy that the returning lepton loses per interaction
+    is neglected.
+  * The pairs of a step come from the leptons at its start (as AM3's other
+    sources do), so each generation of a cascade takes one step.
+  * The photon sink of a step comes from the leptons after the solver's step
+    (as the inverse-Compton photon loss does). The pairs of the step come from
+    the leptons at its start. Where the leptons cool in a time t_cool, a step
+    thus absorbs fewer or more photons than it makes pairs. The difference is
+    about 0.8 dt / t_cool for electrons of 1 TeV on photons of 1 meV to 10 eV
+    (t_cool = 609 s: 1.3 % at dt = 10 s, 11 % at 100 s). For a difference of
+    1 %, keep the time step below about t_cool / 100.
+  * Above the last table node (k = 1e10), the distributions are extrapolated.
+  * Lowest order (Born): radiative corrections (relative order alpha) and
     the photon's energy in the energy balance (eps <= m_e c^2 against
     gamma m_e c^2) are neglected.
 """
@@ -79,14 +82,14 @@ comptime K_ASYM: Float64 = 1000.0
 comptime K_FIT: Float64 = 1e6
 comptime Y_SW: Float64 = 100.0
 comptime X_LO: Float64 = 1e-5
-comptime NGL = 4  # Gauss-Legendre points per slab of the k integral
-comptime N_ROLES = 3  # tables: e+, lower-energy e-, higher-energy e- (recoil)
+comptime NGL = 4
+comptime N_ROLES = 3
 comptime ROLE_POS = 0
 comptime ROLE_LOW = 1
 comptime ROLE_HIGH = 2
 comptime N_KR = 2  # kernels: the produced pair (e+, lower-energy e-)
-comptime BLK = 4 * WD  # the rows' padding (the row blocks of the convolution)
-comptime TIB = 4  # target bins per block of the per-step convolution
+comptime BLK = 4 * WD
+comptime TIB = 4
 
 
 def _parse(s: StringSlice) raises -> Vec:
@@ -99,13 +102,12 @@ def _parse(s: StringSlice) raises -> Vec:
 
 @inline(.always)
 def tpp_nbins(k: Float64) -> Int:
-    """Number of ln y bins of the tables for photon energy k (y = x k)."""
     return Int(floor((c_log(k) + 0.1 - TPP_LY0) / TPP_DLY)) + 1
 
 
 def sigma_threshold(k: Float64) -> Float64:
-    """sigma / (alpha r_e^2) near threshold (Lee et al. 2021, arXiv:2010.15430),
-    r = (s-9)/(s-1)."""
+    """sigma / (alpha r_e^2) near threshold (Lee et al. 2021,
+    arXiv:2010.15430)."""
     var s = 1.0 + 2.0 * k
     var r = (s - 9.0) / (s - 1.0)
     return (
@@ -127,8 +129,7 @@ def sigma_asym(k: Float64) -> Float64:
 
 
 def sigma_threshold_slope(k: Float64) -> Float64:
-    """d ln sigma / d ln(k - 4) of sigma_threshold (r = 1 - 4/k, dr/dk = 4/k^2).
-    """
+    """d ln sigma / d ln(k - 4) of sigma_threshold."""
     var r = 1.0 - 4.0 / k
     var p = 4.0 / 27.0 + r * (602.0 / 243.0 + r * 4217.0 / 4374.0)
     var dp = 602.0 / 243.0 + 2.0 * r * 4217.0 / 4374.0
@@ -146,19 +147,12 @@ def sigma_asym_slope(k: Float64) -> Float64:
 
 
 struct TripletJob(Movable):
-    """Per-step photon convolution of the kernels: for every target bin i
-    that holds leptons (ele or pos nonzero),
-        Z_r[i][o] = sum_j n_ph[j] dlnE W_r[m(i, j)][o]
-    (o = offset of the product bin below i), and for every bin the
-    energy-loss rate.
-    """
-
     var T: Pointer[TripletPairProduction, MutUntrackedOrigin]
     var nph: FPtr
-    var v: FPtr  # n_ph[j] dlnE at v[j], zero outside [0, jmax]
+    var v: FPtr  # zero outside [0, jmax]
     var ele: FPtr
     var pos: FPtr
-    var two: Bool  # pos given (not merged e+-)
+    var two: Bool
     var nl: Int
     var j0: Int
     var jmax: Int
@@ -192,16 +186,11 @@ struct TripletJob(Movable):
 def triplet_rows_work(
     job: Pointer[TripletJob, MutUntrackedOrigin], t: Int, nt: Int
 ):
-    """The target bins i0 .. i0 + 3, i0 = 4 b for b = t, t + nt, ...
-
-    Row m = q of W serves the target bins i with photons j = q + j0 + m0 - i:
-    each loaded slice of 8 offsets of a row goes into the sums of the 4
-    target bins of a block (photons outside [0, jmax] count as zero). Every
-    sum adds its terms in increasing j, as a loop over the photons of one
-    target bin."""
+    """Every sum adds its terms in increasing j, as a loop over the photons of
+    one target bin."""
     ref J = job[]
     ref T = J.T[]
-    var c = J.j0 + T.m0  # j = q + c - i
+    var c = J.j0 + T.m0
     var nb = (J.nl + TIB - 1) // TIB
     var b = t
     while b < nb:
@@ -226,7 +215,6 @@ def triplet_rows_work(
             )
             any_full = any_full or full[ii]
             nzmax = max(nzmax, T.nz[i])
-        # the rows that reach the photons [0, jmax] of the block's bins
         var qhi = i0 + ni - 1 + J.jmax - c
         var zero = SIMD[DType.float64, WD](0.0)
         for r in range(N_KR):
@@ -261,21 +249,15 @@ def triplet_rows_work(
 struct TripletPairProduction(Movable):
     var verbose: Bool
     var nthreads: Int
-    # tables (parsed once)
     var parsed: Bool
-    var tk: Vec  # photon energies k of the nodes
+    var tk: Vec
     var tsig: Vec  # sigma / (alpha r_e^2) at the nodes
-    # spline of ln sigma up to K_ASYM (_fit_sigma_spline): knots (tsu, tsv),
-    # second derivatives tsm
     var nsp: Int
     var tsu: Vec
     var tsv: Vec
     var tsm: Vec
-    var toff: VecI  # start of node n in tdist (three roles of tpp_nbins(k_n))
+    var toff: VecI
     var tdist: Vec  # dN/dln y per interaction
-    # extrapolation above the last node (per role r): g0/g1 on the ln y bins
-    # up to Y_SW [r * nby + b], A/B on ln x = ln X_LO + j TPP_DLY
-    # [r * nlx + j], a0/b0 [r]
     var nby: Int
     var nlx: Int
     var eg0: Vec
@@ -288,17 +270,14 @@ struct TripletPairProduction(Movable):
     var m0: Int
     var R: Vec  # rate per photon [sigma_T]
     var Lxi: Vec  # R <x+ + x_low>: lepton energy fraction lost per unit time
-    var nd: VecI  # product offsets 0 .. nd[q] - 1 below the target bin
+    var nd: VecI
     var woff: VecI  # (rows padded with zeros to multiples of BLK)
-    var qblk: VecI  # first row q with nd[q] > b BLK
-    var W: List[Vec]  # per product of the pair: deposit rates [woff[q] + o]
+    var qblk: VecI
+    var W: List[Vec]
     var valid: Bool
-    # per-step results
     var eloss: Vec  # energy-loss rate of an e+- (energy fraction per unit time)
-    var alpha_g: Vec  # photon sink
-    var Z: List[
-        Vec
-    ]  # per role: photon-convolved rows [zoff[i] + o] (padded as W)
+    var alpha_g: Vec
+    var Z: List[Vec]
     var zoff: VecI
     var nz: VecI
     var nlep: Vec
@@ -370,9 +349,9 @@ struct TripletPairProduction(Movable):
     def ready(self, dat: AM3Arrays) -> Bool:
         return self.valid and len(self.nz) == dat.nbins_lep
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # tables
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def _parse_tables(mut self) raises:
         if self.parsed:
             return
@@ -391,10 +370,8 @@ struct TripletPairProduction(Movable):
         self.parsed = True
 
     def _fit_sigma_spline(mut self):
-        """Cubic spline of ln sigma in u = ln(k - 4) through the nodes up to
-        K_ASYM, with the slopes of the threshold and high-energy expansions at
-        its ends. The second derivatives tsm solve a symmetric tridiagonal
-        system (Thomas algorithm)."""
+        """At its ends, the spline has the slopes of the threshold and
+        high-energy expansions."""
         var n = 0
         while n < len(self.tk) and self.tk[n] <= K_ASYM:
             n += 1
@@ -407,7 +384,6 @@ struct TripletPairProduction(Movable):
         var h = zeros(n - 1)
         for i in range(n - 1):
             h[i] = self.tsu[i + 1] - self.tsu[i]
-        # rows i: h[i-1] M[i-1] + a[i] M[i] + h[i] M[i+1] = d[i]
         var a = zeros(n)
         var d = zeros(n)
         a[0] = 2.0 * h[0]
@@ -438,8 +414,6 @@ struct TripletPairProduction(Movable):
             i -= 1
 
     def _node_at(self, n: Int, r: Int, ly: Float64) -> Float64:
-        """Table of node n, role r at ln y, linear between the bin centres
-        (0 outside)."""
         var u = (ly - TPP_LY0) / TPP_DLY - 0.5
         var b = Int(floor(u))
         var t = u - Float64(b)
@@ -462,7 +436,6 @@ struct TripletPairProduction(Movable):
         self.ea0 = zeros(N_ROLES)
         self.eb0 = zeros(N_ROLES)
 
-        # straight-line fits v = c0 + c1 z over the nodes
         @inline(.always)
         def line(z: Vec, v: Vec) -> Tuple[Float64, Float64]:
             var m = Float64(len(z))
@@ -537,9 +510,10 @@ struct TripletPairProduction(Movable):
         return self.tdist[self.toff[n] + r * nb + b]
 
     def distributions(self, k: Float64, mut out: Vec):
-        """dN/dln y of the three products for photon energy k, normalised to
-        one per interaction: out[r * nb + b], nb = tpp_nbins(k). y = x k for
-        the positron and the lower-energy electron, y = xi k for the recoil.
+        """dN/dln y of the three products for photon energy k, normalized to
+        one per interaction: out[r * nb + b], nb = tpp_nbins(k). Here y = x k
+        for the positron and the lower-energy electron, and y = xi k for the
+        recoil.
         """
         var nb = tpp_nbins(k)
         var N = len(self.tk)
@@ -558,7 +532,6 @@ struct TripletPairProduction(Movable):
                         n, r, b
                     ) + t * self._node(n + 1, r, b)
         else:
-            # above the last node: the fitted asymptotic laws (_fit_asymptotics)
             var lk = c_log(k)
             for r in range(N_ROLES):
                 for b in range(nb):
@@ -581,9 +554,8 @@ struct TripletPairProduction(Movable):
                         else:
                             v = (self.ea0[r] * ly + self.eb0[r]) * c_exp(-ly)
                     out[r * nb + b] = max(v, 0.0)
-        # interpolation between nodes can leave a little weight beyond the
-        # kinematic range of this k (x > 1, or xi >= 1 for the recoil): remove
-        # it, then normalise
+        # Interpolation between nodes can leave a little weight beyond the
+        # kinematic range of this k (x > 1, or xi >= 1 for the recoil).
         var lk = c_log(k)
         for r in range(N_ROLES):
             var s = 0.0
@@ -596,15 +568,15 @@ struct TripletPairProduction(Movable):
                 for b in range(nb):
                     out[r * nb + b] /= s * TPP_DLY
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # kernels
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     @staticmethod
     def _deposit(
         mut I: Vec, amount: Float64, x: Float64, dl: Float64, e1: Float64
     ):
-        """Share `amount` products at the fraction x between the two
-        neighbouring grid offsets, keeping their number and energy."""
+        """The shares between the two neighboring grid offsets keep the number
+        and energy of the products."""
         var u = -c_log(x) / dl
         var o = Int(floor(u))
         if o < 0:
@@ -673,8 +645,6 @@ struct TripletPairProduction(Movable):
         for q in range(nq):
             var m = self.m0 + q
             var lnk_hi = c_log(2.0) + Float64(m) * dl
-            # slab [lnk_lo, lnk_hi] of the k integral, split at the breakpoints
-            # inside it, with NGL Gauss-Legendre points in ln k per piece
             var cuts = Vec()
             cuts.append(lnk_lo)
             for b in brk:
@@ -727,8 +697,8 @@ struct TripletPairProduction(Movable):
                     self.W[ROLE_POS][wo + o] + self.W[ROLE_LOW][wo + o]
                 ) * xo
             self.Lxi[q] = epair
-        # per-step rows: target bin i has offsets up to those of the largest
-        # P (eps <= 1: P <= gamma)
+        # target bin i has offsets up to those of the largest P
+        # (eps <= 1: P <= gamma)
         self.zoff = zerosi(nl + 1)
         self.nz = zerosi(nl)
         var zt = 0
@@ -744,9 +714,9 @@ struct TripletPairProduction(Movable):
         self.valid = True
         self.step_valid = False
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # per step
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def Calc_Triplet(mut self, dat: AM3Arrays, pho: Vec, ele: Vec, pos: Vec):
         """Energy-loss rates of the e+- and photon-convolved pair rows
         (TripletJob) for the photon field `pho` at the start of the step.
@@ -777,16 +747,15 @@ struct TripletPairProduction(Movable):
         self.step_valid = True
 
     def photon_sink(mut self, dat: AM3Arrays, ele: Vec, pos: Vec):
-        """Photon sink for eps <= m_e c^2 (`pos` empty with merged e+-):
-            alpha_g(eps_j) = sum_i (n_e- + n_e+)(i) dlnE R(gamma_i eps_j)."""
+        """Photon sink for eps <= m_e c^2 (`pos` empty with merged e+-)."""
         var nl = dat.nbins_lep
         var ng = dat.nbins_pho
         var j0 = dat.ind_min_energy_pho
         var dl = dat.dlnE
         for i in range(nl):
             self.nlep[i] = ele[i] + (pos[i] if len(pos) == nl else 0.0)
-        # R[q] at rp[q], zero for q < 0 (below threshold): 8 photon bins at a
-        # time, each sum over i in increasing order
+        # R[q] at rp[q], zero for q < 0 (below threshold): each sum over i in
+        # increasing order
         var nq = len(self.R)
         resize_zero(self.w_R, nq + WD)
         for q in range(nq):
@@ -819,11 +788,8 @@ struct TripletPairProduction(Movable):
     ):
         """Add the production rates per ln E of the pairs made by the e- (ne)
         and e+ (np_). An e- gives an e+ (ROLE_POS) and a lower-energy e-
-        (ROLE_LOW), an e+ the reverse:
-        de[l] += factor sum_i (ne[i] Z_low[i][i - l] + np_[i] Z_pos[i][i - l]),
-        and dp likewise with the roles exchanged. With np_ empty (merged e+-),
-        de += factor sum_i ne[i] (Z_low + Z_pos) and dp is unused. Products
-        below the grid go into bin 0."""
+        (ROLE_LOW). An e+ gives the reverse. With np_ empty (merged e+-), dp is
+        unused. Products below the grid go into bin 0."""
         if not self.step_valid or factor == 0.0:
             return
         var two = len(np_) == len(ne)
@@ -837,8 +803,6 @@ struct TripletPairProduction(Movable):
             var zl = zl0.unsafe_offset(self.zoff[i])
             var zp = zp0.unsafe_offset(self.zoff[i])
             var nz = self.nz[i]
-            # offsets o <= i land on the bins l = i - o (WD at a time,
-            # reversed), the rest in bin 0
             var no = min(nz, i + 1)
             var o = 0
             var sve = SIMD[DType.float64, WD](ve)

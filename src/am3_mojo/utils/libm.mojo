@@ -1,6 +1,3 @@
-"""The transcendental functions, from the platform libm, and a switch as a
-factor."""
-
 from std.ffi import external_call
 
 
@@ -61,5 +58,4 @@ def c_asin(x: Float64) -> Float64:
 
 @inline(.always)
 def fbool(b: Bool) -> Float64:
-    """A process switch as the factor 1 or 0 of its term."""
     return 1.0 if b else 0.0

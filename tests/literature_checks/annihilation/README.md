@@ -1,14 +1,14 @@
 # Electron–positron annihilation
 
-Electrons and positrons annihilate into two photons, $\mathrm e^+\mathrm e^- \to \gamma\gamma$. This page starts from the cross section, rate and photon spectrum of [Svensson (1982)](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S). These results are exact for isotropic electrons and positrons of any Lorentz factors. From them the page derives the equations and tables that the Mojo code uses, and it names the struct or function that uses each. The last steps put the sinks (loss rates) of the electrons and positrons and the source of the photons on the code's grids. The Python module [annihilation.py](annihilation.py) verifies every step: `.venv/bin/python tests/literature_checks/common/run.py annihilation`.
+Electrons and positrons annihilate into two photons, $\mathrm e^+\mathrm e^- \to \gamma\gamma$. This page starts from the cross section, rate and photon spectrum of [Svensson (1982)](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S). These results are exact for isotropic electrons and positrons of any Lorentz factors. From them, the page derives the equations and tables that the Mojo code uses. It also names the corresponding struct and function. The Python module [annihilation.py](annihilation.py) checks every step: `.venv/bin/python tests/literature_checks/common/run.py annihilation`.
 
 ## Notation
 
-This page uses [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s symbols and quotes his equations as he prints them, with his journal page and equation numbers. Energies are in units of $mc^2$, with $m$ the electron mass and $c$ the speed of light. A photon has the energy $k$. In the laboratory frame, the positron and the electron have the Lorentz factors $\gamma_\pm$ and the velocities $\beta_\pm$, in units of $c$. The upper sign stands for the positron. The two particles have the four-velocities $v_\pm$, and $\mu$ is the cosine of the angle between their velocities. In the centre-of-momentum (cm) frame of the pair, each has the Lorentz factor $\gamma_{cm}$ and the velocity $\beta_{cm}$. In the rest frame of the electron, the positron has the Lorentz factor $\gamma_r$ and the velocity $\beta_r$. The positrons and electrons have the densities $n_\pm$ and the distributions $f_\pm(\gamma)$ in Lorentz factor, normalised to 1. A dot over a symbol marks a rate per unit time. An overline marks an average over the directions of isotropic particles, and angle brackets an average over the distributions. The classical electron radius is $r_e$, and $\alpha$ is the fine-structure constant. The code's rates are in units of $\sigma_T c$, with the Thomson cross section $\sigma_T = 8\pi r_e^2/3$. The few symbols that this page adds for the code are defined where they first appear.
+This page uses [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s symbols and quotes his equations with his journal page and equation numbers. Energies are in units of $mc^2$, with $m$ the electron mass and $c$ the speed of light. A photon has the energy $k$. In the laboratory frame, the positron and the electron have the Lorentz factors $\gamma_\pm$ and the velocities $\beta_\pm$, in units of $c$. The two particles have the four-velocities $v_\pm$, and $\mu$ is the cosine of the angle between their velocities. In the center-of-momentum (cm) frame of the pair, each has the Lorentz factor $\gamma_{cm}$ and the velocity $\beta_{cm}$. In the rest frame of the electron, the positron has the Lorentz factor $\gamma_r$ and the velocity $\beta_r$. The positrons and electrons have the densities $n_\pm$ and the distributions $f_\pm(\gamma)$ in Lorentz factor, normalized to 1. A dot over a symbol marks a rate per unit time. An overline marks an average over the directions of isotropic particles, and angle brackets mark an average over the distributions. The classical electron radius is $r_e$, and $\alpha$ is the fine-structure constant. The code's rates are in units of $\sigma_T c$, with the Thomson cross section $\sigma_T = 8\pi r_e^2/3$.
 
 ## Cross section
 
-[Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s results are the Born approximation of quantum electrodynamics. They hold for particle velocities well above $\alpha c$ (his p. 322). Coulomb corrections and the formation of positronium are left out, and so is annihilation into three photons.
+[Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s results are the Born approximation of quantum electrodynamics. They hold for particle velocities well above $\alpha c$ (his p. 322). He leaves out Coulomb corrections, the formation of positronium and annihilation into three photons.
 
 The cross section is simplest in the cm frame. [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s eq. 6 (p. 323) prints Dirac's cross section as
 
@@ -16,7 +16,7 @@ $$
 \sigma(\gamma_{cm}) = r_e^2\thinspace\frac{\pi}{4\beta_{cm}\gamma_{cm}^2}\left[\frac{1}{\beta_{cm}}\left(2 + \frac{2}{\gamma_{cm}^2} - \frac{1}{\gamma_{cm}^4}\right)\ln\negthinspace\left(\frac{1 + \beta_{cm}}{1 + \beta_{cm}}\right) - 2 - \frac{2}{\gamma_{cm}^2}\right].
 $$
 
-The argument of its logarithm is a misprint: as printed, the logarithm vanishes and the cross section is negative. The argument is $(1 + \beta_{cm})/(1 - \beta_{cm})$, whose logarithm is [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s $L(\beta_{cm})$ of eq. 18. With this argument, his eq. 18 is the integral of eq. 16 (see [Rate](#rate)).
+The argument of the logarithm in this equation is a misprint. As printed, the logarithm vanishes and the cross section is negative. The argument is $(1 + \beta_{cm})/(1 - \beta_{cm})$. Its logarithm is [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s $L(\beta_{cm})$ of eq. 18. With this argument, his eq. 18 is the integral of eq. 16 (see [Rate](#rate)).
 
 [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s eq. 1a (p. 322) relates the laboratory frame, the cm frame and the electron's rest frame through the product of the four-velocities:
 
@@ -24,7 +24,7 @@ $$
 v_+\cdot v_- = \gamma_+\gamma_-(1 - \beta_+\beta_-\mu) = 2\gamma_{cm}^2 - 1 = \gamma_r.
 $$
 
-So $\gamma_r$ alone fixes $\gamma_{cm}$ and $\beta_{cm}$. The code writes the cross section and the rate in $\gamma_r$, with $\gamma_{cm}$ and $\beta_{cm}$ from eq. 1a ([Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S), p. 328) and $L(\beta_{cm})$ from them:
+So $\gamma_r$ alone fixes $\gamma_{cm}$ and $\beta_{cm}$. The code writes the cross section and the rate in $\gamma_r$. It takes $\gamma_{cm}$ and $\beta_{cm}$ from eq. 1a ([Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S), p. 328) and computes $L(\beta_{cm})$ from them:
 
 $$
 \gamma_{cm} = \left[\frac{\gamma_r + 1}{2}\right]^{1/2},\qquad \beta_{cm} = \left[\frac{\gamma_r - 1}{\gamma_r + 1}\right]^{1/2},\qquad L(\beta_{cm}) = \ln[\gamma_r(1 + \beta_r)].
@@ -50,13 +50,13 @@ $$
 \gamma_{cm}^{\max} = \left[\tfrac{1}{2}(1 + \gamma_+\gamma_- + \gamma_+\gamma_-\beta_+\beta_-)\right]^{1/2},\qquad \gamma_{cm}^{\min} = \left[\tfrac{1}{2}(1 + \gamma_+\gamma_- - \gamma_+\gamma_-\beta_+\beta_-)\right]^{1/2}.
 $$
 
-His result is eq. 18 (p. 324), where the bracket stands for its value at the upper limit minus that at the lower one:
+His result is eq. 18 (p. 324). The bracket stands for its value at the upper limit minus its value at the lower limit:
 
 $$
 \overline{v\sigma}(\gamma_+,\gamma_-) = cr_e^2\thinspace\frac{\pi}{\beta_+\gamma_+^2\beta_-\gamma_-^2}\Big[\beta_{cm}^3\gamma_{cm}^2L(\beta_{cm}) - 2\gamma_{cm}^2 + \tfrac{3}{4}L^2(\beta_{cm})\Big]_ {\gamma_{cm}^{\min}}^{\gamma_{cm}^{\max}},\qquad L(\beta) = \ln\frac{1 + \beta}{1 - \beta}.
 $$
 
-With the corrected eq. 6, the derivative of the bracket in $\gamma_{cm}$ is $4\beta_{cm}\gamma_{cm}^3\sigma(\gamma_{cm})/(\pi r_e^2)$, so eq. 18 is the integral of eq. 16. The rate is symmetric in $\gamma_+$ and $\gamma_{-}$. For slow particles, it tends to $\pi r_e^2 c$ (his eq. 19a).
+With the corrected eq. 6, the derivative of the bracket in $\gamma_{cm}$ is $4\beta_{cm}\gamma_{cm}^3\sigma(\gamma_{cm})/(\pi r_e^2)$, so eq. 18 is the integral of eq. 16. The rate is symmetric in $\gamma_+$ and $\gamma_{-}$. For slow particles, the rate tends to $\pi r_e^2 c$ (his eq. 19a).
 
 ### The rate in the code
 
@@ -66,7 +66,7 @@ $$
 \gamma_r^{\max} = \gamma_+\gamma_-(1 + \beta_+\beta_-),\qquad \gamma_r^{\min} = \gamma_+\gamma_-(1 - \beta_+\beta_-) = \frac{\gamma_+^2 + \gamma_-^2 - 1}{\gamma_r^{\max}}.
 $$
 
-The code takes the last form of $\gamma_r^{\min}$, which follows from $\gamma_r^{\max}\gamma_r^{\min} = \gamma_+^2 + \gamma_-^2 - 1$. The function `gcm_limits` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) takes the limits of eq. 17 from these two values, with eq. 1a. The functions `_eq18_bracket` and `L_cm` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) evaluate the bracket of eq. 18 and $L(\beta_{cm})$ with the relations of [Cross section](#cross-section).
+The code takes the last form of $\gamma_r^{\min}$. This form follows from $\gamma_r^{\max}\gamma_r^{\min} = \gamma_+^2 + \gamma_-^2 - 1$. The function `gcm_limits` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) computes the limits of eq. 17 from these two values, with eq. 1a. The functions `_eq18_bracket` and `L_cm` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) evaluate the bracket of eq. 18 and $L(\beta_{cm})$ with the relations of [Cross section](#cross-section).
 
 Where $\beta_+\gamma_+\beta_-\gamma_-$ is below a hundredth of $\gamma_r^{\max}$, the brackets at the two limits nearly cancel. There the code takes the integral of eq. 13 with the 8-node Gauss–Legendre rule in $\mu$, whose error is below $10^{-30}$ there. At its nodes, $\gamma_r$ $= [\gamma_r^{\max}(1 - \mu) + \gamma_r^{\min}(1 + \mu)]/2$ by eq. 1a. The function `_eq13_integrand` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) evaluates the integrand in $\gamma_r$:
 
@@ -96,7 +96,7 @@ $$
 \frac{d\dot n_+}{d\gamma_+} = n_+n_-f_+(\gamma_+)\int_1^\infty d\gamma_-\thinspace f_-(\gamma_-)\thinspace\overline{v\sigma}(\gamma_+,\gamma_-),\qquad \frac{d\dot n_+}{d\gamma_-} = n_+n_-f_-(\gamma_-)\int_1^\infty d\gamma_+\thinspace f_+(\gamma_+)\thinspace\overline{v\sigma}(\gamma_+,\gamma_-).
 $$
 
-These are the integrands of the outer integral of eq. 14, taken in either order. Integrated over $\gamma_+$ or over $\gamma_-$, both give $\dot n_+$.
+These two rates are the integrands of the outer integral of eq. 14, taken in either order. Integrated over $\gamma_+$ or over $\gamma_-$, both give $\dot n_+$.
 
 In the same way, [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s eqs. 23–25 (p. 325) give $\dot n(k)$, the number of photons per unit volume, time and photon energy. They average his angle-averaged emissivity per pair over the distributions. This emissivity, $\overline{v\thinspace d\sigma/dk}$ of eq. 24, is the relative velocity times the cross section per unit photon energy, averaged over directions:
 
@@ -104,7 +104,7 @@ $$
 \dot n(k) = n_+n_-\Big\langle\overline{v\frac{d\sigma}{dk}}(k)\Big\rangle,\qquad \Big\langle\overline{v\frac{d\sigma}{dk}}(k)\Big\rangle \equiv \int_{\gamma_+^{(L)}}^{\gamma_+^{(U)}}d\gamma_+\thinspace f_+(\gamma_+)\int_{\gamma_-^{(L)}}^{\gamma_-^{(U)}}d\gamma_-\thinspace f_-(\gamma_-)\thinspace\overline{v\frac{d\sigma}{dk}}(k,\gamma_+,\gamma_-).
 $$
 
-The limits $\gamma_\pm^{(L)}$ and $\gamma_\pm^{(U)}$ of his eq. 37 (p. 327) bound the Lorentz factors of the pairs that make photons of energy $k$. The emissivity vanishes outside them, so the integrals may run over all Lorentz factors. The emissivity counts both photons of an annihilation:
+The limits $\gamma_\pm^{(L)}$ and $\gamma_\pm^{(U)}$ of his eq. 37 (p. 327) bound the Lorentz factors of the pairs that make photons of energy $k$. Outside these limits, the emissivity vanishes, so the integrals can run over all Lorentz factors. The emissivity counts both photons of an annihilation:
 
 $$
 \int\overline{v\frac{d\sigma}{dk}}(k,\gamma_+,\gamma_-)\thinspace dk = 2\thinspace\overline{v\sigma}(\gamma_+,\gamma_-),\qquad \int k\thinspace\overline{v\frac{d\sigma}{dk}}(k,\gamma_+,\gamma_-)\thinspace dk = (\gamma_+ + \gamma_-)\thinspace\overline{v\sigma}(\gamma_+,\gamma_-).
@@ -122,7 +122,7 @@ $$
 k_{\max}k_{\min} = \gamma_{cm}^2,\qquad k_{\max} + k_{\min} = \gamma_+ + \gamma_-.
 $$
 
-If a photon's energy $k$ is $k_{\min}$ or $k_{\max}$, eliminating the other gives the critical Lorentz factor $\gamma_{cm}^\ast$ (eq. 31, p. 326). Pairs with a larger $\gamma_{cm}$ cannot make the photon:
+If a photon's energy $k$ is $k_{\min}$ or $k_{\max}$, elimination of the other energy gives the critical Lorentz factor $\gamma_{cm}^\ast$ (eq. 31, p. 326). Pairs with a larger $\gamma_{cm}$ cannot make the photon:
 
 $$
 \gamma_{cm}^{\ast 2} = k\thinspace(\gamma_+ + \gamma_- - k).
@@ -134,7 +134,7 @@ $$
 \gamma_{cm}^{(U)} = \min\left[\gamma_{cm}^{\max},\ \gamma_{cm}^\ast\right],\qquad \gamma_{cm}^{(L)} = \gamma_{cm}^{\min}.
 $$
 
-All photons of the pair lie between the energies at which $\gamma_{cm}^\ast$ equals $\gamma_{cm}^{\min}$, the kinematic limits $k_L = \tfrac12[\gamma_+(1-\beta_+) + \gamma_-(1-\beta_-)]$ and $k_U = \tfrac12[\gamma_+(1+\beta_+) + \gamma_-(1+\beta_-)]$ (eqs. 33d and 33a). The spectrum peaks where $\gamma_{cm}^\ast$ equals $\gamma_{cm}^{\max}$ (eqs. 33b–c), at
+All photons of the pair lie between the kinematic limits $k_L = \tfrac12[\gamma_+(1-\beta_+) + \gamma_-(1-\beta_-)]$ and $k_U = \tfrac12[\gamma_+(1+\beta_+) + \gamma_-(1+\beta_-)]$ (eqs. 33d and 33a). At these two energies, $\gamma_{cm}^\ast$ equals $\gamma_{cm}^{\min}$. The spectrum peaks where $\gamma_{cm}^\ast$ equals $\gamma_{cm}^{\max}$ (eqs. 33b–c), at
 
 $$
 k_\pm = \tfrac{1}{2}\left[\gamma_\pm(1+\beta_\pm) + \gamma_\mp(1-\beta_\mp)\right].
@@ -150,7 +150,7 @@ $$
 \overline{v\frac{d\sigma}{dk}}(k,\gamma_+,\gamma_-) = \frac{1}{\beta_+\gamma_+^2\beta_-\gamma_-^2}\int_{\gamma_{cm}^{(L)}}^{\gamma_{cm}^{(U)}}d\gamma_{cm}\thinspace 4\beta_{cm}\gamma_{cm}^3\thinspace c\thinspace\frac{d\sigma}{dk}(k,\gamma_+,\gamma_-,\gamma_{cm}).
 $$
 
-In its integrand, $d\sigma/dk$ is the cross section per unit photon energy at the given $\gamma_{cm}$. Integrated over the photon's directions in the cm frame (eqs. 46–49), it is that of eq. 50 (p. 330):
+In its integrand, $d\sigma/dk$ is the cross section per unit photon energy at the given $\gamma_{cm}$. Integrated over the photon's directions in the cm frame (eqs. 46–49), this cross section is that of eq. 50 (p. 330):
 
 $$
 \frac{d\sigma}{dk} = r_e^2\thinspace\frac{1}{4\beta_{cm}\gamma_{cm}^3}\thinspace\pi\left\lbrace\frac{-4\gamma_{cm}}{[(\gamma_+ + \gamma_-)^2 - 4\gamma_{cm}^2]^{1/2}} + G_+ + G_-\right\rbrace,
@@ -166,7 +166,7 @@ $$
 d_\pm = \gamma_\mp(\gamma_+ + \gamma_-) \pm k(\gamma_+ - \gamma_-),\qquad u_\pm = (c_\pm\gamma_{cm}^2 + \gamma_{cm}^{\ast 2})^{1/2},\qquad c_\pm = (\gamma_\mp - k)^2 - 1.
 $$
 
-The integral over $\gamma_{cm}$ is elementary. Eqs. 55–57 (p. 330) give it, with the brace taken between the limits like the bracket of eq. 18:
+The integral over $\gamma_{cm}$ is elementary. Eqs. 55–57 (p. 330) give it. Like the bracket of eq. 18, the brace is taken between the limits:
 
 $$
 \overline{v\frac{d\sigma}{dk}}(k,\gamma_+,\gamma_-) = cr_e^2\thinspace\frac{\pi}{\beta_+\gamma_+^2\beta_-\gamma_-^2}\Big\lbrace[(\gamma_+ + \gamma_-)^2 - 4\gamma_{cm}^2]^{1/2} + H_+ + H_-\Big\rbrace_ {\gamma_{cm}^{(L)}}^{\gamma_{cm}^{(U)}},
@@ -186,15 +186,15 @@ $$
 H_\pm = \left(\tfrac{2}{3}\gamma_{cm}^3 + 2\gamma_{cm} + \frac{1}{\gamma_{cm}}\right)\frac{1}{\gamma_{cm}^\ast} + \tfrac{1}{2}\left(\tfrac{2}{3}\gamma_{cm}^3 - d_\pm\gamma_{cm}\right)\frac{1}{\gamma_{cm}^{\ast 3}}.
 $$
 
-Eq. 55 is the integral of eq. 26 with eq. 50. The derivative of its brace in $\gamma_{cm}$ is the brace of eq. 50, since $dH_\pm/d\gamma_{cm} = G_\pm$. Eq. 58 is the limit of eq. 56 for vanishing $c_\pm$, up to a constant that cancels between the limits. The integrals of eq. 55 over $k$ give the photon number and energy above, to $3.9 \times 10^{-31}$ in a 30-digit quadrature. Eq. 55 passes the tests of [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s p. 331. It is symmetric in $\gamma_+$ and $\gamma_{-}$, as the rate is, and it tends to eq. 41 as $\gamma_-$ tends to 1.
+Eq. 55 is the integral of eq. 26 with eq. 50. The derivative of its brace in $\gamma_{cm}$ is the brace of eq. 50, because $dH_\pm/d\gamma_{cm} = G_\pm$. Eq. 58 is the limit of eq. 56 for vanishing $c_\pm$, up to a constant that cancels between the limits. The integrals of eq. 55 over $k$ give the photon number and energy above, to $3.9 \times 10^{-31}$ in a 30-digit quadrature. Eq. 55 passes the tests of [Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S)'s p. 331. Like the rate, it is symmetric in $\gamma_+$ and $\gamma_{-}$, and it tends to eq. 41 as $\gamma_-$ tends to 1.
 
 ### The spectrum in the code
 
-The functions `_emissivity`, `_eq55_brace` and `_H` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) evaluate eq. 55 between the limits of eq. 32, its brace and $H_\pm$ of eqs. 56–58. On the range of the integral, $c_\pm$ is at least $-1$ and $\gamma_{cm}$ at most $\gamma_{cm}^\ast$. So $u_\pm$ is real, and the argument of the arcsine in eq. 57 is at most 1. The square root $u_\pm$ vanishes only where $\gamma_{cm} = \gamma_{cm}^\ast$ and $k = \gamma_\mp$. There the second term of $H_\pm$ tends to zero ([Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S), p. 331).
+The functions `_emissivity`, `_eq55_brace` and `_H` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) evaluate eq. 55 between the limits of eq. 32, its brace and $H_\pm$ of eqs. 56–58. On the range of the integral, $c_\pm$ is at least $-1$ and $\gamma_{cm}$ is at most $\gamma_{cm}^\ast$. So $u_\pm$ is real, and the argument of the arcsine in eq. 57 is at most 1. The square root $u_\pm$ vanishes only where $\gamma_{cm} = \gamma_{cm}^\ast$ and $k = \gamma_\mp$. There the second term of $H_\pm$ tends to zero ([Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S), p. 331).
 
 ### One particle at rest
 
-[Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S) derives separately the spectrum of a positron that annihilates with an electron at rest (eqs. 38–41, p. 328). His eq. 41 is
+[Svensson](https://ui.adsabs.harvard.edu/abs/1982ApJ...258..321S) separately derives the spectrum of a positron that annihilates with an electron at rest (eqs. 38–41, p. 328). His eq. 41 is
 
 $$
 \overline{v\frac{d\sigma}{dk}}(k,\gamma_r,1) = cr_e^2\thinspace\frac{\pi}{\beta_r\gamma_r^2}\left\lbrace\frac{-(3 + \gamma_r)/(1 + \gamma_r) + (3 + \gamma_r)/k - 1/k^2}{[1 - k/(1 + \gamma_r)]^2} - 2\right\rbrace,\qquad [\gamma_r(1 - \beta_r) + 1]/2 \le k \le [\gamma_r(1 + \beta_r) + 1]/2.
@@ -220,37 +220,39 @@ $$
 \overline{v\frac{d\sigma}{dk}}(k,\gamma_+,\gamma_-) \approx \overline{v\sigma}(\gamma_+,\gamma_-)[\delta(k - k_+) + \delta(k - k_-)].
 $$
 
-Since $k_+ + k_- = \gamma_+ + \gamma_{-}$, the approximation keeps the energy of the photons as well as their number. The method `PairAnnihilation.initialize_kernels` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) sets it up for the pairs whose particles both have Lorentz factors above 100 (see [Photon kernel](#photon-kernel)).
+Because $k_+ + k_- = \gamma_+ + \gamma_{-}$, the approximation keeps the energy of the photons as well as their number. For the pairs whose particles both have Lorentz factors above 100, the method `PairAnnihilation.initialize_kernels` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) sets up this approximation (see [Photon kernel](#photon-kernel)).
 
 ## On the code's grids
 
 ### Grids and units
 
-The grids are those of AM³, the C++ code that am3_mojo ports to Mojo. Its lepton grid points $\gamma_i$ are spaced by $\Delta$ in $\ln\gamma$, from $\gamma_0 = 1$, a particle at rest. Its photon grid points $k_l$ are spaced by the same $\Delta$ in $\ln k$, and photon bin $l$ holds the energies within $\Delta/2$ of $\ln k_l$. The code's arrays hold the densities per unit $\ln\gamma$, $N_\pm(\gamma) = \gamma\thinspace n_\pm f_\pm(\gamma)$, and those of the photons per unit $\ln k$.
+The grids are those of AM³, the C++ code that am3_mojo ports to Mojo. The lepton grid points $\gamma_i$ have the spacing $\Delta$ in $\ln\gamma$, from $\gamma_0 = 1$, a particle at rest. The photon grid points $k_l$ have the same spacing $\Delta$ in $\ln k$. Photon bin $l$ holds the energies $k$ whose logarithm lies within $\Delta/2$ of $\ln k_l$. The code's arrays hold the lepton densities per unit $\ln\gamma$, $N_\pm(\gamma) = \gamma\thinspace n_\pm f_\pm(\gamma)$, and the photon densities per unit $\ln k$.
 
 ### Sinks on the grid
 
-The methods `PairAnnihilation.initialize_kernels` and `PairAnnihilation.Calc_PairAnn` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) put the sinks on the grid. The first tabulates the rate $R_{ij}$ for every pair of lepton grid points $i$ and $j$. The second puts the particles of each bin at its grid point, with the density $N_\pm(\gamma_i)\Delta$. The annihilation rate of each electron and each positron then becomes a sum over the grid:
+The methods `PairAnnihilation.initialize_kernels` and `PairAnnihilation.Calc_PairAnn` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) put the sinks on the grid. The first method tabulates the rate $R_{ij}$ for every pair of lepton grid points $i$ and $j$. The second method puts the particles of each bin at its grid point, with the density $N_\pm(\gamma_i)\Delta$. The annihilation rate of each electron and each positron then becomes a sum over the grid:
 
 $$
 \Gamma_\mp(\gamma_j) = \sigma_T c\thinspace\Delta\sum_i R_{ij}\thinspace N_\pm(\gamma_i),\qquad R_{ij} = \frac{\overline{v\sigma}(\gamma_i,\gamma_j)}{\sigma_T c}.
 $$
 
-Here $\Gamma_-$ is the rate of an electron and $\Gamma_+$ that of a positron. The particles of grid point $j$ thus decrease as $\dot N_\mp(\gamma_j)$ $= -\Gamma_\mp(\gamma_j)\thinspace N_\mp(\gamma_j)$, and the timescales $1/\Gamma_\mp$ are their annihilation times. The methods `SimulationManager.Pass_Coeff_Lep` and `SimulationManager.Calc_Lep` in [manager.mojo](../../../src/am3_mojo/simulation/manager.mojo) add $\Gamma_{-}$ and $\Gamma_+$ to the escape rates of the electrons and positrons.
+Here $\Gamma_-$ is the rate of an electron, and $\Gamma_+$ is the rate of a positron. The particles of grid point $j$ thus decrease as $\dot N_\mp(\gamma_j)$ $= -\Gamma_\mp(\gamma_j)\thinspace N_\mp(\gamma_j)$, and the timescales $1/\Gamma_\mp$ are their annihilation times. The methods `SimulationManager.Pass_Coeff_Lep` and `SimulationManager.Calc_Lep` in [manager.mojo](../../../src/am3_mojo/simulation/manager.mojo) add $\Gamma_{-}$ and $\Gamma_+$ to the escape rates of the electrons and positrons.
 
 ### Photon kernel
 
-The kernel $K_{ij}(l)$ counts the photons that the particles of grid points $i$ and $j$ put into photon bin $l$. It counts them per unit time and unit density of each particle, in units of $\sigma_T c$. The method `PairAnnihilation.initialize_kernels` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) sets it up. For the pairs with a particle of Lorentz factor 100 or less, `PairAnnihilation._fill_pair` and `PairAnnihilation._deposit` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) fill it in two steps. The first splits the photon energies into segments. The second shares the photons of a segment, of mean energy $\bar k$, between the two photon grid points around $\bar k$. The point $k_l$ gets the fraction $1 - {w}$ of them and $k_{l+1}$ the fraction $w$, where
+The kernel $K_{ij}(l)$ counts the photons that the particles of grid points $i$ and $j$ put into photon bin $l$. It counts them per unit time and unit density of each particle, in units of $\sigma_T c$. The method `PairAnnihilation.initialize_kernels` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) sets up this kernel.
+
+For the pairs with a particle of Lorentz factor 100 or less, `PairAnnihilation._fill_pair` and `PairAnnihilation._deposit` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) fill the kernel in two steps. The first step splits the photon energies into segments. The second step shares the photons of a segment, of mean energy $\bar k$, between the two photon grid points around $\bar k$. The point $k_l$ gets the fraction $1 - {w}$ of them, and $k_{l+1}$ gets the fraction $w$, where
 
 $$
 (1 - w)\thinspace k_l + w\thinspace k_{l+1} = \bar k,\qquad w = \frac{\bar k - k_l}{k_{l+1} - k_l}.
 $$
 
-This keeps the number and the energy of the photons. How the code finds the photons of a pair depends on the pair's Lorentz factors:
+This sharing keeps the number and the energy of the photons. How the code finds the photons of a pair depends on the pair's Lorentz factors:
 
 - A particle and one at rest: the primitives $P$ and $E$ of eq. 41 give the photons of each segment.
 - Other pairs with a particle of Lorentz factor 100 or less: Gauss–Legendre rules integrate eq. 55 over each segment.
-- Pairs with both Lorentz factors above 100: the two photons of eq. 59, each shared out in the same way (`PairAnnihilation._split` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo)).
+- Pairs with both Lorentz factors above 100: the code shares out the two photons of eq. 59 in the same way (`PairAnnihilation._split` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo)).
 
 The method `PairAnnihilation.__init__` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) sets up a map of the quadrature nodes:
 
@@ -258,7 +260,7 @@ $$
 t = \frac{1 - \cos\pi s}{2} = \sin^2\frac{\pi s}{2},\qquad dt = \frac{\pi}{2}\sin(\pi s)\thinspace ds.
 $$
 
-Here $t$ is the position in a segment, from 0 at one end to 1 at the other, and the Gauss–Legendre nodes lie in $s$. The map smooths a square-root edge at an end: $\sqrt{t}$ becomes $\sin(\pi s/2)$. Where the whole spectrum lies on the grid, the method `PairAnnihilation._store` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) scales the kernel to the photon number of the normalisation, $\sum_l K_{ij}(l) = 2R_{ij}$.
+Here $t$ is the position in a segment, from 0 at one end to 1 at the other. The Gauss–Legendre nodes lie in $s$. The map smooths a square-root edge at an end: $\sqrt{t}$ becomes $\sin(\pi s/2)$. Where the whole spectrum lies on the grid, the method `PairAnnihilation._store` in [pair_annihilation.mojo](../../../src/am3_mojo/physics/pair_annihilation.mojo) scales the kernel to the photon number of the normalization, $\sum_l K_{ij}(l) = 2R_{ij}$.
 
 ### Photon source on the grid
 
@@ -268,4 +270,4 @@ $$
 Q_\gamma(k_l) = \sigma_T c\thinspace\Delta\sum_{i,j} N_+(\gamma_i)\thinspace N_-(\gamma_j)\thinspace K_{ij}(l).
 $$
 
-The emissivity is symmetric in $\gamma_+$ and $\gamma_{-}$, so $K_{ji} = K_{ij}$, and one kernel serves both charge orders of a pair of grid points. The method `SimulationManager.Pass_Coeff_Phot` in [manager.mojo](../../../src/am3_mojo/simulation/manager.mojo) makes $Q_\gamma$ the source of the annihilation photons.
+The emissivity is symmetric in $\gamma_+$ and $\gamma_{-}$, so $K_{ji} = K_{ij}$. One kernel thus serves both charge orders of a pair of grid points. The method `SimulationManager.Pass_Coeff_Phot` in [manager.mojo](../../../src/am3_mojo/simulation/manager.mojo) makes $Q_\gamma$ the source of the annihilation photons.

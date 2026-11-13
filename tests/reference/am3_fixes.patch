@@ -1,43 +1,123 @@
 diff -ruN a/src/AM3.cc b/src/AM3.cc
 --- a/src/AM3.cc	2026-10-03 23:00:00
 +++ b/src/AM3.cc	2026-10-03 23:00:00
-@@ -497,7 +497,7 @@
+@@ -9,7 +9,13 @@
+ AM3::AM3()
+ 	: rp(), dat(), sim(rp, dat), mec2_erg(8.187111168006826e-07), erg2eV(624149596175.2113)
+ {
+-
++	// am3_mojo fix: the energies asked for the optimization limits are at
++	// first those of the grid points of the limits (update_energy_grid)
++	asked_compton_emission_emin = dat.egrid_pho[sim.optimize_compton_emission_emin] * masse * 1e9;
++	asked_compton_target_emax = dat.egrid_pho[sim.optimize_compton_target_emax] * masse * 1e9;
++	asked_bethe_heitler_incoming_protons_min = dat.egrid_had[sim.optimize_bethe_heitler_incoming_protons_min] * 1e9;
++	asked_bethe_heitler_target_photon_max = dat.egrid_pho[sim.optimize_bethe_heitler_target_photon_max] * masse * 1e9;
++	asked_photopion_target_photon_max = dat.egrid_pho[sim.optimize_photopion_target_photon_max] * masse * 1e9;
+ };
+ 
+ 
+@@ -496,25 +502,33 @@
+ // optimizations
  // IC
  void AM3::set_optimize_compton_emission_emin(double new_value){
++	asked_compton_emission_emin = new_value; // am3_mojo fix (update_energy_grid)
  	// limit optimization range to energy grid
 -	double mec2_eV = 0.51099895e6;
 +	double mec2_eV = masse * 1e9; // am3_mojo PDG
  	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
  	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
  	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
-@@ -508,7 +508,7 @@
+-	// convert to even index
++	// am3_mojo fix: the grid point at or below the limit. (AM3 rounded the
++	// index up to an even one, for its option of every second grid point,
++	// which cannot be switched on. A limit then lay a bin higher on the
++	// photon grids whose offset is odd. The limit also moved up a bin at
++	// every update_energy_grid that changed the parity of the offset.)
+ 	int index = dat.eV_to_photon_grid_index(new_value);
+-	if (index%2) index += 1;
+ 	sim.optimize_compton_emission_emin = index;}
  	
  void AM3::set_optimize_compton_target_emax(double new_value){
++	asked_compton_target_emax = new_value; // am3_mojo fix (update_energy_grid)
  	// limit optimization range to energy grid
 -	double mec2_eV = 0.51099895e6;
 +	double mec2_eV = masse * 1e9; // am3_mojo PDG
  	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
  	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
  	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
-@@ -546,7 +546,7 @@
+-	// convert to even index
++	// am3_mojo fix: the grid point at or below the limit. (AM3 rounded the
++	// index up to an even one, for its option of every second grid point,
++	// which cannot be switched on. A limit then lay a bin higher on the
++	// photon grids whose offset is odd. The limit also moved up a bin at
++	// every update_energy_grid that changed the parity of the offset.)
+ 	int index = dat.eV_to_photon_grid_index(new_value);
+-	if (index%2) index += 1;
+ 	sim.optimize_compton_target_emax = index;}
+ 	
+ void AM3::set_optimize_compton_emission_grid(bool new_value){
+@@ -535,24 +549,33 @@
+ 	sim.optimize_bethe_heitler_outgoing_pairs_grid = int(new_value) + 1;}
+ 
+ void AM3::set_optimize_bethe_heitler_incoming_protons_min(double new_value){
++	asked_bethe_heitler_incoming_protons_min = new_value; // am3_mojo fix (update_energy_grid)
+ 	// limit optimization range to energy grid
+ 	double E_max_eV = dat.egrid_had[dat.nbins_had - 1]*1e9;
+ 	double E_min_eV = 1e9;
+ 	new_value = max(min(new_value, E_max_eV), E_min_eV);
+-	// convert to even index
++	// am3_mojo fix: the grid point at or below the minimum, not rounded up to
++	// an even index (set_optimize_compton_emission_emin). A minimum whose
++	// grid point is one past the top bin or above gets the index one past
++	// the top bin, which means no protons. (AM3 gave this index to a minimum
++	// at or above the top bin if the index of that bin is odd.)
+ 	int index = dat.eV_to_had_grid_index(new_value);
+-	if (index%2) index += 1;
++	if (dat.eV_to_had_grid_index(max(asked_bethe_heitler_incoming_protons_min, E_min_eV)) >= dat.nbins_had) index = dat.nbins_had;
+ 	sim.optimize_bethe_heitler_incoming_protons_min = index;}
  
  void AM3::set_optimize_bethe_heitler_target_photon_max(double new_value){
++	asked_bethe_heitler_target_photon_max = new_value; // am3_mojo fix (update_energy_grid)
  	// limit optimization range to energy grid
 -	double mec2_eV = 0.51099895e6;
 +	double mec2_eV = masse * 1e9; // am3_mojo PDG
  	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
  	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
  	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
-@@ -561,7 +561,7 @@
+-	// convert to even index
++	// am3_mojo fix: the grid point at or below the limit. (AM3 rounded the
++	// index up to an even one, for its option of every second grid point,
++	// which cannot be switched on. A limit then lay a bin higher on the
++	// photon grids whose offset is odd. The limit also moved up a bin at
++	// every update_energy_grid that changed the parity of the offset.)
+ 	int index = dat.eV_to_photon_grid_index(new_value);
+-	if (index%2) index += 1;
+ 	sim.optimize_bethe_heitler_target_photon_max = index;}
+ 
+ // photo pion
+@@ -560,14 +583,18 @@
+ 	sim.optimize_photopion_target_photon_grid = int(new_value) + 1;}
  
  void AM3::set_optimize_photopion_target_photon_max(double new_value){
++	asked_photopion_target_photon_max = new_value; // am3_mojo fix (update_energy_grid)
  	// limit optimization range to energy grid
 -	double mec2_eV = 0.51099895e6;
 +	double mec2_eV = masse * 1e9; // am3_mojo PDG
  	double E_max_eV = dat.egrid_pho[dat.nbins_pho - 1]*mec2_eV;
  	double Egamma_min_eV = dat.egrid_pho[0]*mec2_eV;
  	new_value = max(min(new_value, E_max_eV), Egamma_min_eV);
-@@ -781,7 +781,7 @@
+-	// convert to even index
++	// am3_mojo fix: the grid point at or below the limit. (AM3 rounded the
++	// index up to an even one, for its option of every second grid point,
++	// which cannot be switched on. A limit then lay a bin higher on the
++	// photon grids whose offset is odd. The limit also moved up a bin at
++	// every update_energy_grid that changed the parity of the offset.)
+ 	int index = dat.eV_to_photon_grid_index(new_value);
+-	if (index%2) index += 1;
+ 	sim.optimize_photopion_target_photon_max = index;}
+ 
+ // p-p
+@@ -781,7 +808,7 @@
  { 
  	vector<double> res = dat.egrid_lep;
  	for(int i=0; i< dat.nbins_lep; i++)
@@ -46,7 +126,7 @@ diff -ruN a/src/AM3.cc b/src/AM3.cc
  	return res; 
  }
  // energy grid photons
-@@ -789,7 +789,7 @@
+@@ -789,7 +816,7 @@
  {
  	vector<double> res = dat.egrid_pho;
  	for(int i =0; i< dat.nbins_pho; i++)
@@ -55,54 +135,119 @@ diff -ruN a/src/AM3.cc b/src/AM3.cc
  	return res; 
  }
  
-@@ -852,7 +852,7 @@
+@@ -851,13 +878,17 @@
+ void AM3::update_energy_grid(
  	double Egamma_min_eV, double Enu_min_eV, double E_max_eV)
  {
- 	// keep energies of optimisations if possible
+-	// keep energies of optimisations if possible
 -	double mec2_eV = 0.51099895e6;
-+	double mec2_eV = masse * 1e9; // am3_mojo PDG
- 	double opt_E_ic_ph_in_max = max(min(dat.egrid_pho[sim.optimize_compton_target_emax]*mec2_eV, E_max_eV), Egamma_min_eV);
- 	double opt_E_ic_ph_out_min = max(min(dat.egrid_pho[sim.optimize_compton_emission_emin]*mec2_eV, E_max_eV), Egamma_min_eV);
- 	double opt_E_bh_pr_in_min = max(min(dat.egrid_had[sim.optimize_bethe_heitler_incoming_protons_min]*1e9, E_max_eV), 2e9);
+-	double opt_E_ic_ph_in_max = max(min(dat.egrid_pho[sim.optimize_compton_target_emax]*mec2_eV, E_max_eV), Egamma_min_eV);
+-	double opt_E_ic_ph_out_min = max(min(dat.egrid_pho[sim.optimize_compton_emission_emin]*mec2_eV, E_max_eV), Egamma_min_eV);
+-	double opt_E_bh_pr_in_min = max(min(dat.egrid_had[sim.optimize_bethe_heitler_incoming_protons_min]*1e9, E_max_eV), 2e9);
+-	double opt_E_bh_ph_in_max = max(min(dat.egrid_pho[sim.optimize_bethe_heitler_target_photon_max]*mec2_eV, E_max_eV), Egamma_min_eV);
+-	double opt_E_pg_ph_in_max = max(min(dat.egrid_pho[sim.optimize_photopion_target_photon_max]*mec2_eV, E_max_eV), Egamma_min_eV);
++	// am3_mojo fix: the optimization limits of the new grid come from the
++	// energies asked for. A grid that does not hold these energies leaves
++	// them as they are. (AM3 took the limits from those of the old grid,
++	// clamped to the new grid. If a grid cut a limit, the limit stayed cut on
++	// a larger grid. A Bethe-Heitler minimum past the grid, which means no
++	// protons, was read past the end of the grid.)
++	double opt_E_ic_ph_in_max = asked_compton_target_emax;
++	double opt_E_ic_ph_out_min = asked_compton_emission_emin;
++	double opt_E_bh_pr_in_min = asked_bethe_heitler_incoming_protons_min;
++	double opt_E_bh_ph_in_max = asked_bethe_heitler_target_photon_max;
++	double opt_E_pg_ph_in_max = asked_photopion_target_photon_max;
+ 
+ 	dat.update_energy_grid_parameters(Egamma_min_eV, Enu_min_eV, E_max_eV);
+ 	// resize + fill energy grids
 diff -ruN a/src/AM3Arrays.cc b/src/AM3Arrays.cc
 --- a/src/AM3Arrays.cc	2026-10-03 23:00:00
 +++ b/src/AM3Arrays.cc	2026-10-03 23:00:00
-@@ -117,7 +117,7 @@
+@@ -2,6 +2,7 @@
+ #include "AM3/global_defs.h"
+ #include "AM3/consts.h"
+ #include <iostream>
++#include <cmath> // am3_mojo fix: floor, fabs (grid_index)
+ 
+ using namespace std;
+ 
+@@ -113,20 +114,37 @@
+ 	}
+ }
+ 
++// am3_mojo fix: the index of the grid point at or below the position x on a
++// grid (in units of its spacing). Below the start of the grid, it is the
++// index of the point above. The index is x truncated, but a position within
++// 1e-9 of a whole number is that number. (For 2 to 4 % of the points, the
++// logarithm of a point's own energy, divided by the spacing, comes out
++// slightly below its index. The truncation alone took these points to the
++// point below.)
++static int grid_index(double x){
++	double r = floor(x + 0.5);
++	if (fabs(x - r) < 1e-9) return (int)r;
++	return (int)x;}
++
+ void AM3Arrays::update_energy_grid_parameters(
  	double Egamma_min_eV, double Enu_min_eV, double E_max_eV)
  {
++	// am3_mojo fix: the grid points of the three energies by grid_index, so
++	// that the energy of a grid point gives that point. (With the truncation
++	// alone, for some of these energies, the lepton or hadron grid ended two
++	// bins below E_max. For others, the photon or neutrino grid started one
++	// bin above its minimum.)
  	// maximum energy
 -	double mec2_eV = 511e3;
+-	nbins_lep = (int)(log(E_max_eV/mec2_eV)/dlnE);
 +	double mec2_eV = masse * 1e9; // am3_mojo PDG
- 	nbins_lep = (int)(log(E_max_eV/mec2_eV)/dlnE);
++	nbins_lep = grid_index(log(E_max_eV/mec2_eV)/dlnE);
  	if (nbins_lep%2) nbins_lep += 1;
- 	nbins_had = (int)(log(E_max_eV/1e9)/dlnE);
-@@ -134,7 +134,12 @@
+-	nbins_had = (int)(log(E_max_eV/1e9)/dlnE);
++	nbins_had = grid_index(log(E_max_eV/1e9)/dlnE);
+ 	if (nbins_had%2) nbins_had += 1;
+ 	// minimum energy
+-	ind_min_energy_pho = (int)(log(mec2_eV/Egamma_min_eV)/dlnE);
++	ind_min_energy_pho = grid_index(log(mec2_eV/Egamma_min_eV)/dlnE);
+ 	nbins_pho = nbins_lep + ind_min_energy_pho;
+ 	if (nbins_pho%2) nbins_pho += 1;
+-	ind_min_energy_nu = (int)(log(1e9/Enu_min_eV)/dlnE);
++	ind_min_energy_nu = grid_index(log(1e9/Enu_min_eV)/dlnE);
+ 	nbins_nu = nbins_had + ind_min_energy_nu;
+ 	if (nbins_nu%2) nbins_nu += 1;
+ 
+@@ -134,7 +152,12 @@
  	nbins_lep_hadgrid = nbins_lep;
  	ind_min_energy_lep_hadgrid = 1 + (int)(log(1e9/mec2_eV)/dlnE);
  	nbins_pho_hadgrid = nbins_pho;
 -	ind_min_energy_pho_hadgrid = 1 + (int)(log(1e9/Egamma_min_eV)/dlnE);
-+	// am3_mojo fix: as in the constructor, the photon grid shifted as the
-+	// lepton grid, which grid_lep2had / grid_had2lep assume (1 + int(ln(1e9 /
-+	// Egamma_min) / dlnE) is one more for 79 % of the values of Egamma_min,
-+	// every power of ten among them, and labelled the photons on the hadron
-+	// grid e^-dlnE times their energy)
++	// am3_mojo fix: as in the constructor, the photon grid is shifted like
++	// the lepton grid, which grid_lep2had / grid_had2lep assume. (AM3 used
++	// 1 + int(ln(1e9 / Egamma_min) / dlnE), which is one more for 79 % of
++	// the values of Egamma_min, every power of ten among them. AM3 then
++	// labeled the photons on the hadron grid e^-dlnE times their energy.)
 +	ind_min_energy_pho_hadgrid = ind_min_energy_lep_hadgrid + ind_min_energy_pho;
  	
  	index_BIN_KN = ind_min_energy_pho + (int)(log(1e3/masse)/dlnE);
  }
-@@ -267,10 +272,10 @@
+@@ -267,13 +290,13 @@
  
  
  int AM3Arrays::eV_to_lep_grid_index(double E_eV){
 -	return (int)(log(E_eV/mec2_erg/erg2eV)/dlnE);}
-+	return (int)(log(E_eV/(masse * 1e9))/dlnE);} // am3_mojo PDG: m_e c^2 [eV]
++	return grid_index(log(E_eV/(masse * 1e9))/dlnE);} // am3_mojo PDG: m_e c^2 [eV]
  
  int AM3Arrays::eV_to_photon_grid_index(double E_eV){
 -	return (int)(log(E_eV/mec2_erg/erg2eV)/dlnE + ind_min_energy_pho);}
-+	return (int)(log(E_eV/(masse * 1e9))/dlnE + ind_min_energy_pho);} // am3_mojo PDG
++	return grid_index(log(E_eV/(masse * 1e9))/dlnE + ind_min_energy_pho);} // am3_mojo PDG
  
  int AM3Arrays::eV_to_had_grid_index(double E_eV){
- 	return (int)(log(E_eV/1e9)/dlnE);}
+-	return (int)(log(E_eV/1e9)/dlnE);}
++	return grid_index(log(E_eV/1e9)/dlnE);}
+ 
+ int AM3Arrays::eV_to_neutrino_grid_index(double E_eV){
+-	return (int)(log(E_eV/1e9)/dlnE + ind_min_energy_nu);}
+\ No newline at end of file
++	return grid_index(log(E_eV/1e9)/dlnE + ind_min_energy_nu);}
+\ No newline at end of file
 diff -ruN a/src/BetheHeitler.cc b/src/BetheHeitler.cc
 --- a/src/BetheHeitler.cc	2026-10-03 23:00:00
 +++ b/src/BetheHeitler.cc	2026-10-03 23:00:00
@@ -124,6 +269,24 @@ diff -ruN a/src/BetheHeitler.cc b/src/BetheHeitler.cc
      for(int j=0; j<dat.nbins_had; j++)
      {
          double rj = 0.0;
+@@ -179,7 +179,7 @@
+ double BetheHeitler::bh_kernal_elec_gen(double Ee, double gp, double Eph)
+ // returns a EdN/dE/dt spectrum in the unit of per cm^3 per s
+ {
+-    double upper = 2.0*gp*Eph;
++    double upper = std::min(2.0*gp*Eph, 600.0); // am3_mojo fix: sigma_W ends at omega = 600. Above 2 gp Eph ~ 600, 5 steps over the whole range missed it.
+     double lower = (gp+Ee)*(gp+Ee)/(2.0*gp*Ee);
+ 
+     double diff=(upper-lower)/lower;
+@@ -327,7 +327,7 @@
+ 
+         double k1 = DX * ff(var0, var1, x);
+         double k2 = DX * ff(var0, var1, x+0.5*DX);
+-        double k4 = DX * ff(var0, var1, x+DX);
++        double k4 = DX * ff(var0, var1, i == N_BINS-1 ? upper : x+DX); // am3_mojo fix: the last point at the upper limit itself. (Summed over the steps, x + DX can round to just above omega = 600, where sigma_W ends.)
+         y +=  (1.0/6.0)*(k1+k4) + (2.0/3.0)*k2;
+         x += DX;
+     }
 @@ -350,7 +350,7 @@
      else if(x<25.0)
      {
@@ -142,13 +305,23 @@ diff -ruN a/src/HadronicSynchrotron.cc b/src/HadronicSynchrotron.cc
  { //Proton synchrotron;
 -    double b_crit = 4.41e13;
 +    double b_crit = 44140052309905.484; // am3_mojo PDG: m_e^2 c^3/(e hbar) [G]
-     double norm = (3.0 * 1.732 / mathpi) * sigmaT * c0 * b_gauss * b_crit / (8.0 * mathpi) * erg_GeV / mass;
+-    double norm = (3.0 * 1.732 / mathpi) * sigmaT * c0 * b_gauss * b_crit / (8.0 * mathpi) * erg_GeV / mass;
++    double norm = (3.0 * sqrt(3.0) / mathpi) * sigmaT * c0 * b_gauss * b_crit / (8.0 * mathpi) * erg_GeV / mass; // am3_mojo PDG: sqrt(3)
      double b_dimless = b_gauss/b_crit;
      // B_crit ~ m^2
+@@ -91,7 +91,7 @@
+ 
+     if(2*xbar < 1e-2)
+     {
+-        return norm * 1.80842 * pow(xbar, 0.33333) * pow(2, -0.6666667);
++        return norm * (pow(2.0, 1.0 / 3.0) * 2.678938534707747633 * 2.678938534707747633 / 5.0) * pow(xbar, 1.0 / 3.0) * pow(2, -2.0 / 3.0); // am3_mojo PDG: 2^(1/3) Gamma(1/3)^2 / 5, Gamma(1/3) = 2.678938534707747633..., 1/3 and 2/3
+     }
+     else if (2*xbar >= 1e-2 and 2*xbar < 1)
+     {
 diff -ruN a/src/Injection.cc b/src/Injection.cc
 --- a/src/Injection.cc	2026-10-03 23:00:00
 +++ b/src/Injection.cc	2026-10-03 23:00:00
-@@ -86,7 +86,7 @@
+@@ -86,35 +86,46 @@
      double pidxm1_high = ph_idx - 1;
  
      double integral = 0.;
@@ -157,6 +330,126 @@ diff -ruN a/src/Injection.cc b/src/Injection.cc
      double Gamma_mid = rp.powerlaw_injection_electrons_ebreak / mec2_eV;
      double Gamma_max = rp.powerlaw_injection_electrons_emax / mec2_eV;
  
++    // am3_mojo fix: the shape relative to its largest bin, from its
++    // logarithm. (The shape overflowed for a hard or steep spectrum, or
++    // the factor L_density / integral underflowed to 0.)
++    int i0 = max(imin, 1);
++    double lmax = 0.;
++    bool found = false;
+     for (int i = 0; i < dat.nbins_lep; i++)
+     {
+-        double log_cutoff = pow(dat.egrid_lep[i]/Gamma_max, exp_steep);
+-
+-        if(i<max(imin, 1)) 
++        if (i < i0)
+         {
+             inj_electron[i] = 0.;
++            continue;
+         }
+-        else if (i<=imid)
++        double p = i <= imid ? pidxm1_low : pidxm1_high;
++        inj_electron[i] = -p * log(dat.egrid_lep[i]/Gamma_mid)
++            - pow(dat.egrid_lep[i]/Gamma_max, exp_steep);
++        if (!found || inj_electron[i] > lmax)
+         {
+-            inj_electron[i] = (
+-                pow(dat.egrid_lep[i]/Gamma_mid, -pidxm1_low) * exp(-log_cutoff));
++            lmax = inj_electron[i];
++            found = true;
+         }
+-        else
++    }
++    if (found && !(std::isinf(lmax) && lmax < 0))
++        for (int i = i0; i < dat.nbins_lep; i++)
+         {
+-            inj_electron[i] = (
+-                pow(dat.egrid_lep[i]/Gamma_mid, -pidxm1_high) * exp(-log_cutoff));
++            inj_electron[i] = inj_electron[i] == lmax ? 1. : exp(inj_electron[i] - lmax);
++            integral += dat.dlnE * dat.egrid_lep[i] * inj_electron[i];
+         }
+-        integral += dat.dlnE * dat.egrid_lep[i] * inj_electron[i];
+-    }
+     // lum/volume: [erg/(s cm^3)] -> conversion factor: L^3 * T / E
+     double L_density = lum / volume * erg_GeV / masse / Rate_SSC_CGS;
+     
+-    for (int i = 0; i < dat.nbins_lep; i++)
+-        inj_electron[i] *= L_density / integral;
++    if (integral > 0) // am3_mojo fix: no injection where the spectrum misses the grid, not 0/0 = NaN
++        for (int i = 0; i < dat.nbins_lep; i++)
++            inj_electron[i] *= L_density / integral;
++    else // am3_mojo fix: the logarithms
++        std::fill(inj_electron.begin(), inj_electron.end(), 0.);
+ 
+ }
+ 
+@@ -141,31 +152,42 @@
+     double Emid_GeV = rp.powerlaw_injection_protons_ebreak / 1e9;
+     double Emax_GeV = rp.powerlaw_injection_protons_emax / 1e9;
+ 
++    // am3_mojo fix: the shape relative to its largest bin, from its
++    // logarithm. (The shape overflowed for a hard or steep spectrum, or
++    // the factor L_density / integral underflowed to 0.)
++    int i0 = max(imin, 1);
++    double lmax = 0.;
++    bool found = false;
+     for (int i = 0; i < dat.nbins_had; i++)
+     {
+-        double log_cutoff = pow(dat.egrid_had[i]/Emax_GeV, exp_steep);
+-
+-        if(i<max(imin, 1)) 
++        if (i < i0)
+         {
+             inj_proton[i] = 0.;
++            continue;
+         }
+-        else if (i<=imid)
++        double p = i <= imid ? pidxm1_low : pidxm1_high;
++        inj_proton[i] = -p * log(dat.egrid_had[i]/Emid_GeV)
++            - pow(dat.egrid_had[i]/Emax_GeV, exp_steep);
++        if (!found || inj_proton[i] > lmax)
+         {
+-            inj_proton[i] = (
+-                pow(dat.egrid_had[i]/Emid_GeV, -pidxm1_low) * exp(-log_cutoff));
++            lmax = inj_proton[i];
++            found = true;
+         }
+-        else
++    }
++    if (found && !(std::isinf(lmax) && lmax < 0))
++        for (int i = i0; i < dat.nbins_had; i++)
+         {
+-            inj_proton[i] = (
+-                pow(dat.egrid_had[i]/Emid_GeV, -pidxm1_high) * exp(-log_cutoff));
++            inj_proton[i] = inj_proton[i] == lmax ? 1. : exp(inj_proton[i] - lmax);
++            integral += dat.dlnE * dat.egrid_had[i] * inj_proton[i];
+         }
+-        integral += dat.dlnE * dat.egrid_had[i] * inj_proton[i];
+-    }
+     // lum/volume: [erg/(s cm^3)] -> conversion factor: erg -> GeV
+     double L_density = lum / volume * erg_GeV;
+     
+-    for (int i = 0; i < dat.nbins_had; i++)
+-        inj_proton[i] *= L_density / integral;
++    if (integral > 0) // am3_mojo fix: as for the electrons
++        for (int i = 0; i < dat.nbins_had; i++)
++            inj_proton[i] *= L_density / integral;
++    else // am3_mojo fix: the logarithms
++        std::fill(inj_proton.begin(), inj_proton.end(), 0.);
+ 
+ }
+ 
+diff -ruN a/src/InverseCompton.cc b/src/InverseCompton.cc
+--- a/src/InverseCompton.cc	2026-10-03 23:00:00
++++ b/src/InverseCompton.cc	2026-10-03 23:00:00
+@@ -353,7 +353,7 @@
+ 
+ double Comp::s_tot_th(double L)
+ { //L=2ge
+-    return 1.0 - 1.333333 * L;
++    return 1.0 - 4.0 / 3.0 * L; // am3_mojo PDG: 4/3
+ }
+ 
+ double Comp::s_tot_full(double L)
 diff -ruN a/src/MuonDecay.cc b/src/MuonDecay.cc
 --- a/src/MuonDecay.cc	2026-10-03 23:00:00
 +++ b/src/MuonDecay.cc	2026-10-03 23:00:00
@@ -172,19 +465,20 @@ diff -ruN a/src/MuonDecay.cc b/src/MuonDecay.cc
      // charged pion to muon + neutrino
      KER_FNU1p = Eigen::MatrixXd::Zero(dat.nbins_nu, dat.nbins_had);
      KER_FNU1m = Eigen::MatrixXd::Zero(dat.nbins_nu, dat.nbins_had);
-@@ -67,7 +68,10 @@
+@@ -67,7 +68,11 @@
          for (int j = 0; j < dat.nbins_had; j++)
          {
              double r = dat.egrid_had_leptons[i] / dat.egrid_had[j];
 -            KER_FMU2E(i,j) = r * FMU2E(r);
-+            // am3_mojo fix: the e+- of a muon of helicity h have the spectrum of its nu_mu-type neutrino (V-A),
-+            // FNU1(x, h) for mu+ and FNU1(x, -h) for mu-, not FMU2E = 4/3 (1 - x^3) (that of h = +1) for both
++            // am3_mojo fix: the e+- of a muon of helicity h have the spectrum of its nu_mu-type neutrino
++            // (V-A). This spectrum is FNU1(x, h) for mu+ and FNU1(x, -h) for mu-. (AM3 used
++            // FMU2E = 4/3 (1 - x^3), the spectrum of h = +1, for both.)
 +            KER_FMU2Ep(i,j) = r * FNU1(r, +1.0);
 +            KER_FMU2Em(i,j) = r * FNU1(r, -1.0);
          }
      }
  }
-@@ -118,11 +122,12 @@
+@@ -118,11 +123,12 @@
      Eigen::ArrayXd tdec = Eigen::Map<Eigen::ArrayXd, Eigen::Unaligned>(
          dat.egrid_had.data(), dat.egrid_had.size()) / massmu*mu_decay_s;
  
@@ -204,6 +498,15 @@ diff -ruN a/src/MuonDecay.cc b/src/MuonDecay.cc
 diff -ruN a/src/PairProduction.cc b/src/PairProduction.cc
 --- a/src/PairProduction.cc	2026-10-03 23:00:00
 +++ b/src/PairProduction.cc	2026-10-03 23:00:00
+@@ -125,7 +125,7 @@
+     double s1 = s - 1.0;
+     double s2 = s1 * sqrt(s1);
+     // 3.614286 = 253/70;
+-    return s2 * (1.333333 + 1.2 * s1 - 253./70. * s1 * s1);
++    return s2 * (4.0 / 3.0 + 1.2 * s1 - 253./70. * s1 * s1); // am3_mojo PDG: 4/3
+ 
+ } 
+ 
 @@ -135,7 +135,7 @@
      double v = log(w);
      double u = 1.0 - 1.0 / s;
@@ -213,7 +516,69 @@ diff -ruN a/src/PairProduction.cc b/src/PairProduction.cc
  
  } //3.289868 = pi*pi/3
  
-@@ -443,7 +443,7 @@
+@@ -144,7 +144,7 @@
+ 
+     double w = log(4.0 * s);
+ 
+-    return (2.0 * s + w) * (w - 2.0) + (w + 1.125) / s - 0.289868;
++    return (2.0 * s + w) * (w - 2.0) + (w + 1.125) / s - (mathpi * mathpi / 3.0 - 3.0); // am3_mojo PDG: pi
+ 
+ } //1.125 = 9/8 ; 0.289868 = pi*pi/3-3
+ 
+@@ -199,7 +199,10 @@
+ 
+     double r_alpha_phot = 0.0;
+ 
+-    for(int i=dat.ind_min_energy_pho; i<dat.nbins_pho; i++) {
++    // am3_mojo fix: the energy of all absorbed photons. (The sum from m_e c^2 on left the pairs
++    // without the energy of the softer partners. For photons of 0.1 to 10 MeV, that is 6 % of the
++    // absorbed energy.)
++    for(int i=0; i<dat.nbins_pho; i++) {
+         r_alpha_phot += dat.egrid_pho[i]*afpairG(i) * dat.photons[i];}
+ 
+     double r_epspairl_raw = 0.0;
+@@ -259,6 +262,12 @@
+ 
+     if (x <= 0.5)
+     {
++
++        // am3_mojo fix: x below xL(gm), the threshold of the pairs. The first bin of KER_outerPP can lie there.
++        // (AM3 took the logarithm of a negative number there. The conversion of the NaN to an int is
++        // undefined: it gives 0 on arm64.)
++        if (Fpp_m(x, gm) <= 0.0)
++            return 0;
+ 
+         int q = (int)((log(gm - x + 0.5 * (Fpp_m(x, gm) + 1.0 / Fpp_m(x, gm))) / dat.dlnE + dat.ind_min_energy_pho + 1));
+ 
+@@ -276,7 +285,7 @@
+     else if (x > 1.0 && gm < gmB(x))
+     {
+ 
+-        int q = (int)((log(gm - x + 0.5 * (Fpp_p(x, gm) + 1.0 / Fpp_p(x, gm))) / dat.dlnE + dat.ind_min_energy_pho + 1));
++        int q = (int)((log(xL(gm) + 0.5 / Fpp_p(x, gm)) / dat.dlnE + dat.ind_min_energy_pho + 1)); // am3_mojo fix: gm - x + (f + 1/f) / 2 as xL(gm) + 1 / (2 f), the same. At large gm, the difference cancels (to 0 or below).
+ 
+         return min(max(q, 0), dat.nbins_pho);
+     }
+@@ -294,13 +303,13 @@
+     return min(max(q, 0), dat.nbins_pho - 1);
+ }
+ 
+-double Pair::xL(double gm) { return 0.5 * gm * (1.0 - beta(gm, rp.REG)); }
++double Pair::xL(double gm) { return 0.5 / gm / (1.0 + beta(gm, rp.REG)); } // am3_mojo fix: gm (1 - beta) as 1 / (gm (1 + beta)), the same. At large gm, 1 - beta cancels (to 0 from gm ~ 1e8).
+ 
+ double Pair::gmA(double x) { return (4.0 * x * x + 1.0) * 0.25 / x; }
+ 
+ double Pair::gmB(double x) { return x - (x - 1.0) / (2.0 * x - 1.0); }
+ 
+-double Pair::Fpp_m(double x, double gp) { return 2.0 * x - gp * (1.0 - beta(gp, rp.REG)); }
++double Pair::Fpp_m(double x, double gp) { return 2.0 * x - 1.0 / gp / (1.0 + beta(gp, rp.REG)); } // am3_mojo fix: gp (1 - beta) as in xL
+ 
+ double Pair::Fpp_p(double x, double gp) { return 2.0 * x - gp * (1.0 + beta(gp, rp.REG)); }
+ 
+@@ -441,9 +450,9 @@
+         return -(xcm * xcm + h / (xcm * xcm) +
+-                 0.886294 - 0.5 * (gm * (x1 - x) + x * x) / y2 + log(h)) *
++                 (2.0 * log(2.0) - 0.5) - 0.5 * (gm * (x1 - x) + x * x) / y2 + log(h)) * // am3_mojo PDG: 2 ln 2 - 1/2
                 q / sqrt(h);
  
      else if (h < -0.999) //see "SSC_pair.nb" for addional information. ; h+1.0<0.001
@@ -222,10 +587,65 @@ diff -ruN a/src/PairProduction.cc b/src/PairProduction.cc
  
      else
      {
+@@ -463,7 +472,7 @@
+     }
+ 
+     else
+-        return -(1.0 - (0.693147 + 0.5 * log(h)) / h) / sqrt(h);
++        return -(1.0 - (log(2.0) + 0.5 * log(h)) / h) / sqrt(h); // am3_mojo PDG: ln 2
+ }
+ 
+ double Pair::A0(double h)
+@@ -475,7 +484,7 @@
+         return A0V[i];
+     }
+     else
+-        return (0.693147 + 0.5 * log(h)) / sqrt(h);
++        return (log(2.0) + 0.5 * log(h)) / sqrt(h); // am3_mojo PDG: ln 2
+ }
+ 
+ double Pair::A0f(double h)
+@@ -496,7 +505,7 @@
+ { //a prescription to numerical cancellations.//0.107143=3/28;
+ 
+     if (h >= -0.1 && h <= 0.1)
+-        return -0.666667 + (0.2 - (0.107143 - 0.0694444 * h) * h) * h;
++        return -2.0 / 3.0 + (0.2 - (3.0 / 28.0 - 5.0 / 72.0 * h) * h) * h; // am3_mojo PDG: 2/3, 3/28 and 5/72
+ 
+     else
+         return (A0f(h) - sqrt(1.0 + h + 1.0e-8)) / h;
 diff -ruN a/src/PhotoPion.cc b/src/PhotoPion.cc
 --- a/src/PhotoPion.cc	2026-10-03 23:00:00
 +++ b/src/PhotoPion.cc	2026-10-03 23:00:00
-@@ -260,6 +260,11 @@
+@@ -159,6 +159,9 @@
+     int mula = 0;
+     int mulb = 14; // default total channels:14
+     double co = c0 * dat.dlnE * mubarn;
++    // am3_mojo fix: the nucleon and photon losses take the target photons of the
++    // products. (The nucleons that interacted with the photons above vanished.)
++    int j_loss = radfast ? std::min(radfast_photon_in_max, dat.nbins_pho) : dat.nbins_pho;
+     
+     if(cool)
+     {
+@@ -167,7 +170,7 @@
+         for (int i = 0; i < dat.nbins_had; i++)
+         { // the sink of proton and neutron
+ 
+-            for (int j = 0; j < dat.nbins_pho; j++)
++            for (int j = 0; j < j_loss; j++) // am3_mojo fix
+             { // j = xphoton index in radiation axis
+ 
+                 double yg = (dat.egrid_had[i] / massp) * dat.egrid_had_photons[j];
+@@ -211,7 +214,7 @@
+     {
+         if(verbose)
+             std::cout<<"computing p-gamma photon loss kernel" <<std::endl;
+-        for (int j = 0; j < dat.nbins_pho; j++)
++        for (int j = 0; j < j_loss; j++) // am3_mojo fix
+         { // for the sink of radiation
+ 
+             for (int i = 0; i < dat.nbins_had; i++)
+@@ -260,6 +263,11 @@
  	voM_KER_PhotoPion_dir_PiGen = resized_dir;
  	std::vector<Eigen::MatrixXf> resized_multi(dat.nbins_had, Eigen::MatrixXf::Zero(14, photon_in_dim));
  	voM_KER_PhotoPion_multi_PiGen = resized_multi;
@@ -251,13 +671,14 @@ diff -ruN a/src/PionDecay.cc b/src/PionDecay.cc
      
      QPI2GGen = Eigen::VectorXd::Zero(dat.nbins_pho);
  }
-@@ -49,13 +49,22 @@
+@@ -49,13 +49,23 @@
      if(verbose)
          std::cout<<"computing charged pion decay to muon + neutrino kernels"<<std::endl;
      // charged pion to muon + neutrino
 +    // am3_mojo fix: the muons of a decay whose energy fraction lies in the bin of grid point i (within a factor
-+    // exp(dlnE/2) of egrid_had[i] / egrid_had[j]), per dlnE: integrals of FMu1 and FMu2 over the bin, so that every
-+    // decay makes one muon (the values at the grid points, without x = 1, made 0.876 muons per decay)
++    // exp(dlnE/2) of egrid_had[i] / egrid_had[j]), per dlnE. The kernels are the integrals of FMu1 and FMu2 over
++    // the bin, so that every decay makes one muon. (The values at the grid points, without x = 1, made 0.876
++    // muons per decay.)
 +    double rpi = massmu * massmu / masspip / masspip;
 +    auto PMu1 = [rpi](double x) { return rpi * (log(x) - x) / (1.0 - rpi) / (1.0 - rpi); };
 +    auto PMu2 = [rpi](double x) { return (x - rpi * log(x)) / (1.0 - rpi) / (1.0 - rpi); };
@@ -276,19 +697,42 @@ diff -ruN a/src/PionDecay.cc b/src/PionDecay.cc
          }
      }
  
-@@ -76,7 +85,7 @@
+@@ -75,9 +85,13 @@
+     {
          for (int j = 0; j < dat.nbins_had; j++)
          {
-             double r = dat.egrid_had_photons[i] * 2.0 / (
+-            double r = dat.egrid_had_photons[i] * 2.0 / (
 -                dat.egrid_had[j] + dat.egrid_had[j + 1]);
-+                dat.egrid_had[j] + (j + 1 < dat.nbins_had ? dat.egrid_had[j + 1] : exp((j + 1) * dat.dlnE))); // OOB fix
-             KER_FPi2G(i,j) = r * FPi2G(r);
+-            KER_FPi2G(i,j) = r * FPi2G(r);
++            // am3_mojo fix: the photons of a decay whose energy fraction lies in the bin of grid point i, as for
++            // the muons above. The spectrum is 2 dx on 0 < x < 1, so that every decay makes two photons, with
++            // 1.001 of the pion's energy. (AM3 used 2 x at x = 2 E_gamma / (E_j + E_j+1), with the pion between
++            // its grid point and the next. This gave the photons 1.048 times the pion's energy, and it read past
++            // the grid for the last bin.)
++            double r = dat.egrid_had_photons[i] / dat.egrid_had[j];
++            KER_FPi2G(i,j) = 2.0 * (std::min(r * half, 1.0) - std::min(r / half, 1.0)) / dat.dlnE;
          }
      }
+ }
 diff -ruN a/src/ProtonProton.cc b/src/ProtonProton.cc
 --- a/src/ProtonProton.cc	2026-10-03 23:00:00
 +++ b/src/ProtonProton.cc	2026-10-03 23:00:00
-@@ -79,6 +79,7 @@
+@@ -23,10 +23,12 @@
+ 
+   	int count = 1; 
+ 
+-  	while(arr[count] < target){
++  	// am3_mojo fix: the last index with arr <= target (AM3 returned the first
++  	// with arr >= target, the point above)
++  	while(arr[count] <= target){
+   		count ++; 
+   	}
+-  	return count;
++  	return count - 1;
+ }
+ 
+ // below: array is defined on old grid, n is length of old grid
+@@ -79,6 +81,7 @@
  
  void ProtonProton::reinitialize_empty_kernels()
  {
@@ -296,19 +740,242 @@ diff -ruN a/src/ProtonProton.cc b/src/ProtonProton.cc
  	sigma_inel_pipm = Eigen::VectorXd::Zero(dat.nbins_had);
  	sigma_inel_pi0 = Eigen::VectorXd::Zero(dat.nbins_had);
  	sigma_inel_pipm_shifted = Eigen::VectorXd::Zero(dat.nbins_had);
-@@ -256,7 +257,7 @@
+@@ -238,7 +241,10 @@
+         std::cout<<"computing proton proton multiplicites"<<std::endl;
+ 	for (int j = 0; j < dat.nbins_had; j++) // loop over pion array
+ 	{
+-		if(dat.egrid_had[j] >= E_trans)
++		// am3_mojo fix: a transition energy within 1e-9 of a grid point's energy is that point's.
++		// (For a third of the points, the setter's value, times 1e-9, comes out an ulp above the
++		// point. This put the point below the transition.)
++		if(dat.egrid_had[j] >= E_trans * (1.0 - 1e-9))
+ 		{
+ 			double Ekin = dat.egrid_had[j] - massp; 
+ 			// integrate with trapeziodal rule
+@@ -256,7 +262,7 @@
      if(verbose)
          std::cout<<"computing proton proton delta-approx. kernels"<<std::endl;
  	int idx_etrans;
 -	idx_etrans = getIndexBelow(dat.egrid_had, dat.nbins_had, E_trans)+1;
-+	idx_etrans = std::min(getIndexBelow(dat.egrid_had, dat.nbins_had, E_trans)+1, dat.nbins_had-1); // am3_mojo fix
++	idx_etrans = std::min(getIndexBelow(dat.egrid_had, dat.nbins_had, E_trans * (1.0 + 1e-9))+1, dat.nbins_had-1); // am3_mojo fix
  	K_pi = kappa_prot_pi0[idx_etrans];
  	// std::cout << "pion multiplicity: " << K_pi << std::endl;
  	//loop over proton array
+@@ -264,7 +270,7 @@
+ 
+ 	for (int j = 0; j < dat.nbins_had; j++)
+ 	{
+-		if(dat.egrid_had[j] < E_trans){
++		if(dat.egrid_had[j] < E_trans * (1.0 - 1e-9)){ // am3_mojo fix (as above)
+ 			kappa_prot_pipm(j) = K_pi; 
+ 			kappa_prot_pi0(j) = K_pi; 
+ 		}
+@@ -345,7 +351,7 @@
+     if(verbose)
+             std::cout<<"computing proton-proton pion-generation term"<<std::endl;
+ 	// int j_trans = (int)(log(E_trans)/dat.dlnE); // proton energy
+-	int i_trans = (int)(log(E_trans*K_pi)/dat.dlnE); // corresponding pion energy
++	int i_trans = E_trans*K_pi > 1.0 ? std::min((int)(log(E_trans*K_pi)/dat.dlnE), dat.nbins_had) : 0; // corresponding pion energy (OOB fix: E_trans and K_pi can come from an init_kernels on a larger grid. am3_mojo fix: none below the first bin. E_trans K_pi <= 1 GeV started the loop at a negative bin, and K_pi = 0 at (int)(-inf).)
+ 
+ 	// loop over pion array
+ 	for (int i = 0; i < dat.nbins_had; i++){
+@@ -613,7 +619,9 @@
+     double C = 3.55 * masspi0 / Y0;
+ 
+     double FF = 0.0;
+-    if (X >= 0.0 && X < 1.0 && Tp > 50.0) {  // GeV
++    // am3_mojo fix: from 100 GeV, as Amax_SIBYLL (Kafexhiu et al. 2014, Table V). (AM3 used this shape
++    // from 50 GeV, with Geant4's peak value up to 100 GeV.)
++    if (X >= 0.0 && X < 1.0 && Tp > 100.0) {  // GeV
+         FF = pow(1 - pow(X, 0.5), 3.6) / (1 + X / C);
+     } else {
+         FF = F_Geant4(Tp, Egamma);
+@@ -640,7 +648,7 @@
+     double C = 3.55 * masspi0 / Y0;
+ 
+     double FF = 0.0;
+-    if (X >= 0.0 && X < 1.0 && Tp > 50.0) {  // GeV
++    if (X >= 0.0 && X < 1.0 && Tp > 100.0) {  // GeV (am3_mojo fix: from 100 GeV, as F_SIBYLL)
+         FF = pow(1 - pow(X, 0.5), 4.5) / (1 + X / C);
+     } else {
+         FF = F_Geant4(Tp, Egamma);
 diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
 --- a/src/SimulationManager.cc	2026-10-03 23:00:00
 +++ b/src/SimulationManager.cc	2026-10-03 23:00:00
-@@ -1347,6 +1347,16 @@
+@@ -291,15 +291,16 @@
+ 		optimize_compton_target_emax);
+ 	if(process_electron_compton)
+ 		ph.oComp.initialize_kernels(
+-			process_electron_compton_emission, process_compton_photon_energy_loss,
++			true, true, // am3_mojo fix: both kernels, whatever the switches
+ 			true, optimize_compton_emission_grid,
+ 			optimize_compton_emission_emin, optimize_compton_target_grid,
+ 			optimize_compton_target_emax);
++	comp_built = process_electron_compton; // am3_mojo fix: the e+- cool by inverse Compton only with these kernels
+ 	// pair production
+ 	ph.oPair.reinitialize_empty_kernels(optimize_annihilation_pair_emission);
+ 	if(process_annihilation)
+ 		ph.oPair.initialize_kernels(
+-			process_annihilation_cooling, process_annihilation_emission, 
++			true, true, // am3_mojo fix: both kernels, whatever the switches (the pairs take their number from the photon loss rates)
+ 			optimize_annihilation_pair_emission);
+ 
+ 	if(process_hadronic)
+@@ -308,10 +309,8 @@
+ 		ph.oSynP.reinitialize_empty_kernels();
+ 		// proton/pion/muon IC
+ 		ph.oHadIC.reinitialize_empty_kernels(1, 1, 1);
+ 		ph.oHadIC.initialize_kernels(
+-			(process_proton_compton && process_proton_compton_emission), 
+-			(process_pion_compton && process_pion_compton_emission),
+-			(process_muon_compton && process_muon_compton_emission));
++			true, true, true); // am3_mojo fix: the step tables, whatever the emission switches (an emission switched on later had none)
+ 		// Bethe-Heitler kernels
+ 		ph.oBH.reinitialize_empty_kernels(
+ 			true, optimize_bethe_heitler_outgoing_pairs_grid, 
+@@ -320,7 +319,7 @@
+ 		if(process_bethe_heitler)
+ 		{
+ 			ph.oBH.initialize_kernels(
+-				process_bethe_heitler_emission, process_bethe_heitler_cooling,
++				true, true, // am3_mojo fix: both kernels, whatever the switches
+ 				true, optimize_bethe_heitler_outgoing_pairs_grid,
+ 				optimize_bethe_heitler_incoming_protons_min,
+ 				optimize_bethe_heitler_target_photon_max);
+@@ -339,7 +338,7 @@
+ 				true, optimize_photopion_target_photon_grid,
+ 				optimize_photopion_target_photon_max);
+ 			ph.oPhotoPion.initialize_kernels(
+-				process_photopion_emission, process_photopion_cooling, process_photopion_photon_loss,
++				true, true, true, // am3_mojo fix: all kernels, whatever the switches (the nucleon re-injection takes the emission kernel)
+ 				true, optimize_photopion_target_photon_grid, 
+ 				optimize_photopion_target_photon_max
+ 			);
+@@ -385,6 +384,7 @@
+ 	dat.clear_all_particle_arrays();
+ 
+ 	step_counter=0;
++	last_step_merged = false; // am3_mojo fix
+ }
+ 
+ void SimulationManager::clear_am3()
+@@ -1027,11 +1027,73 @@
+ // Evolve one time step
+ // #########################################################################
+ 
++// am3_mojo fix: one of the arrays holds particles
++static bool any_nonzero(std::initializer_list<const std::vector<double>*> arrays)
++{
++	for (const std::vector<double> *a : arrays)
++		for (double v : *a)
++			if (v != 0.0) return true;
++	return false;
++}
++
+ void SimulationManager::evolve_step()
+ {
+     if(verbose)
+         std::cout<<"evolve for 1 step" << std::endl;
+ 
++	// am3_mojo fix: the decay sinks follow the decay switches, as the decay
++	// products do. (The solvers took the switches at init_kernels. A decay
++	// switched off after init_kernels kept removing the particles without
++	// products.)
++	for (SolverAlgorithm *s : {SA_Pip, SA_Pim, SA_Pip_pg, SA_Pim_pg, SA_Pip_pp, SA_Pim_pp})
++		s->process_decay = process_pion_decay;
++	for (SolverAlgorithm *s : {SA_MpL, SA_MpR, SA_MmL, SA_MmR, SA_MpL_pg, SA_MpR_pg,
++			SA_MmL_pg, SA_MmR_pg, SA_MpL_pp, SA_MpR_pp, SA_MmL_pp, SA_MmR_pp})
++		s->process_decay = process_muon_decay;
++	// am3_mojo fix: so do the synchrotron, inverse-Compton and quantum-synchrotron
++	// cooling. (A cooling switched off after init_kernels kept cooling the
++	// particles whose emission stopped.)
++	for (SolverAlgorithm *s : {SA_proton}) {
++		s->process_sy = process_proton_syn && process_proton_syn_cooling;
++		s->process_ic = process_proton_compton && process_proton_compton_cooling;
++		s->process_quantum_syn_cooling = process_quantum_syn_cooling; }
++	for (SolverAlgorithm *s : {SA_Pip, SA_Pim, SA_Pip_pg, SA_Pim_pg, SA_Pip_pp, SA_Pim_pp}) {
++		s->process_sy = process_pion_syn && process_pion_syn_cooling;
++		s->process_ic = process_pion_compton && process_pion_compton_cooling;
++		s->process_quantum_syn_cooling = process_quantum_syn_cooling; }
++	for (SolverAlgorithm *s : {SA_MpL, SA_MpR, SA_MmL, SA_MmR, SA_MpL_pg, SA_MpR_pg,
++			SA_MmL_pg, SA_MmR_pg, SA_MpL_pp, SA_MpR_pp, SA_MmL_pp, SA_MmR_pp}) {
++		s->process_sy = process_muon_syn && process_muon_syn_cooling;
++		s->process_ic = process_muon_compton && process_muon_compton_cooling;
++		s->process_quantum_syn_cooling = process_quantum_syn_cooling; }
++	for (SolverAlgorithm *s : {SA_e, SA_p, SA_ep, SA_epin, SA_eppair, SA_epbh, SA_eppg, SA_eppp}) {
++		s->process_sy = process_electron_syn && process_electron_syn_cooling;
++		s->process_ic = process_electron_compton && process_electron_compton_cooling && comp_built; // (with the kernels of init_kernels: no cooling without its emission)
++		s->process_quantum_syn_cooling = process_quantum_syn_cooling; }
++	// am3_mojo fix: the pion, muon and neutrino components of each origin are
++	// evolved while its pions are made. After its emission is switched off,
++	// they are evolved while any are left. (AM3 froze them, so they no longer
++	// added up to the totals.)
++	pchain_pg = process_parse_sed && process_hadronic && (
++		(process_photopion && process_photopion_emission) || any_nonzero({
++			&dat.pion_plus_pg, &dat.pion_minus_pg, &dat.muon_plus_left_pg,
++			&dat.muon_plus_right_pg, &dat.muon_minus_left_pg, &dat.muon_minus_right_pg,
++			&dat.neutrino_el_pg, &dat.neutrino_el_anti_pg, &dat.neutrino_mu_pg,
++			&dat.neutrino_mu_anti_pg}));
++	pchain_pp = process_parse_sed && process_hadronic && (
++		(process_pp && process_pp_emission) || any_nonzero({
++			&dat.pion_plus_pp, &dat.pion_minus_pp, &dat.muon_plus_left_pp,
++			&dat.muon_plus_right_pp, &dat.muon_minus_left_pp, &dat.muon_minus_right_pp,
++			&dat.neutrino_el_pp, &dat.neutrino_el_anti_pp, &dat.neutrino_mu_pp,
++			&dat.neutrino_mu_anti_pp}));
++	// am3_mojo fix: the e+- synchrotron kernel, quantum or classical as
++	// the switch is now. (Update_Mag_Field builds it with the switch of
++	// its call.)
++	if (process_quantum_syn != syn_qsyn) {
++		ph.oSyn.reinitialize_empty_kernels();
++		ph.oSyn.initialize_kernels(process_quantum_syn);
++		syn_qsyn = process_quantum_syn; }
++
+ 	if((estimate_max_energies)&&(step_counter>0)){
+ 		estimate_maximum_lepton_energy();
+ 		estimate_maximum_proton_energy();
+@@ -1144,6 +1206,8 @@
+ 	// Bethe-Heitler proton cooling
+ 	if (process_bethe_heitler && process_bethe_heitler_cooling)
+ 		ph.oBH.Calc_BH_Cool();
++	else // am3_mojo fix: zero while off, as the getters and the proton maximum-energy estimate read them (not the last step's)
++		ph.oBH.ABHHadP.setZero();
+ 
+ 	// p-gamma src+loss for protons&neutrons (same term, calculated in one loop)
+ 	if (process_photopion && process_photopion_cooling)
+@@ -1156,10 +1220,14 @@
+ 		// different kernel
+ 		ph.oPhotoPion.Calc_PhotoPion_ProtonNeutronLoss();	
+ 	}
++	else // am3_mojo fix: zero while off (as for Bethe-Heitler)
++		ph.oPhotoPion.afPG_PRO.setZero();
+ 	
+ 	// proton cooling from pp interactions
+ 	if (process_pp && process_pp_cooling)
+ 		ph.oProtonProton.Calc_PP_ProtonLoss();
++	else // am3_mojo fix: zero while off (as for Bethe-Heitler)
++		ph.oProtonProton.APP_PRO.setZero();
+ 
+ 	// Escape
+ 	// not needed - only updated when user changes timescale or fraction
+@@ -1307,7 +1375,7 @@
+ 
+ 
+ 	// p-gamma pion component
+-	if (process_parse_sed && process_photopion && process_photopion_emission)
++	if (pchain_pg) // am3_mojo fix: also while any are left
+ 	{
+ 		if(verbose)
+ 			cout << "Calc pg-pions" << endl;
+@@ -1323,7 +1391,7 @@
+ 			dat.pion_minus_pg);
+ 	}
+ 	// p-p pion component
+-	if (process_parse_sed && process_pp && process_pp_emission)
++	if (pchain_pp) // am3_mojo fix: also while any are left
+ 	{
+ 		if(verbose)
+ 			cout << "Calc pp-pions" << endl;
+@@ -1347,6 +1415,16 @@
  		cout << " Calculate muon coefficient" << endl;
  	// external muon injection in oInj
  
@@ -325,7 +992,25 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  	// pion decay
  	if (process_pion_decay)
  	{
-@@ -1415,8 +1425,9 @@
+@@ -1364,7 +1442,7 @@
+ 		
+ 		if(process_parse_sed)
+ 		{
+-			if(process_photopion && process_photopion_emission)
++			if(pchain_pg) // am3_mojo fix: also while any are left
+ 			{
+ 				// muons from pg produced pion decay
+ 				ph.oPionDec.Calc_PItoMU(dat.pion_plus_pg, dat.pion_minus_pg);
+@@ -1376,7 +1454,7 @@
+ 					qmupr_pg[i] = ph.oPionDec.MpRGen(i);
+ 				}
+ 			}
+-			if(process_pp && process_pp_emission)
++			if(pchain_pp) // am3_mojo fix: also while any are left
+ 			{
+ 				// muons from pp produced pion decay
+ 				ph.oPionDec.Calc_PItoMU(dat.pion_plus_pp, dat.pion_minus_pp);
+@@ -1415,8 +1493,9 @@
  				  process_expansion * ph.oExpansion.afExpHad());
  
  		qmuml[i] = ph.oInj.inj_muminusleft[i] + qmuml_tot_dec[i];
@@ -337,13 +1022,31 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  		qmupr[i] = ph.oInj.inj_muplusright[i] + qmupr_tot_dec[i];
  	}
  }
-@@ -1481,6 +1492,13 @@
+@@ -1442,7 +1521,7 @@
+ 
+ 
+ 	// p-gamma muon component
+-	if (process_parse_sed && process_photopion && process_photopion_emission)
++	if (pchain_pg) // am3_mojo fix: also while any are left
+ 	{
+ 		SA_MmL_pg->updateDeltaT(rp.dt);
+ 		dat.muon_minus_left_pg = SA_MmL_pg->evolve(
+@@ -1458,7 +1537,7 @@
+ 			rp.mag_field, dat.photons_on_had_grid, amu, Amu, qmupr_pg, dat.muon_plus_right_pg);
+ 	}
+ 	// p-p muon component
+-	if (process_parse_sed && process_pp && process_pp_emission)
++	if (pchain_pp) // am3_mojo fix: also while any are left
+ 	{
+ 		SA_MmL_pp->updateDeltaT(rp.dt);
+ 		dat.muon_minus_left_pp = SA_MmL_pp->evolve(
+@@ -1481,6 +1560,13 @@
  		cout << " Calculate neutrino coefficient" << endl;
  	// external neutrino injection in oInj
  
-+	// am3_mojo fix: the total decay sources are recomputed every step (with
-+	// a decay switched off they kept their last value, and with pion decay off
-+	// the muon-decay nu_mu were added to them every step)
++	// am3_mojo fix: the total decay sources are recomputed every step. (With
++	// a decay switched off, they kept their last value. With pion decay off,
++	// the muon-decay nu_mu were added to them every step.)
 +	for (int i = 0; i < dat.nbins_nu; i++)
 +	{
 +		qnue_tot_dec[i] = 0; qnuea_tot_dec[i] = 0; qnum_tot_dec[i] = 0; qnuma_tot_dec[i] = 0;
@@ -351,11 +1054,29 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  
  	// total neutrinos from pion decay
  	if (process_pion_decay)
-@@ -1590,10 +1608,11 @@
+@@ -1514,7 +1600,7 @@
+ 	// propagate components
+ 	if(process_parse_sed)
+ 	{
+-		if(process_photopion && process_photopion_emission)
++		if(pchain_pg) // am3_mojo fix: also while any are left
+ 		{
+ 			// neutrinos from p-gamma produced pion decay
+ 			if (process_pion_decay)
+@@ -1541,7 +1627,7 @@
+ 					process_pion_decay * ph.oPionDec.NUmAGen_pi(i));
+ 			}
+ 		}
+-		if(process_pp && process_pp_emission)
++		if(pchain_pp) // am3_mojo fix: also while any are left
+ 		{
+ 			// neutrinos from p-p produced pion decay
+ 			if (process_pion_decay)
+@@ -1590,10 +1676,11 @@
  		anu[i] = (process_escape * ph.oEscape.afescNU[i] +
  				  process_expansion * ph.oExpansion.afExpHad());
  				  
-+		// am3_mojo fix: each flavour takes its own external injection
++		// am3_mojo fix: each flavor takes its own external injection
  		qnue[i] = qnue_tot_dec[i] + ph.oInj.inj_nue[i];
 -		qnuea[i] = qnuea_tot_dec[i] + ph.oInj.inj_nue[i];
 -		qnum[i] = qnum_tot_dec[i] + ph.oInj.inj_nue[i];
@@ -366,18 +1087,85 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  	}
  }
  
-@@ -1723,7 +1742,9 @@
+@@ -1619,7 +1706,7 @@
+ 
+ 	
+ 	// p-gamma muon component
+-	if (process_parse_sed && process_photopion && process_photopion_emission)
++	if (pchain_pg) // am3_mojo fix: also while any are left
+ 	{
+ 		SA_nue_pg ->updateDeltaT(rp.dt);
+ 		dat.neutrino_el_pg = SA_nue_pg ->evolve(
+@@ -1636,7 +1723,7 @@
+ 	}
+ 
+ 	// p-p muon component
+-	if (process_parse_sed && process_pp && process_pp_emission)
++	if (pchain_pp) // am3_mojo fix: also while any are left
+ 	{
+ 		SA_nue_pp ->updateDeltaT(rp.dt);
+ 		dat.neutrino_el_pp = SA_nue_pp ->evolve(
+@@ -1696,7 +1783,7 @@
+ 			if (verbose)
+ 				std::cout << "computing muon decay to pairs terms for components" << std::endl;
+ 			// p-gamma component
+-			if(process_photopion && process_photopion_emission && process_pion_decay && process_muon_decay)
++			if(pchain_pg && process_muon_decay) // am3_mojo fix: the muon components decay with the muon decay switch, also after pion decay or the emission is switched off
+ 			{
+ 				ph.oMuonDec.Calc_MUtoE(
+ 					dat.muon_minus_left_pg, dat.muon_plus_left_pg,
+@@ -1709,7 +1796,7 @@
+ 				}
+ 			}
+ 			// p-p component
+-			if(process_pp && process_pp_emission && process_pion_decay && process_muon_decay)
++			if(pchain_pp && process_muon_decay) // am3_mojo fix: as for p-gamma
+ 			{
+ 				ph.oMuonDec.Calc_MUtoE(
+ 					dat.muon_minus_left_pp, dat.muon_plus_left_pp,
+@@ -1723,7 +1810,9 @@
  			}
  			
  		}
 -		else 
-+		// am3_mojo fix: the totals from all muons, also with the components (their
-+		// sum leaves out the muons of external injections and set densities, and
-+		// of injected pions)
++		// am3_mojo fix: the totals from all muons, also with the components. (The
++		// sum of the components leaves out the muons of external injections and
++		// set densities, and of injected pions.)
  		{
  			if (verbose)
  				std::cout << "computing muon decay to pairs terms total" << std::endl;
-@@ -1776,11 +1797,8 @@
+@@ -1742,6 +1831,12 @@
+ 			}
+ 		}
+ 	}
++	// am3_mojo fix: no muons decay, so the totals are zero, not the last step's
++	else
++	{
++		for (int i = 0; i < dat.nbins_lep; i++)
++			qe_tot_dec[i] = qp_tot_dec[i] = 0.0;
++	}
+ }
+ 
+ void SimulationManager::Pass_Coeff_Lep()
+@@ -1760,27 +1855,22 @@
+ 		else
+ 			qebh[i] = qpbh[i] = 0.0;
+ 		if (
+-			process_hadronic && process_photopion && process_photopion_emission &&
+-			process_pion_decay && process_muon_decay)
++			process_hadronic && pchain_pg && process_muon_decay) // am3_mojo fix: as in Calc_Coeff_Lep
+ 		{
+ 			// read out in Calc_Coeff_Lep()
+ 		}
+ 		else
+ 			qepg[i] = qppg[i] = 0.0;
+ 		if (
+-			process_hadronic && process_pp && process_pp_emission &&
+-			process_pion_decay && process_muon_decay)
++			process_hadronic && pchain_pp && process_muon_decay) // am3_mojo fix: as in Calc_Coeff_Lep
+ 		{
+ 			// cascade read out in Calc_Coeff_Lep()
+ 
  		}
  		else
  			qepp[i] = qppp[i] = 0.0;
@@ -391,7 +1179,124 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  
  	}
  
-@@ -2002,6 +2020,8 @@
+@@ -1825,10 +1915,23 @@
+ 		cout << " Calculate electrons/positrons" << endl;
+ 
++	last_step_merged = process_merge_positrons_into_electrons; // am3_mojo fix: for the e+- estimate of the next step
+ 	if (process_merge_positrons_into_electrons)
+ 	{
+ 		SA_ep->updateDeltaT(rp.dt);
+ 		dat.pairs = SA_ep->evolve(
+ 			rp.mag_field, dat.photons, ae, Ae, qep, dat.pairs);
++		// am3_mojo fix: the e- and e+ follow the merged pairs, in the ratio of
++		// each bin's e- and e+ before the step. Where there were none, the
++		// pairs are all e-. The steps after the merge is switched off then go
++		// on from these e- and e+. (The first of these steps summed the e- and
++		// e+ of the last step before the merge.)
++		for (int i = 0; i < dat.nbins_lep; i++)
++		{
++			double ne = dat.electrons[i], np = dat.positrons[i];
++			double fe = ne + np > 0.0 ? ne / (ne + np) : 1.0;
++			dat.electrons[i] = fe * dat.pairs[i];
++			dat.positrons[i] = (1.0 - fe) * dat.pairs[i];
++		}
+ 	}
+ 	else
+ 	{
+@@ -1852,27 +1955,30 @@
+ 		dat.pairs_in = SA_epin->evolve(
+ 			rp.mag_field, dat.photons, ae, Ae, qepin, dat.pairs_in);
+ 
+-		if (process_annihilation && process_annihilation_emission)
++		// am3_mojo fix: the components while they hold or get pairs, also after
++		// their process is switched off. (AM3 froze them, so they no longer
++		// added up.)
++		if (any_nonzero({&dat.pairs_pair, &qeppair}))
+ 		{
+ 			SA_eppair->updateDeltaT(rp.dt);
+ 			dat.pairs_pair = SA_eppair->evolve(
+ 				rp.mag_field, dat.photons, ae, Ae, qeppair, dat.pairs_pair);
+ 		}
+ 
+-		if (process_bethe_heitler && process_bethe_heitler_emission)
++		if (any_nonzero({&dat.pairs_bh, &qepbh})) // am3_mojo fix
+ 		{
+ 			SA_epbh->updateDeltaT(rp.dt);
+ 			dat.pairs_bh = SA_epbh->evolve(
+ 				rp.mag_field, dat.photons, ae, Ae, qepbh, dat.pairs_bh);
+ 		}
+ 
+-		if (process_muon_decay)
++		if (any_nonzero({&dat.pairs_pg, &qeppg})) // am3_mojo fix
+ 		{
+ 			SA_eppg->updateDeltaT(rp.dt);
+ 			dat.pairs_pg = SA_eppg->evolve(
+ 				rp.mag_field, dat.photons, ae, Ae, qeppg, dat.pairs_pg);
+ 		}
+-		if (process_pp && process_pp_emission && process_muon_decay)
++		if (any_nonzero({&dat.pairs_pp, &qeppp})) // am3_mojo fix
+ 		{
+ 			SA_eppp->updateDeltaT(rp.dt);
+ 			dat.pairs_pp = SA_eppp->evolve(
+@@ -1900,12 +2006,18 @@
+ 		ph.oSyn.Calc_SY_Phot_Emit(
+ 			V_epssy, V_LepEPs, !process_parse_sed);
+ 	}
++	// am3_mojo fix: not the last step's after a switch-off
++	else
++		for (auto &v : V_epssy)
++			for (double &x : v.get()) x = 0.0;
+ 	if (profile_timing) timing[22] = duration_cast<nanoseconds>(steady_clock::now()-tstart).count();
+ 	
+ 	
+ 	if (profile_timing) tstart = steady_clock::now();
+ 	// electron syn.-self-absorption
+-	if (process_ssa)
++	if (process_electron_syn && process_ssa) // am3_mojo fix: the gate of Pass_Coeff_Phot, and zero while off (the getter reads the rates)
+ 		ph.oSyn.Calc_SY_Phot_Sink();
++	else
++		std::fill(ph.oSyn.afsyG.begin(), ph.oSyn.afsyG.end(), 0.);
+ 	if (profile_timing) timing[23] = duration_cast<nanoseconds>(steady_clock::now()-tstart).count();
+ 
+@@ -1920,6 +2032,10 @@
+ 			optimize_compton_target_emax, optimize_compton_emission_emin, 
+ 			V_epsic, V_LepEPs, !process_parse_sed);
+ 	}
++	// am3_mojo fix: not the last step's after a switch-off
++	else
++		for (auto &v : V_epsic)
++			for (double &x : v.get()) x = 0.0;
+ 	if (profile_timing) timing[24] = duration_cast<nanoseconds>(steady_clock::now()-tstart).count();
+ 	
+ 	if (profile_timing) tstart = steady_clock::now();
+@@ -1926,12 +2042,16 @@
+ 	// photon loss term
+ 	if  (process_electron_compton && process_compton_photon_energy_loss)
+ 		ph.oComp.Calc_IC_Phot_Loss();
++	else // am3_mojo fix: zero while off, as the getter reads them (not the last step's)
++		ph.oComp.aficG.setZero();
+ 	if (profile_timing) timing[25] = duration_cast<nanoseconds>(steady_clock::now()-tstart).count();
+ 	
+ 
+ 	if (profile_timing) tstart = steady_clock::now();
+ 	// pair production loss term
+-	if (process_annihilation && process_annihilation_cooling)
++	if (process_annihilation && (process_annihilation_cooling || process_annihilation_emission)) // am3_mojo fix: the pair emission takes its number from them
+ 		ph.oPair.Calc_Pair_Phot();
++	else // am3_mojo fix: zero while off, so that the step after it is switched on again makes no pairs of rates before the switch-off
++		ph.oPair.afpairG.setZero();
+ 	if (profile_timing) timing[26] = duration_cast<nanoseconds>(steady_clock::now()-tstart).count();
+ 
+@@ -1943,6 +2063,8 @@
+ 		// p-gamma
+ 		if (process_photopion && process_photopion_photon_loss)
+ 			ph.oPhotoPion.Calc_PhotoPion_PhotonLoss();
++		else // am3_mojo fix: zero while off, as the getter reads them (not the last step's)
++			ph.oPhotoPion.afPG_Rad.setZero();
+ 		if (profile_timing) timing[27] = duration_cast<nanoseconds>(steady_clock::now()-tstart).count();
+ 
+ 		if (profile_timing) tstart = steady_clock::now();
+@@ -2002,6 +2124,8 @@
  			{
  				for (int i = 0; i < dat.nbins_pho; i++) qgma_pi0_pp[i] = 0.0;
  			}
@@ -400,7 +1305,7 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  
  			if (process_parse_sed)
  			{
-@@ -2027,17 +2047,17 @@
+@@ -2027,17 +2151,18 @@
  								i, ph.oPionDec.QPI2GGen, 0, dat.nbins_pho);
  					}
  				}
@@ -409,8 +1314,9 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  			}
 -			else
 +			// am3_mojo fix: the total from all pi0 (pg, pp and injected), also
-+			// with the components (their sum leaves out injected pi0), + the
-+			// direct pp photons (which parse_sed = 0 dropped)
++			// with the components, + the direct pp photons. (The sum of the
++			// components leaves out injected pi0. parse_sed = 0 dropped the
++			// direct pp photons.)
  			{
  				// total photos from p-gamma produced pi0 decay
  				ph.oPionDec.Calc_PItoG(qpi0);
@@ -422,17 +1328,59 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  			}
  		}
  		if (profile_timing) timing[34] = duration_cast<nanoseconds>(steady_clock::now()-tstart).count();
-@@ -2195,18 +2215,20 @@
+@@ -2097,6 +2222,11 @@
+ 	{
+ 		for (int i = 0; i < dat.nbins_pho; i++)
+ 			qgma_had[i] = agma_pg[i] = 0.0;
++		// am3_mojo fix: the photon components of hadronic origin too, which
++		// evolved with the sources of the last step with the hadronic processes
++		for (auto &v : V_eps_H)
++			for (double &x : v.get()) x = 0.0;
++		for (double &x : qgma_pi0) x = 0.0;
+ 	}
+ 
+ 	for(int i=0; i < dat.nbins_pho; i++) 
+@@ -2156,19 +2286,18 @@
+ 	
+ 	// electron SY
+ 	ph.oSyn.reinitialize_empty_kernels();
+-	if((process_electron_syn && process_electron_syn_emission) or (process_electron_syn && process_ssa))
+-		ph.oSyn.initialize_kernels(process_quantum_syn);
++	// am3_mojo fix: every synchrotron kernel, whatever the emission and SSA
++	// switches, so that one switched on later finds that of this field
++	ph.oSyn.initialize_kernels(process_quantum_syn);
++	syn_qsyn = process_quantum_syn;
+ 	
+ 	if(verbose)
+ 		cout << "for e+/-" << endl;
+ 
+ 	// Had Syn
+-	if(process_hadronic)
+-	{
++	{ // am3_mojo fix: as for the e+-
+ 		ph.oSynP.reinitialize_empty_kernels();
+-		ph.oSynP.initialize_kernels(
+-			(process_proton_syn && process_proton_syn_emission), (process_pion_syn && process_pion_syn_emission),
+-			(process_muon_syn && process_muon_syn_emission));
++		ph.oSynP.initialize_kernels(true, true, true);
+ 		
+ 		if(verbose)
+ 		{
+@@ -2195,18 +2324,23 @@
          std::cout<<"estimating maximum lepton energy" <<std::endl;
  	vector<double> total_loss(dat.nbins_lep, 0.0);
  	for (int i = 0; i< dat.nbins_lep; i ++){
 -		total_loss[i] = -(process_electron_syn && process_electron_syn_cooling)*SA_e->Asy[i] 
 -						-(process_electron_compton && process_electron_compton_cooling)*SA_e->Aic[i]
-+		// am3_mojo fix: the solver that evolves the e+- (SA_ep when merged)
-+		SolverAlgorithm *SA_lep = process_merge_positrons_into_electrons ? SA_ep : SA_e;
+-						-process_adiabatic_cooling*ph.oExpansion.AAdiLep();
++		// am3_mojo fix: the solver that evolved the e+- in the last step (SA_ep
++		// when merged). The merge switch picks one not evolved in the first
++		// step after it changes.
++		SolverAlgorithm *SA_lep = last_step_merged ? SA_ep : SA_e;
 +		total_loss[i] = -(process_electron_syn && process_electron_syn_cooling)*SA_lep->Asy[i] 
 +						-(process_electron_compton && process_electron_compton_cooling)*SA_lep->Aic[i]
- 						-process_adiabatic_cooling*ph.oExpansion.AAdiLep();
++						-process_adiabatic_cooling*ph.oExpansion.AAdiLep()
++						-ph.oExtraCool.AExtraCoolE[i]; // am3_mojo fix: the extra cooling, which the e+- cooling has too
  	}
  
  	int imax = 0; 
@@ -447,7 +1395,14 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
  }
  
  // Same as for leptons. Using p gamma, bethe-heitler, synchrotron and adiabatic cooling
-@@ -2233,11 +2255,11 @@
+@@ -2228,16 +2362,17 @@
+ 						-process_adiabatic_cooling * ph.oExpansion.AAdiHad()
+ 						+(process_photopion && process_photopion_cooling) * ph.oPhotoPion.afPG_PRO[i]
+ 						-(process_pp && process_pp_cooling) * ph.oProtonProton.APP_PRO[i]
+-						-(process_bethe_heitler && process_bethe_heitler_cooling) * ph.oBH.ABHHadP[i];
++						-(process_bethe_heitler && process_bethe_heitler_cooling) * ph.oBH.ABHHadP[i]
++						-ph.oExtraCool.AExtraCoolPRO[i]; // am3_mojo fix: the extra cooling, which the proton cooling has too
+ 	}
  
  	int imax = 0; 
  	// Find maximum energy by comparing losses and acceleration
@@ -464,13 +1419,14 @@ diff -ruN a/src/SimulationManager.cc b/src/SimulationManager.cc
 diff -ruN a/src/Solver.cc b/src/Solver.cc
 --- a/src/Solver.cc	2026-10-03 23:00:00
 +++ b/src/Solver.cc	2026-10-03 23:00:00
-@@ -1,4 +1,5 @@
+@@ -1,4 +1,6 @@
  #include "AM3/Solver.h"
 +#include "AM3/consts.h" // am3_mojo PDG: the constants below
++#include "AM3/math.h" // am3_mojo fix: polylog, the dilogarithm of Fic_1, Fic_2
  
  #include <chrono>
  using std::chrono::steady_clock;
-@@ -38,7 +39,7 @@
+@@ -38,7 +40,7 @@
  	ker_status = 0;
  
  	// decay rate (always const)
@@ -479,20 +1435,36 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	const double mass = MASS_R * mass_e; // in GeV
  	for(int i=0; i<N_BINS; i++)
  	{
-@@ -90,8 +91,10 @@
+@@ -80,6 +82,14 @@
+ 		(process_ic and sum_nphot > 1e-100 // IC cooling
+ 		 ))
+ 		add_syn_ic(A_cool, b_gauss, n_phot);
++	else
++	{
++		// am3_mojo fix: no cooling in this step, so the rates that the getters
++		// and the maximum-energy estimates read are zero. (They kept the
++		// values of the last step with cooling.)
++		for (int i = 0; i < N_BINS; i++)
++			Asy[i] = Aic[i] = 0.0;
++	}
+ 	
+ 	// add decay
+ 	if (process_decay)
+@@ -90,8 +100,11 @@
  			a_esc[i] += alpha_decay[i];
  	}
  
 -	a_esc[0] = a_esc[N_BINS - 1] = 0.0;
 -	A_cool[0] = A_cool[N_BINS - 1] = 0.0;
-+	// am3_mojo fix: the top bin keeps its rates (zero there, the semi-analytic
-+	// regimes evolved the highest evolved bin as if it did not cool)
++	// am3_mojo fix: the top bin keeps its rates. (With zero rates there, the
++	// semi-analytic regimes evolved the highest evolved bin as if it did not
++	// cool.)
 +	a_esc[0] = 0.0;
 +	A_cool[0] = 0.0;
  
  	// check if solver needs to be evolved
  	double sum_qinj = 0;
-@@ -170,15 +173,16 @@
+@@ -170,15 +183,16 @@
  	if (process_ic and ker_status == 0)
  		compute_ic_ker();
  
@@ -514,7 +1486,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	double k_synch = (4.0 / 3.0) * c_light * sigma_t / MASS_R / MASS_R / MASS_R * ub_Edimless;
  
  	for (int i = 0; i < N_BINS; i++)
-@@ -188,14 +192,14 @@
+@@ -188,14 +202,14 @@
  
  		if (process_quantum_syn_cooling)
  		{
@@ -531,7 +1503,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				Aic[i] += - ker_ic[i][j] * n_phot[j] * DELTA_X; // Aic<0
  		}
  		A_cool[i] += Asy[i] + Aic[i];
-@@ -207,13 +211,13 @@
+@@ -207,13 +221,13 @@
  	if (verbose)
  		cout << "calc ic kernel" << endl;
  
@@ -548,7 +1520,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  
  	const double coeff = 3.0 / 16.0 * c_light * sigma_t * mass_e * mass_e;
  
-@@ -235,7 +239,7 @@
+@@ -235,7 +249,7 @@
  
  double SolverAlgorithm::Fic(double gamma, double Eph_GeV)
  {
@@ -557,28 +1529,32 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	double gamma_bar = gamma + sqrt(gamma * gamma - 1.0 + 1.0e-10);
  	double za = Eph_GeV / mass_mu * gamma_bar;
  	double zb = Eph_GeV / mass_mu / gamma_bar;
-@@ -247,12 +251,18 @@
+@@ -247,12 +261,22 @@
  
  double SolverAlgorithm::Fic_1(double z)
  {
 -	return z < 0.1 ? 8.0 / 9.0 * z * z * z - 14.0 / 5.0 * z * z * z * z + 196.0 / 25.0 * z * z * z * z * z : (z + 6.0 + 3.0 / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 24.0 * z * z + 18.0 * z + 4.0) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + 2.0 * polylog(-2.0 * z);
-+	// am3_mojo fix: Jones' Taylor series to z^10 (his Table I); three terms are 2.4 % off at z = 0.1
++	// am3_mojo fix: Jones' Taylor series to z^10 (his Table I): three terms are 2.4 % off at z = 0.1
 +	if (z < 0.1)
 +		return z * z * z * (8.0 / 9.0 + z * (-14.0 / 5.0 + z * (196.0 / 25.0 + z * (-6464.0 / 315.0 + z * (7520.0 / 147.0 + z * (-2584.0 / 21.0 + z * (116704.0 / 405.0 + z * (-1636352.0 / 2475.0))))))));
-+	return (z + 6.0 + 3.0 / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 24.0 * z * z + 18.0 * z + 4.0) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + 2.0 * polylog(-2.0 * z);
++	// am3_mojo fix: math.cc's dilogarithm, to rounding. (For -20 < -2z < -0.1, the member polylog
++	// takes 20 RK4 steps from Li2(-0.1). This puts f1 up to 4.6e-5 off below z = 10, where the
++	// member polylog jumps to an asymptotic form.)
++	return (z + 6.0 + 3.0 / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 24.0 * z * z + 18.0 * z + 4.0) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + 2.0 * ::polylog(-2.0 * z);
  }
  
  double SolverAlgorithm::Fic_2(double z)
  {
 -	return z < 0.1 ? 4.0 * z * z / 3.0 - 128.0 * z * z * z / 45.0 + 7.0 * z * z * z * z : (z + 31.0 / 6.0 + 5.0 / z + 3.0 / 2.0 / z / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 28.0 * z * z + 103.0 * z / 3.0 + 17.0 + 3.0 / z) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + polylog(-2.0 * z);
-+	// am3_mojo fix: Jones' Taylor series to z^10 (his Table I); three terms are 1.2 % off at z = 0.1
++	// am3_mojo fix: Jones' Taylor series to z^10 (his Table I): three terms are 1.2 % off at z = 0.1
 +	if (z < 0.1)
 +		return z * z * (4.0 / 3.0 + z * (-128.0 / 45.0 + z * (7.0 + z * (-8812.0 / 525.0 + z * (4112.0 / 105.0 + z * (-4384.0 / 49.0 + z * (63356.0 / 315.0 + z * (-397792.0 / 891.0 + z * (2427904.0 / 2475.0)))))))));
-+	return (z + 31.0 / 6.0 + 5.0 / z + 3.0 / 2.0 / z / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 28.0 * z * z + 103.0 * z / 3.0 + 17.0 + 3.0 / z) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + polylog(-2.0 * z);
++	// am3_mojo fix: math.cc's dilogarithm, as in Fic_1 (f2 up to 1.9e-5 off below z = 10)
++	return (z + 31.0 / 6.0 + 5.0 / z + 3.0 / 2.0 / z / z) * log(1.0 + 2.0 * z) - (22.0 * z * z * z / 3.0 + 28.0 * z * z + 103.0 * z / 3.0 + 17.0 + 3.0 / z) / (1.0 + 2.0 * z) / (1.0 + 2.0 * z) - 2.0 + ::polylog(-2.0 * z);
  }
  
  double SolverAlgorithm::polylog(double z)
-@@ -307,11 +317,110 @@
+@@ -307,11 +331,129 @@
  double SolverAlgorithm::polylog_largez(double z)
  {
  	double x = -z;
@@ -590,47 +1566,59 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  
 +// am3_mojo fix: the particles that cool into a window of the solver from
 +// above within a step. AM3 padded every window with 10 cells above it (the
-+// matrix solver of regime 2 without inflow at their top), which drops the
-+// particles that start further up and cool into the window within the step,
-+// as they do wherever regime 3 or 4 is used above.
++// matrix solver of regime 2 without inflow at their top). This drops the
++// particles that start further up and cool into the window within the step.
++// Particles do so wherever regime 3 or 4 is used above.
 +namespace
 +{
-+	// number of cells above imax (at least 10) from which particles cooling
-+	// at A_cool reach imax within dt (one more as margin), up to the cell
-+	// above itop, the highest bin with particles
-+	int cells_reached(const std::vector<double> &A_cool, int imax, int itop,
-+					  int n_bins, double dx, double dt)
-+	{
-+		double tc = 0.0;
-+		int g = imax + 1;
-+		while (g < n_bins and g <= itop + 1 and tc <= dt)
-+		{
-+			tc += dx / (-A_cool[g] + 1e-300);
-+			g++;
-+		}
-+		return std::max(10, g - imax + 1);
-+	}
-+
 +	// (e^u - 1) / u, 1 at u = 0
 +	double phi1(double u)
 +	{
 +		return std::fabs(u) < 1e-12 ? 1.0 : std::expm1(u) / u;
 +	}
 +
-+	// the particles (n dx) that cool across the upper edge x_b = x_ib + dx/2
++	// Number of cells above imax, up to the top of the grid, from which
++	// particles cooling at A_cool reach imax within dt. The number is at
++	// least 10 and has one more cell as margin.
++	// (am3_mojo fix: with the cooling time of compute_y: from the center of
++	// bin imax, with ln(1/|A|) linear between the bin centers.)
++	// (am3_mojo fix: the rates alone decide the number, whether the cells
++	// hold particles or not. A species and its components, solved apart,
++	// then take the same points of the RK4 source integral.)
++	int cells_reached(const std::vector<double> &A_cool, int imax,
++					  int n_bins, double dx, double dt)
++	{
++		double tc = 0.0;
++		double Lj = std::log(1.0 / (-A_cool[imax] + 1e-200));
++		int g = imax + 1;
++		while (g < n_bins and tc <= dt)
++		{
++			double Lk = std::log(1.0 / (-A_cool[g] + 1e-200));
++			tc += dx * std::exp(Lj) * phi1(Lk - Lj);
++			Lj = Lk;
++			g++;
++		}
++		return std::max(10, g - imax + 1);
++	}
++
++	// The particles (n dx) that cool across the upper edge x_b = x_ib + dx/2
 +	// of bin ib within dt: int_{x_b}^{y_b} [n0 + q (dt - tau)] exp(-S) dx,
-+	// tau = int dx'/|A|, S = int a/|A| dx' from x_b, tau(y_b) = dt (exact along
-+	// the characteristics for A, a, q constant in the step); n0, q, ln(1/|A|)
-+	// and ln(a/|A|) linear between the bin centres above the edge, and the half
-+	// cell from the edge to the centre of bin ib + 1 with the values of that
-+	// bin (the window above takes them there, and bin ib's particles, in the
-+	// window below, are not counted); 4-point Gauss-Legendre in pieces over
-+	// which S grows by at most 1; up to the cell above itop, the highest bin
-+	// with particles
++	// tau = int dx'/|A|, S = int a/|A| dx' from x_b, tau(y_b) = dt. The
++	// formula is exact along the characteristics for A, a, q constant in the
++	// step. Between the bin centers above the edge, n0, q, ln(1/|A|) and
++	// ln(a/|A|) are linear. The half cell from the edge to the center of
++	// bin ib + 1 takes the values of that bin. (The window above takes them
++	// there. The particles of bin ib, in the window below, are not counted.)
++	// The quadrature is 4-point Gauss-Legendre on equal pieces of each
++	// interval, over which S grows by at most 1 on average. It goes at most
++	// to the cell above itop, the highest bin with particles, and up to where
++	// S reaches 60. (am3_mojo fix: in at most 60 pieces. Beyond S = 60, all
++	// but e^-60 of the particles escape before they cross.)
 +	double crossing_count(const std::vector<double> &a_esc,
 +						  const std::vector<double> &A_cool,
 +						  const std::vector<double> &q_inj,
-+						  const std::vector<double> &n0, int ib, int itop,
++						  const std::vector<double> &n0,
++						  const std::vector<double> &nc, int ib, int itop, // am3_mojo fix: nc, the densities at the bin centers (solve_next_step), n0 at the edge
 +						  int n_bins, double dx, double dt)
 +	{
 +		static const double T[4] = {0.06943184420297371, 0.33000947820757187,
@@ -647,7 +1635,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
 +		{
 +			double Lk = std::log(1.0 / (-A_cool[k] + 1e-200));
 +			double Mk = std::log((a_esc[k] + 1e-200) / (-A_cool[k] + 1e-200));
-+			double nk = n0[k], qk = q_inj[k];
++			double nk = nc[k], qk = q_inj[k];
 +			double dL = Lk - Lj, dM = Mk - Mj;
 +			double hL = h * std::exp(Lj), hM = h * std::exp(Mj);
 +			double dtau = hL * phi1(dL);
@@ -660,7 +1648,14 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
 +				last = true;
 +			}
 +			double dS = hM * phi1(dM * send / h) * send / h;
-+			int npiece = dS <= 1.0 ? 1 : std::min(64, (int)std::ceil(dS));
++			if (S + dS > 60.0) // am3_mojo fix: up to S(send) = 60, in at most 60 pieces
++			{
++				double rS = (60.0 - S) / hM;
++				send = std::min(send, h * (std::fabs(dM * rS) < 1e-12 ? rS : std::log1p(dM * rS) / dM));
++				dS = 60.0 - S;
++				last = true;
++			}
++			int npiece = !(dS > 1.0) ? 1 : (int)std::ceil(dS); // am3_mojo fix
 +			double ds = send / npiece;
 +			for (int p = 0; p < npiece; p++)
 +			{
@@ -690,20 +1685,24 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  std::vector<double> SolverAlgorithm::solve_next_step(
  	const std::vector<double> &a_esc, const std::vector<double> &A_cool,
  	const std::vector<double> &q_inj, const std::vector<double> &n0)
-@@ -335,6 +444,12 @@
+@@ -335,6 +477,16 @@
  	// 4: A_cool, qinj relevant, 1/(A*dx) >> dt : time-dep. analytical result assuming constant coefficients for next dt
  	int regime = 0;
  	int new_regime = 0;
 +	// am3_mojo fix: regime of the window above the current one (0: none)
 +	int regime_above = 0;
-+	// am3_mojo fix: the highest bin with particles; the cells above it are
-+	// regime 0, which the solver leaves empty, so the padding of the
-+	// semi-analytic windows and the inflow count stop just above it
++	// am3_mojo fix: the highest bin with particles. The cells above it are
++	// regime 0, which the solver leaves empty. So the inflow count of the
++	// windows stops at the cell above it.
 +	int itop = -1;
++	// am3_mojo fix: the densities at the bin centers, as the windows below read
++	// them. They equal n0, except in the cells of a Chang & Cooper window above
++	// (case 2).
++	std::vector<double> nc(n0);
  	std::vector<double> n1(N_BINS, 0);
  	// skip last 2 bins to avoid odd values
  	for (int i = imax; i>0; i--)
-@@ -343,6 +458,8 @@
+@@ -343,6 +495,8 @@
  		nqint += n0[i] + q_inj[i] * delta_t;
  		if(nqint > threshold_inj_n0)
  		{
@@ -712,42 +1711,56 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  			// only evolve if there are particles or significant injection
  			// determine regime
  			if(-A_cool[i] < threshold_esc_dom * a_esc[i])
-@@ -391,7 +508,11 @@
+@@ -391,7 +545,23 @@
  		// check if regime changed 
  		// and if regime's energy range big enough (solver size)
  		// or if we need to calc the low energy rest regime (i==1)
 -		if ((regime != new_regime and (imax - i > n_min_regime or i < n_min_regime)) or i == 1)
 +		// am3_mojo fix: a window of regime 0 (the bins without particles at the
-+		// top) ends at the first bin with particles, however short it is (held
-+		// to n_min_regime too, it took at least the top 6 bins, whose particles
-+		// it then dropped)
-+		if ((regime != new_regime and (imax - i > n_min_regime or i < n_min_regime or regime == 0)) or i == 1)
++		// top) ends at the first bin with particles, however short it is.
++		// (Held to n_min_regime too, the window took at least the top 6 bins
++		// and then dropped their particles.)
++		// am3_mojo fix: escape-only (1) and cooling-only (4) windows end where
++		// the regime changes too, because the bins below need the term they
++		// lack.
++		// am3_mojo fix: and so do those of regime 3. Bins below that hardly
++		// cool keep none of the particles that cool out of the window into
++		// them. Their cooling times also swamp the window's in b_lin. (A short
++		// window lost those particles or did not cool.)
++		// am3_mojo fix: and those of regime 2. These windows solved
++		// semi-analytic bins below with their matrix at Courant numbers above
++		// 10 (0.38 of their particles in one step). Held to n_min_regime from
++		// the top of the top window, the highest bin with particles, the
++		// windows depended on where the particles end.
++		if (regime != new_regime or i == 1)
  		{
  			// change of regime
  			// -> solve with corresponding solver
-@@ -423,6 +544,13 @@
+@@ -423,6 +593,13 @@
  					q[k] = q_inj[i + 1 + k];
  					n[k] = n0[i + 1 + k];
  				}
 +				// am3_mojo fix: the particles that cool into the window from a
-+				// window of regime 2, 3 or 4 above within the step (counted along
-+				// the characteristics as for regime 2) stay in its top cell, as
-+				// the window neglects cooling
-+				if (regime_above >= 2)
-+					q[N - 1] += crossing_count(a_esc, A_cool, q_inj, n0, imax,
++				// window of regime 2, 3 or 4 above within the step. They stay in
++				// its top cell, because the window neglects cooling. (They are
++				// counted along the characteristics, as for regime 2.)
++				if (regime_above >= 2 && delta_t > 0) // am3_mojo fix: none in a step of zero length
++					q[N - 1] += crossing_count(a_esc, A_cool, q_inj, n0, nc, imax,
 +						itop, N_BINS, DELTA_X, delta_t) / (DELTA_X * delta_t);
  				std::vector<double>  n1_regime = solve_steadystate_esc_inj(a, q, n);
  				for (int k = 0; k < N; k++)
  					n1[i + 1 + k] = n1_regime[k];
-@@ -434,13 +562,17 @@
+@@ -434,13 +611,19 @@
  				// a_esc, q_inj, A_cool -> matrix
  				// highest 2 elements from matrix solver are not used
  				// -> effective q term needs to be added to imax -> q[N-1]
-+				// am3_mojo fix: the window and Nb cells below it; no flux
-+				// through its top, where the particles that cool into it from
-+				// a window of regime 3 or 4 above within the step are added
-+				// to its top cell (regime 1 neglects cooling; AM3: 10 padding
-+				// cells above without inflow at their top)
++				// am3_mojo fix: the window and Nb cells below it. No flux
++				// goes through its top. The particles that cool into it from
++				// the window above within the step are added to its top cell.
++				// This also holds for an escape-dominated window above: its
++				// particles cool out of it, though that window neglects their
++				// cooling. (AM3: 10 padding cells above without inflow at
++				// their top.)
  				int Nb = 10; // before
 -				int Na = 10; // after ()
 -				std::vector<double> a(N + Nb + Na+3, 0.0);
@@ -763,39 +1776,67 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				{
  					if (i + 1 - Nb + k >= 0 and i + 1 - Nb + k < N_BINS)
  					{
-@@ -455,6 +587,10 @@
+@@ -455,6 +638,15 @@
  				// 	q[N + Nb - 1 + shift_m] += - (
  				// 		A_cool[imax+shift_out] * n1[imax+shift_out] -  
  				// 		A_cool[imax+shift_out-1] * n1[imax+shift_out-1] ) / DELTA_X;
 +				// am3_mojo fix: the particles that cool into the window from above within the step
-+				if (regime_above >= 2)
-+					q[N + Nb - 1] += crossing_count(a_esc, A_cool, q_inj, n0, imax,
-+						itop, N_BINS, DELTA_X, delta_t) / (DELTA_X * delta_t);
++				double flux_up = 0.0;
++				if (regime_above >= 1 && delta_t > 0) // am3_mojo fix: none in a step of zero length
++				{
++					double count = crossing_count(a_esc, A_cool, q_inj, n0, nc, imax,
++						itop, N_BINS, DELTA_X, delta_t);
++					flux_up = count / delta_t;
++					q[N + Nb - 1] += count / (DELTA_X * delta_t);
++				}
  				std::vector<double> n1_regime = solve_matrix(a, A, q, n);
  				// cout << "Na = " << Na << endl;
  				// cout << "len n1_regime: " << n1_regime.size() << endl;
-@@ -472,7 +608,10 @@
+@@ -464,6 +656,21 @@
+ 						// cout << "matrix write to ind " << i + 1 + k << " result of "
+ 						// 	 << k + Nb << endl;
+ 					}
++				// am3_mojo fix: the matrix takes the flux through a cell's lower
++				// face from the cell itself, |A| n. In the steady state, n then
++				// holds the injection up to that face. The windows below take n
++				// at the bin center and add the injection from there on. So they
++				// read the density of the mean of the fluxes through the cell's
++				// two faces. (AM3 read n, which counted the injection between the
++				// face and the center twice.)
++				for (int g = imax; g > i; g--)
++				{
++					double Ag = -A_cool[g];
++					double flux = Ag * n0[g];
++					if (Ag > 1e-150)
++						nc[g] = 0.5 * (flux + flux_up) / Ag;
++					flux_up = flux;
++				}
+ 				break;
+ 			}
+ 
+@@ -472,7 +679,9 @@
  				// a_esc, q_inj, A_cool -> ss for dt
  				// add 20 bins before and after for larger grids in solver
  				int Nb = 10; // before
 -				int Na = 10; // after
 +				// am3_mojo fix: every cell from which particles cool into the
-+				// window within the step, up to the highest bin with particles
-+				// (AM3: 10)
-+				int Na = cells_reached(A_cool, imax, itop, N_BINS, DELTA_X, delta_t); // after
++				// window within the step (AM3: 10)
++				int Na = cells_reached(A_cool, imax, N_BINS, DELTA_X, delta_t); // after (am3_mojo fix: by the rates alone)
  				std::vector<double> a(N + Nb + Na, 0.0);
  				std::vector<double> A(N + Nb + Na, 0.0);
  				std::vector<double> q(N + Nb + Na, 0.0);
-@@ -487,6 +626,18 @@
- 						n[k] = n0[i + 1 - Nb + k] + 1e-150;
+@@ -486,10 +695,22 @@
+ 						q[k] = q_inj[i + 1 - Nb + k] + 1e-150;
+-						n[k] = n0[i + 1 - Nb + k] + 1e-150;
++						n[k] = nc[i + 1 - Nb + k] + 1e-150; // am3_mojo fix: nc
  					}	
  				}
 +				// am3_mojo fix: the cells below the window (bins of other
 +				// regimes, cells below the grid, bin 0) take the cooling rate of
-+				// its first bin; a bin's solution involves only the bins above
-+				// it, but the cumulative cooling time starts at the lowest cell,
-+				// where A = 0 (or a much slower cooling) swamps dt for every bin
-+				// of the window (no cooling)
++				// its first bin. A bin's solution involves only the bins above
++				// it. But the cumulative cooling time starts at the lowest cell.
++				// There, A = 0 (or a much slower cooling) swamps dt for every
++				// bin of the window (no cooling).
 +				{
 +					int kfirst = -1;
 +					for (int k = Nb; k < N + Nb + Na; k++)
@@ -805,28 +1846,56 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				// add effective q term from advection (A_cool) to last entry
  				// if (imax + 1 < N_BINS)
  				// 	q[N + Nb -1] += -A_cool[imax+1] * n1[imax+1] / DELTA_X;
-@@ -503,7 +654,10 @@
+ 				std::vector<double> n1_ext = solve_steadystate_esc_cool_inj(
+-					a, A, q, n, i-Nb);
++					a, A, q, n, i-Nb, Nb, Nb + N); // am3_mojo fix: the window's bins
+ 				for (int k = 0; k < N; k++)
+@@ -503,7 +724,9 @@
  				// q_inj, A_cool -> ss for dt
  				// add 20 bins before and after for larger grids in solver
  				int Nb = 10; // before
 -				int Na = 10; // after
 +				// am3_mojo fix: every cell from which particles cool into the
-+				// window within the step, up to the highest bin with particles
-+				// (AM3: 10)
-+				int Na = cells_reached(A_cool, imax, itop, N_BINS, DELTA_X, delta_t); // after
++				// window within the step (AM3: 10)
++				int Na = cells_reached(A_cool, imax, N_BINS, DELTA_X, delta_t); // after (am3_mojo fix: by the rates alone)
  				std::vector<double> A(N + Nb + Na, 0.0);
  				std::vector<double> q(N + Nb + Na, 0.0);
  				std::vector<double> n(N + Nb + Na, 0.0);
-@@ -516,6 +670,18 @@
- 						n[k] = n0[i + 1 - Nb + k] + 1e-150;
+@@ -515,10 +738,46 @@
+ 						q[k] = q_inj[i + 1 - Nb + k] + 1e-150;
+-						n[k] = n0[i + 1 - Nb + k] + 1e-150;
++						n[k] = nc[i + 1 - Nb + k] + 1e-150; // am3_mojo fix: nc
  					}	
  				}
++				// am3_mojo fix: a padding with bins where escape is not
++				// negligible (not regime 4) makes the window one of regime 3.
++				// The window then takes the escape of every cell. So the
++				// particles cooling in from there arrive attenuated. (AM3 left
++				// this escape out.) The window's own escape counts too:
++				// ln(a/|A|) is linear between the bins. Without it, the cell up
++				// to the first bin of the padding loses most of that bin's
++				// escape.
++				// (am3_mojo fix: the rates of the padding's bins decide this,
++				// whether they hold particles or not. So the step stays linear
++				// in the sources.)
++				bool esc_above = false;
++				for (int g = imax + 1; g <= std::min(imax + Na, N_BINS - 1); g++)
++					if (a_esc[g] >= -threshold_cool_dom * A_cool[g])
++					{
++						esc_above = true;
++						break;
++					}
++				std::vector<double> a(N + Nb + Na, 0.0);
++				if (esc_above)
++					for (int k = 0; k < N + Nb + Na; k++)
++						if (i + 1 - Nb + k >= 0 and i + 1 - Nb + k < N_BINS)
++							a[k] = a_esc[i + 1 - Nb + k] + 1e-150; // am3_mojo fix: every cell's escape
 +				// am3_mojo fix: the cells below the window (bins of other
 +				// regimes, cells below the grid, bin 0) take the cooling rate of
-+				// its first bin; a bin's solution involves only the bins above
-+				// it, but the cumulative cooling time starts at the lowest cell,
-+				// where A = 0 (or a much slower cooling) swamps dt for every bin
-+				// of the window (no cooling)
++				// its first bin. A bin's solution involves only the bins above
++				// it. But the cumulative cooling time starts at the lowest cell.
++				// There, A = 0 (or a much slower cooling) swamps dt for every
++				// bin of the window (no cooling).
 +				{
 +					int kfirst = -1;
 +					for (int k = Nb; k < N + Nb + Na; k++)
@@ -836,7 +1905,13 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  				// add effective q term from advection (A_cool) to last entry
  				// if (imax + 1 < N_BINS)
  				// 	q[N + Nb -1] += -A_cool[imax+1] * n1[imax+1] / DELTA_X;
-@@ -538,6 +704,7 @@
+-				std::vector<double> n1_ext = solve_steadystate_cool_inj(
+-					A, q, n, i-Nb);
++				std::vector<double> n1_ext = esc_above ? // am3_mojo fix
++					solve_steadystate_esc_cool_inj(a, A, q, n, i-Nb, Nb, Nb + N) : // am3_mojo fix: the window's bins
++					solve_steadystate_cool_inj(A, q, n, i-Nb);
+ 				for (int k = 0; k < N; k++)
+@@ -538,6 +797,7 @@
  
  			// Reset parameters
  			imax = i;
@@ -844,15 +1919,34 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  			regime = new_regime;
  			
  		}
-@@ -785,6 +952,16 @@
+@@ -597,7 +857,8 @@
+ // does not solve first and last bin
+ std::vector<double> SolverAlgorithm::solve_steadystate_esc_cool_inj(
+ 	const std::vector<double> &a_esc, const std::vector<double> &A_cool,
+-	const std::vector<double> &q_inj, const std::vector<double> &n0, const int i0)
++	const std::vector<double> &q_inj, const std::vector<double> &n0, const int i0,
++	const int first, const int last) // am3_mojo fix: the window, first .. last - 1
+ {
+ 	if (verbose)
+ 		cout << particle_name << " using solve_steadystate_esc_cool_inj for "
+@@ -707,7 +968,7 @@
+ 		gsl_spl_fn_q_intg, gsl_spl_ac_q_intg,
+ 		gsl_spl_fn_q2_intg, gsl_spl_ac_q2_intg,
+ 		gsl_spl_fn_q3_intg, gsl_spl_ac_q3_intg,
+-		q1_q2_sep, q2_q3_sep);
++		q1_q2_sep, q2_q3_sep, first, last); // am3_mojo fix: the window's bins
+ 
+ 	gsl_spline_free(gsl_spl_fn_lna);
+ 	gsl_spline_free(gsl_spl_fn_lnmivA);
+@@ -785,6 +1046,16 @@
  	for (int i = q2_q3_sep; i < N; i++)
  		q3_intg_lin[i] = q3_intg_lin[i - 1] + 0.5 * (q_inj[i] + q_inj[i - 1]) * DELTA_X;
  
 +	// am3_mojo fix: the injection integral from the top of the window,
-+	// -int_x^top q dx, used for every bin, so that int_x^y q dx keeps its
-+	// digits where the injection falls steeply to high energies (the bins
-+	// below each restart of the sums above kept almost no significant digits
-+	// of their injection, and those above the third none)
++	// -int_x^top q dx, used for every bin. So int_x^y q dx keeps its digits
++	// where the injection falls steeply to high energies. (The bins below
++	// each restart of the sums above kept almost no significant digits of
++	// their injection. Those above the third kept none.)
 +	q_intg_lin[N - 1] = 0.0;
 +	for (int i = N - 2; i >= 0; i--)
 +		q_intg_lin[i] = q_intg_lin[i + 1] - 0.5 * (q_inj[i] + q_inj[i + 1]) * DELTA_X;
@@ -861,19 +1955,128 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  	// std::cout <<" initialising spline on x ln \n";
  	gsl_interp_accel *gsl_spl_ac_lnmivA = gsl_interp_accel_alloc();
  	gsl_interp_accel *gsl_spl_ac_ivB = gsl_interp_accel_alloc();
-@@ -885,6 +1062,11 @@
+@@ -885,10 +1156,63 @@
  		DiffAL, DiffBL, DiffDL, PerLeftE, PerDiagE, PerRightE,
  		TriSuperE, TriDiagE, TriSubE, TriQE, TempNVE);
  	
 +	// am3_mojo fix: the last cell is the top of the window and keeps its
-+	// injection, which includes the inflow from above (AM3: an unused
-+	// padding cell)
++	// injection, which includes the inflow from above. (AM3: an unused
++	// padding cell.)
 +	TriQE[N - 1] = q_inj[N - 1] * delta_t;
 +
  	// tempNV = M * n0, M = PertMat
  	MatOP_TriDiagMDotV(TempNVE, PerLeftE, PerDiagE, PerRightE, &n0[0], N);
  
-@@ -1148,6 +1330,10 @@
++	// am3_mojo fix: the step is (1 + 2 theta M) n1 = (1 - 2 (1 - theta) M)
++	// n0 + q dt. The weight theta_i of cell i applies to its escape and to the
++	// flux through its lower face, its outflow (the solver treats losses
++	// only). The weight of the cell above applies to the flux through its
++	// upper face. Each flux then has one weight on both sides, so that the
++	// step conserves the particles. The weight theta depends on the rates
++	// alone. theta_i is Crank-Nicolson's 1/2 where the diagonal 1 - PD_i of
++	// the right-hand side is >= 0. Elsewhere, it is the least implicit theta
++	// that keeps 1 - 2 (1 - theta) PD_i >= 0. (AM3 took 1/2 at any Courant
++	// number. The densities rang, and setting their negative values to zero
++	// created particles.)
++	double r = 0.5 * delta_t / DELTA_X;
++	// TempNVE = (1-M) * n0 + q*dt
++	for (int i = 0; i < N; i++)
++		TempNVE[i] = -TempNVE[i] + TriQE[i] + n0[i];
++	auto theta_of = [](double pd) { return pd <= 1.0 ? 0.5 : 1.0 - 0.5 / pd; };
++	double th = N > 1 ? theta_of(PerDiagE[1]) : 0.5;
++	for (int i = 1; i < N; i++)
++	{
++		double th_up = i + 1 < N ? theta_of(PerDiagE[i + 1]) : th;
++		if (th > 0.5 || th_up > 0.5)
++		{
++			TriSubE[i - 1] = 2.0 * th * PerLeftE[i];
++			TriSuperE[i] = 2.0 * th_up * PerRightE[i];
++			double rhs = TriQE[i] - 2.0 * (1.0 - th) * PerLeftE[i] * n0[i - 1];
++			if (i + 1 < N)
++				rhs -= 2.0 * (1.0 - th_up) * PerRightE[i] * n0[i + 1];
++			// am3_mojo fix: the term of n_i on the right-hand side, without the
++			// cancellation in 1 - 2 (1 - theta_i) PD_i, which is zero where
++			// theta_i > 1/2. Computed as a difference, the term leaves
++			// 1e-16 n_i. That is all that the cell at the top of a falling
++			// spectrum holds. This leftover also takes another value in a
++			// species and in each of its components.
++			if (th_up == th)
++				TriDiagE[i] = 1.0 + 2.0 * th * PerDiagE[i];
++			else
++			{
++				// PD_i = up + own: the parts of the fluxes through its upper
++				// face and through its lower one with its escape
++				double up = r * (DiffDL[i] * DiffAL[i] + DiffBL[i] / DELTA_X);
++				double own = PerDiagE[i] - up;
++				TriDiagE[i] = 1.0 + 2.0 * (th_up * up + th * own);
++				if (th > 0.5)
++					rhs += up * (1.0 / PerDiagE[i] - 2.0 * (1.0 - th_up)) * n0[i];
++				else
++					rhs += (1.0 - own - 2.0 * (1.0 - th_up) * up) * n0[i];
++			}
++			TempNVE[i] = rhs;
++		}
++		th = th_up;
++	}
+-	// TempNVE = (1-M) * n0 + q*dt
+-	for (int i = 0; i < N; i++)
+-		TempNVE[i] = -TempNVE[i] + TriQE[i] + n0[i];
+ 
+@@ -1069,9 +1393,14 @@
+ 	// std::cout << "\n spline interpolation to compute y \n ";
+ 	for (int i = 1; i < N; i++)
+ 	{
+-		double delta_b = rk4_gslspl_b(
+-			x_ln[i - 1], x_ln[i], 10, x_ln[0], x_ln[N-1],
+-			gsl_spl_fn_lnmivA, gsl_spl_ac_lnmivA);
++		// am3_mojo fix: the cooling time across the cell, exact for
++		// 1/|A| = e^L with L linear in the cell. (AM3's 10 RK4 steps
++		// overestimate it where L is steep, by 1.2 % where L rises by 25.
++		// In a window's top cell, they also left out the last step where the
++		// summed steps round past the top.)
++		const double L0 = gsl_spl_fn_lnmivA->y[i - 1];
++		const double sL = gsl_spl_fn_lnmivA->y[i] - L0;
++		double delta_b = (x_ln[i] - x_ln[i - 1]) * exp(L0) * (std::abs(sL) > 1e-8 ? std::expm1(sL) / sL : 1.0 + 0.5 * sL);
+ 		// std::cout << " i: "  << i << " delta b: " << delta_b << ' ' ;
+ 
+ 		double set_delta_b_min = b_lin[i - 1] * 1.0e-15; // to prevent underflow (b_lin must be numerically increasing); the trickiest parameter in code.
+@@ -1104,12 +1433,33 @@
+ 	if (verbose)
+ 		cout << "computing y - filling y" << endl;
+ 
++	// am3_mojo fix: the inverse in the cell [x_k, x_k+1] in which the
++	// cumulative cooling time reaches b_lin[i] + delta_t. It is exact for
++	// 1/|A| = e^L with L linear across the cell, as b_lin sums it. (The
++	// spline linear in b put y next to x where 1/|A| rises steeply within a
++	// cell. So the bin kept its particles and injection with no cooling.)
++	const double *L = gsl_spl_fn_lnmivA->y;
++	int k = 0;
+ 	for (int i = 0; i < N; i++)
+ 	{
+ 		y_ln[i] = x_max - 1.0e-3 * DELTA_X; // default value set near the right border of x_grid
+ 
+-		if (b_lin[i] + delta_t < b_max)
+-			y_ln[i] = gsl_spline_eval(gsl_spl_fn_ivB, b_lin[i] + delta_t, gsl_spl_ac_ivB);
++		double bt = b_lin[i] + delta_t;
++		if (bt < b_max)
++		{
++			k = std::max(k, i);
++			while (b_lin[k + 1] <= bt)
++				k++;
++			double t = (bt - b_lin[k]) / (b_lin[k + 1] - b_lin[k]);
++			double s = L[k + 1] - L[k];
++			double u = t;
++			if (s > 30.0)
++				u = 1.0 + log(t + (1.0 - t) * exp(-s)) / s;
++			else if (std::abs(s) > 1.0e-8)
++				u = log1p(t * expm1(s)) / s;
++			u = std::min(std::max(u, 0.0), 1.0);
++			y_ln[i] = x_ln[k] + (x_ln[k + 1] - x_ln[k]) * u;
++		}
+ 	}
+ }
+ 
+@@ -1148,6 +1498,10 @@
  	return y;
  }
  
@@ -884,18 +2087,28 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  void SolverAlgorithm::compute_n1_a_A(
  	std::vector<double> &n1, int N, double *x_ln, double *y_ln,
  	const std::vector<double> &a_esc, const std::vector<double> &A_cool,
-@@ -1164,6 +1350,53 @@
+@@ -1161,9 +1515,71 @@
+ 	gsl_spline *gsl_spl_fn_q3_intg, gsl_interp_accel *gsl_spl_ac_q3_intg,
+-	int q1_q2_sep, int q2_q3_sep)
++	int q1_q2_sep, int q2_q3_sep, int first, int last)
+ {
  	if (verbose)
  		cout << "computing n1" << endl;
++
++	// am3_mojo fix: only the bins first .. last - 1, the window (its padding
++	// is not used). The escape exponents K and Ka also start at the window's
++	// first bin. The cells below never feed the window. However fast they let
++	// particles escape, they take no digits from the exponent of the window.
  
 +	// am3_mojo fix: the source integral of simple_integral_q for all bins at
-+	// once: every grid cell integrated once (am3_mojo_source_cell) and chained
-+	// from the top, J_k = P_k + e^-D_k J_(k+1) (P_k: the integral over cell k,
-+	// D_k: its attenuation exponent), so that the integral from x to y is
-+	// J_i - e^-(K_m - K_i) (J_m - the part of cell m below y), K the
-+	// cumulative exponent and m the cell that holds y (where that difference
-+	// would lose more than 4 digits, the cells from x to y are summed
-+	// instead); O(N) where the cells of the window reach far up
++	// once. Every grid cell is integrated once (am3_mojo_source_cell). The
++	// cells are chained from the top: J_k = P_k + e^-D_k J_(k+1) (P_k: the
++	// integral over cell k, D_k: its attenuation exponent). So the integral
++	// from x to y is J_i - e^-(K_m - K_i) (J_m - the part of cell m below y).
++	// K is the cumulative exponent, and m is the cell that holds y. (Where
++	// that difference loses more than 4 digits, the cells from x to y are
++	// summed instead.) This is O(N) where the cells of the window reach far
++	// up.
 +	std::vector<double> inj(N, 0.0);
 +	if (!simpleqintegration)
 +	{
@@ -907,9 +2120,9 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
 +			P[k] = am3_mojo_source_cell(DX, lna[k], lna[k + 1], q_inj[k], q_inj[k + 1], Dc[k]);
 +		for (int k = N - 2; k >= 0; k--)
 +			J[k] = P[k] + exp(-Dc[k]) * J[k + 1];
-+		for (int k = 1; k < N; k++)
++		for (int k = first + 1; k < N; k++) // am3_mojo fix: from the window
 +			K[k] = K[k - 1] + Dc[k - 1];
-+		for (int i = 1; i < N - 1; i++)
++		for (int i = first; i < last; i++) // am3_mojo fix: the window
 +		{
 +			double xi = x_ln[i], yi = y_ln[i];
 +			// the cell that holds y: x_ln[m] <= y < x_ln[m + 1]
@@ -923,8 +2136,8 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
 +				yi - x_ln[m], lna[m], gsl_spline_eval(gsl_spl_fn_lna, yi, gsl_spl_ac_lna),
 +				q_inj[m], gsl_spline_eval(gsl_spl_fn_q, yi, gsl_spl_ac_q), Dp);
 +			double I = m > i ? J[i] - exp(-(K[m] - K[i])) * (J[m] - part) : part;
-+			// where the injection above y dominates (a source rising steeply across the window), the
-+			// difference loses its digits: sum the cells from x to y instead
++			// Where the injection above y dominates (a source rising steeply across the window), the
++			// difference loses its digits. So the cells from x to y are summed instead.
 +			if (m > i && I * 1e4 < J[i])
 +			{
 +				I = exp(-(K[m] - K[i])) * part;
@@ -935,10 +2148,46 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
 +		}
 +	}
 +
- 	for(int i=1; i<N-1; i++)
++	// am3_mojo fix: the escape exponent int a/|A| dx from the window's first
++	// grid point to each one above, exact for ln(a/|A|) linear between them
++	std::vector<double> Ka(N, 0.0);
++	for (int k = first + 1; k < N; k++) // am3_mojo fix: from the window
++	{
++		double l0 = gsl_spl_fn_lna->y[k - 1];
++		Ka[k] = Ka[k - 1] + DELTA_X * exp(l0) * phi1(gsl_spl_fn_lna->y[k] - l0);
++	}
++
+-	for(int i=1; i<N-1; i++)
++	for(int i=first; i<last; i++) // am3_mojo fix: the window
  	{
  		// use analytical asymptotic solution if energy loss rate is low
-@@ -1203,11 +1436,8 @@
+@@ -1183,11 +1599,21 @@
+ 			double ivAy = -exp(gsl_spline_eval(gsl_spl_fn_lnmivA, y_ln[i], gsl_spl_ac_lnmivA));
+ 
+ 			double Aratio = 1/A_cool[i]/ivAy;
+-
+-			double lnloss = rk4_gslspl_a(
+-				x_ln[i], y_ln[i], 5, x_ln[0], x_ln[N-1], gsl_spl_fn_lna, gsl_spl_ac_lna);
+ 
+-			double loss = lnloss < -100.0 ? 0.0 : exp(lnloss);
++			// am3_mojo fix: the escape from y down to x, exp(-int_x^y a/|A| dx).
++			// The exponent is Ka up to the grid point x_m below y, then the part
++			// of its cell up to y. (AM3 took 5 RK4 steps from x to y. Below a
++			// jump of the escape, the densities then jumped by -12 % to +3 %.)
++			double xi = x_ln[i], yi = y_ln[i];
++			int m = std::min(N - 2, i + std::max(0, (int)((yi - xi) / DELTA_X)));
++			while (m > i && x_ln[m] > yi)
++				m--;
++			while (m < N - 2 && x_ln[m + 1] <= yi)
++				m++;
++			double lm = gsl_spl_fn_lna->y[m];
++			double S = Ka[m] - Ka[i] + (yi - x_ln[m]) * exp(lm)
++				* phi1(gsl_spline_eval(gsl_spl_fn_lna, yi, gsl_spl_ac_lna) - lm);
++			double loss = S > 100.0 ? 0.0 : exp(-S);
+ 
+ 			int outer_intg_points_per_bin = 2;
+ 
+@@ -1203,11 +1629,8 @@
  			}
  			else
  			{
@@ -952,7 +2201,7 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  			}
  			
  				
-@@ -1268,7 +1498,7 @@
+@@ -1268,7 +1691,7 @@
  			else 
  				intgd_injection = injection3_1 - injection3_0;
  			// remember that A is negative
@@ -961,7 +2210,45 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  		}
  	}
  
-@@ -1424,14 +1654,21 @@
+@@ -1338,7 +1761,16 @@
+ 	double y = 0.0;
+ 
+ 	// This 1-bin integral condition is tricky when the cooling time is not-monotic
+-	double abs_alpha_ivA = exp(gsl_spline_eval(gsl_spl_fn_lna, lower, gsl_spl_ac_lna) );
++	// am3_mojo fix: with the largest a/|A| of [lower, upper], at an end or at
++	// a node of the spline between them. (AM3 took a/|A| at lower, which left
++	// out the sink where escape rises between lower and upper, for example
++	// below escape-dominated bins.)
++	double lna_max = std::max(gsl_spline_eval(gsl_spl_fn_lna, lower, gsl_spl_ac_lna),
++		gsl_spline_eval(gsl_spl_fn_lna, upper, gsl_spl_ac_lna));
++	for (size_t j = 0; j < gsl_spl_fn_lna->size && gsl_spl_fn_lna->x[j] < upper; j++)
++		if (gsl_spl_fn_lna->x[j] > lower)
++			lna_max = std::max(lna_max, gsl_spl_fn_lna->y[j]);
++	double abs_alpha_ivA = exp(lna_max);
+ 
+ 	double I_alpha_ivA = (upper-lower) * abs_alpha_ivA;
+ 
+@@ -1362,7 +1794,7 @@
+ 		{		
+ 			double k1 = diff_x * gsl_spline_eval(gsl_spl_fn_q, x_prime,            gsl_spl_ac_q);
+ 			double k2 = diff_x * gsl_spline_eval(gsl_spl_fn_q, x_prime+0.5*diff_x, gsl_spl_ac_q);
+-			double k4 = diff_x * gsl_spline_eval(gsl_spl_fn_q, x_prime+1.0*diff_x, gsl_spl_ac_q);
++			double k4 = diff_x * gsl_spline_eval(gsl_spl_fn_q, std::min(x_prime+1.0*diff_x, upper), gsl_spl_ac_q); // am3_mojo fix: no step past upper (the summed steps can round past it)
+ 
+ 			y += (1.0/6.0)*(k1+k4)+(2.0/3.0)*k2;
+ 			x_prime += diff_x;
+@@ -1381,7 +1813,9 @@
+ 
+ 		double diff_x = range/N_OUTER_INIT;
+ 
+-		if (diff_x/lower < 1.0e-10)
++		// am3_mojo fix: relative to |lower|. (diff_x / lower < 1e-10 holds for
++		// any range that starts below x = 0, as in the cells below the grid.)
++		if (diff_x < 1.0e-10 * std::fabs(lower))
+ 		{
+ 			std::cout << "lower bound = " << lower << std::endl;
+ 			std::cout << "upper bound = " << upper_eff << std::endl;
+@@ -1424,14 +1858,21 @@
  					gsl_spl_fn_lna, gsl_spl_ac_lna
  				) > -0.8)
  			{
@@ -985,7 +2272,26 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  		}
  		
  
-@@ -1471,6 +1708,83 @@
+@@ -1450,7 +1891,8 @@
+ 
+ 			double k1_lnloss = rk4_gslspl_a(lower, x_prime, N_INNER_INIT, x_min, x_max, gsl_spl_fn_lna, gsl_spl_ac_lna);
+ 			double k2_lnloss = rk4_gslspl_a(lower, x_prime + 0.5 * diff_x, N_INNER_INIT, x_min, x_max, gsl_spl_fn_lna, gsl_spl_ac_lna);
+-			double k4_lnloss = rk4_gslspl_a(lower, x_prime + 1.0 * diff_x, N_INNER_INIT, x_min, x_max, gsl_spl_fn_lna, gsl_spl_ac_lna);
++			double x_end = std::min(x_prime + 1.0 * diff_x, upper_eff); // am3_mojo fix: no step past upper_eff (the summed steps can round past it, and past the range of rk4_gslspl_a)
++			double k4_lnloss = rk4_gslspl_a(lower, x_end, N_INNER_INIT, x_min, x_max, gsl_spl_fn_lna, gsl_spl_ac_lna);
+ 
+ 			double k1_loss = k1_lnloss<-300?0.0:exp( k1_lnloss );
+ 			double k2_loss = k2_lnloss<-300?0.0:exp( k2_lnloss );
+@@ -1458,7 +1900,7 @@
+ 
+ 			double k1 = diff_x * gsl_spline_eval(gsl_spl_fn_q, x_prime,            gsl_spl_ac_q) * k1_loss;
+ 			double k2 = diff_x * gsl_spline_eval(gsl_spl_fn_q, x_prime+0.5*diff_x, gsl_spl_ac_q) * k2_loss;
+-			double k4 = diff_x * gsl_spline_eval(gsl_spl_fn_q, x_prime+1.0*diff_x, gsl_spl_ac_q) * k4_loss;
++			double k4 = diff_x * gsl_spline_eval(gsl_spl_fn_q, x_end, gsl_spl_ac_q) * k4_loss; // am3_mojo fix: x_end
+ 
+ 			y += (1.0/6.0)*(k1+k4)+(2.0/3.0)*k2;
+ 			x_prime += diff_x;
+@@ -1471,6 +1913,84 @@
  }
  
  
@@ -1020,10 +2326,10 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
 +	double K, double h, double l0, double l1, double q0, double q1, double &D)
 +{
 +	// e^-K int_0^h q e^(-int_0^x' k) dx' over a piece of width h on which ln k
-+	// goes from l0 to l1 and q from q0 to q1, both linearly (k = alpha/|A|);
-+	// D = int_0^h k (exact). In the variable t = int k the integrand is
-+	// g(t) e^-t with g = q/k, taken as the quadratic through the ends and the
-+	// middle of the piece (exact for a constant k and q linear)
++	// goes from l0 to l1 and q from q0 to q1, both linearly (k = alpha/|A|).
++	// D = int_0^h k (exact). In the variable t = int k, the integrand is
++	// g(t) e^-t with g = q/k. Here, g is taken as the quadratic through the
++	// ends and the middle of the piece (exact for a constant k and q linear).
 +	double dd = l1 - l0;
 +	double ra = 1.0, rb = 1.0, rm = 1.0, vm = 0.5;
 +	if (fabs(dd) >= 1e-12)
@@ -1043,8 +2349,9 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
 +
 +// am3_mojo fix: int_0^h q e^(-int_0^x' k) dx' over a cell of width h on which
 +// ln k goes from lka to lkb and q from qa to qb, both linearly
-+// (k = alpha/|A|); D = int_0^h k. In pieces over which ln k changes by at most
-+// 0.25 and the attenuation exponent by at most 2 (am3_mojo_source_piece)
++// (k = alpha/|A|). D = int_0^h k. The integral runs in pieces over which
++// ln k changes by at most 0.25 and the attenuation exponent by at most 2
++// (am3_mojo_source_piece).
 +static inline double am3_mojo_source_cell(
 +	double h, double lka, double lkb, double qa, double qb, double &D)
 +{
@@ -1069,20 +2376,20 @@ diff -ruN a/src/Solver.cc b/src/Solver.cc
  double SolverAlgorithm::simple_integral_q(
  	double lower, double upper, const int N_INTG_OUTER_PER_BIN, 
  	double * x_ln, double x_min, double x_max,
-@@ -1478,34 +1792,46 @@
+@@ -1478,34 +1998,46 @@
  	gsl_spline *gsl_spl_fn_q, gsl_interp_accel *gsl_spl_ac_q,
  	gsl_spline *gsl_spl_fn_lnmivA, gsl_interp_accel *gsl_spl_ac_lnmivA)
  {
 -
 +	// am3_mojo fix: int_x^y q(x') exp(-int_x^x' alpha/|A| dx'') dx' / |A(x)|
 +	// integrated exactly per grid cell, where ln(alpha/|A|) and q are linear
-+	// (the splines), in pieces over which ln(alpha/|A|) changes by at most 0.25
-+	// and the exponent by at most 2: exact where the sink dominates
-+	// (n -> q/alpha) and where cooling does. The sum of
++	// (the splines). The integral runs in pieces over which ln(alpha/|A|)
++	// changes by at most 0.25 and the exponent by at most 2. It is exact where
++	// the sink dominates (n -> q/alpha) and where cooling does. The sum of
 +	// q(x') exp(-int_x^(x'+DX) alpha/|A|) DX over the grid points below y made
 +	// the densities too low by z/(e^z - 1), z = DX alpha/|A|, where the sink
-+	// dominates (by 10^3 just above regime 1), and off by about DX/2 times the
-+	// logarithmic slope of q where cooling dominates
++	// dominates (by 10^3 just above regime 1). Where cooling dominates, the
++	// densities were off by about DX/2 times the logarithmic slope of q.
  	double DX  = DELTA_X;
  	double x = lower;
  	double y = upper;
@@ -1161,10 +2468,20 @@ diff -ruN a/src/Synchrotron.cc b/src/Synchrotron.cc
 -    double b_ub_nat = b_nat * b_nat / (8.0 * mathpi);
 +    // am3_mojo PDG: the magnetic energy density B^2/(8 pi) in the code units
 +    double b_ub_nat = b_gauss * b_gauss / (8.0 * mathpi) / (masse / erg_GeV * n_SSC_CGS);
-     double norm = (1.65399 / b_dimless) * b_ub_nat;
+-    double norm = (1.65399 / b_dimless) * b_ub_nat;
++    double norm = (3.0 * sqrt(3.0) / mathpi / b_dimless) * b_ub_nat; // am3_mojo PDG: 3 sqrt(3) / pi
  
      double xbar = x / (3.0 * g * g * b_dimless);
-@@ -196,10 +196,10 @@
+@@ -82,7 +82,7 @@
+ 
+     if(2*xbar < 4e-3)
+     {
+-        return norm * 1.80842 * pow(xbar, 0.33333) * pow(2, -0.6666667);
++        return norm * (pow(2.0, 1.0 / 3.0) * 2.678938534707747633 * 2.678938534707747633 / 5.0) * pow(xbar, 1.0 / 3.0) * pow(2, -2.0 / 3.0); // am3_mojo PDG: 2^(1/3) Gamma(1/3)^2 / 5, Gamma(1/3) = 2.678938534707747633..., 1/3 and 2/3
+     }
+     else if (2*xbar >= 4e-3 and 2*xbar < 1)
+     {
+@@ -196,10 +196,11 @@
  double Syn::Q_Qsyn_avg(double gamma_e, double epsilon, const double bin_width, const int N_INTG)
  {
  
@@ -1173,11 +2490,193 @@ diff -ruN a/src/Synchrotron.cc b/src/Synchrotron.cc
      double b_dimless = b_gauss / b_crit;
 -    double nu_0 = 1.235e20;
 -    double alpha_0 = 1.0/137.0;
++    if (b_dimless <= 0) return 0.0; // am3_mojo fix: no field, no emission, not inf * 0 = NaN
 +    double nu_0 = masse / 4.135667696923859e-24; // am3_mojo PDG: m_e c^2 / h [Hz]
 +    double alpha_0 = 0.007297352564331425; // am3_mojo PDG: 1/137.035999177
  
      return sqrt(3.0) * nu_0 * alpha_0 * b_dimless * I_Qsyn_avg( b_dimless, gamma_e, epsilon,  bin_width, N_INTG); 
  }
+diff -ruN a/src/math.cc b/src/math.cc
+--- a/src/math.cc	2026-10-03 23:00:00
++++ b/src/math.cc	2026-10-03 23:00:00
+@@ -37,67 +37,90 @@
+     else
+         return gsl_sf_bessel_Knu(4.0 / 3.0, x);
+ }
+ 
+-double int_bk53l(double x)
+-{
+-    return (1.253314 + 0.139338 / x) / (exp(x) * sqrt(x));
+-}
+-
++// am3_mojo fix: the integral of K_5/3 from x to infinity to 3e-14. AM3 summed
++// 100 rectangles in ln t from x to 10 (1.9 to 3.1 % too much). Above x = 10,
++// it took (1.253314 + 0.139338 / x) e^-x / sqrt(x): 5.4 % too little just
++// above x = 10, where the result jumped. (The 1/x term of the asymptotic
++// series is sqrt(pi/2) 55/72 = 0.957 / x.) Below x = 1e-3, AM3 took the
++// series with rounded coefficients and no x^(4/3) term. Above x = 1e-3, the
++// integral is int_0^inf exp(-x cosh u) cosh(5u/3) / cosh(u) du, by the
++// trapezoidal rule (an even integrand, analytic for |Im u| < pi/2). The step
++// is h = min(1/4, 0.4 / sqrt(x)), and exp(-x) is taken out with
++// cosh(u) - 1 = 2 sinh^2(u/2).
+ double int_bk53m(double x)
+ {
+-    double yi = log(x), yf = log(10.0), result = 0.0, y = yi;
+-    while (y < yf)
++    double h = fmin(0.25, 0.4 / sqrt(x));
++    double s = 0.5;
++    for (int k = 1; k < 100; k++)
+     {
+-        result += exp(y) * gsl_sf_bessel_Knu(5.0 / 3.0, exp(y)) * 0.01 * (yf - yi);
+-        y += 0.01 * (yf - yi);
++        double u = k * h;
++        double sh = sinh(0.5 * u);
++        double v = exp(-2.0 * x * sh * sh) * cosh(u * (5.0 / 3.0))
++                   / (1.0 + 2.0 * sh * sh);
++        s += v;
++        if (v < 1e-17 * s)
++            break;
+     }
+-    return result + 0.0000192;
++    return h * s * exp(-x);
+ }
+ 
+ double int_bk53s(double x)
+ {
+-    return 2.14953 * pow(x, -0.66666667) - 0.142393 * pow(x, 2.66666667) - 1.814;
++    // am3_mojo fix: the series of K_5/3 = (pi/sqrt3) (I_-5/3 - I_5/3)
++    // integrated term by term, with c = 2^(2/3) Gamma(2/3)
++    double c = pow(2.0, 2.0 / 3.0) * 1.3541179394264004169;
++    double a = mathpi / sqrt(3.0);
++    return c * pow(x, -2.0 / 3.0) - a + 0.1875 * c * pow(x, 4.0 / 3.0)
++           - 27.0 / 160.0 * a / c * pow(x, 8.0 / 3.0);
+ }
+ 
+ double int_bessel_k53(double x)
+ {
+-    if (x > 10.0)
+-        return int_bk53l(x);
+-    else if (x <= 10.0 && x > 0.001)
++    // am3_mojo fix: int_bk53m above x = 1e-3 (no int_bk53l)
++    if (x > 0.001)
+         return int_bk53m(x);
+-    else
+-        return int_bk53s(x);
++    return int_bk53s(x);
+ }
+ 
+ 
+ 
+-double polylog(double z)
++// am3_mojo fix: the dilogarithm to rounding. AM3 summed 49 terms of the power
++// series above z = -1 and 99 rectangles of the integral from -1 above -10.
++// Elsewhere, it took -ln^2(-z)/2 - 1.6. This was up to 1 % off at the
++// arguments of the inverse-Compton photon loss, 2.2 % at z = -10, and -1.6
++// at z = -1.
++// Li_2(z) for -1 <= z <= 1/2 by its series in u = -ln(1 - z), |u| <= ln 2:
++// u - u^2/4 + sum_k B_2k u^(2k+1) / (2k + 1)!, k = 1 .. 9 (B_2k: the
++// Bernoulli numbers).
++static double li2_series(double z)
+ {
+-    //actually =Li(-z)
++    static const double c[9] = {
++        1.0 / 36.0, -1.0 / 3600.0, 1.0 / 211680.0, -1.0 / 10886400.0,
++        1.0 / 526901760.0, -691.0 / 16999766784000.0, 1.0 / 1120863744000.0,
++        -3617.0 / 181400588328960000.0, 43867.0 / 97072790126247936000.0};
++    double u = -log1p(-z);
++    double u2 = u * u;
++    double s = 0.0;
++    for (int k = 8; k >= 0; k--)
++        s = s * u2 + c[k];
++    return u - 0.25 * u2 + u * u2 * s;
++}
+ 
+-    z = -z;
+-    double z1 = z - 1.0;
+-    if (z1 < 0.0)
++double polylog(double z)
++{
++    // am3_mojo fix: Li_2(z) for real z <= 1, by the series of z, of 1/z
++    // (z < -1) or of 1 - z (1/2 < z < 1)
++    if (z < -1.0)
+     {
+-        double a = 0.0;
+-        for (int n = 1; n < 50; n++)
+-        {
+-            a += signf(n) * pow(z, n) / (n * n);
+-        }
+-        return a;
++        double l = log(-z);
++        return -mathpi * mathpi / 6.0 - 0.5 * l * l - li2_series(1.0 / z);
+     }
+-    else if (z1 > 0.0 && z < 10.0)
+-    {
+-        double b = mathpi * mathpi / 12.0; //pi^2/12 ;int from 0 to 1;
+-        double z2 = 0.01 * z1;
+-        for (int m = 1; m < 100; m++)
+-        {
+-            b += z2 * log(2.0 + m * z2) / (1.0 + m * z2);
+-        } //int from 1 to z
+-        return -b;
+-    }
+-    else
+-        return -0.5 * log(z) * log(z) - 1.6;
++    if (z <= 0.5)
++        return li2_series(z);
++    if (z < 1.0)
++        return mathpi * mathpi / 6.0 - log(z) * log1p(-z) - li2_series(1.0 - z);
++    return mathpi * mathpi / 6.0;
+ }
+ 
+ void number_split(int *i, double *r, double x, double dlnE)
+@@ -104,21 +127,16 @@
+ {
+     //output, output, input
+ 
+-    if (x > 0.0)
++    // am3_mojo fix: the share r of grid point i + 1 (1 - r for point i) that keeps the number and the energy,
++    // E_i e^(f dlnE), of a product at the fraction f between them: (e^(f dlnE) - 1) / (e^dlnE - 1). (The weight
++    // f + f (1 - f) dlnE / 2 is that of an interpolation between two points. As a split, this weight booked the
++    // product f (1 - f) dlnE^2 too high in energy, up to 0.25 %.)
++    if (x > 0.0 || x < 0.0)
+     {
+-
+         (*i) = (int)floor(x);
+-        (*r) = x - 1.0 * (*i);
+-        (*r) += 0.5 * (*r) * (1.0 - (*r)) * dlnE;
++        (*r) = expm1((x - 1.0 * (*i)) * dlnE) / expm1(dlnE);
+     }
+ 
+-    else if (x < 0.0)
+-    {
+-        (*i) = (int)floor(x);
+-        (*r) = x - 1.0 * (*i);
+-        (*r) += 0.5 * (*r) * (1.0 - (*r)) * dlnE;
+-    }
+-
+     else
+     {
+         (*i) = 0;
+diff -ruN a/include/AM3/AM3.h b/include/AM3/AM3.h
+--- a/include/AM3/AM3.h	2026-10-03 23:00:00
++++ b/include/AM3/AM3.h	2026-10-03 23:00:00
+@@ -42,6 +42,16 @@
+     const double mec2_erg; //! convert electron rest mass to erg
+     const double erg2eV;   //! convert erg to eV
+ 
++    // am3_mojo fix: the energies [eV] that the setters of the optimization
++    // limits asked for. At first, they are the energies of the grid points
++    // of the limits. update_energy_grid takes the limits of the new grid
++    // from them.
++    double asked_compton_emission_emin;
++    double asked_compton_target_emax;
++    double asked_bethe_heitler_incoming_protons_min;
++    double asked_bethe_heitler_target_photon_max;
++    double asked_photopion_target_photon_max;
++
+   public:
+     /**
+      * @brief Constructor for the AM3 user interface class.
 diff -ruN a/include/AM3/MuonDecay.h b/include/AM3/MuonDecay.h
 --- a/include/AM3/MuonDecay.h	2026-10-03 23:00:00
 +++ b/include/AM3/MuonDecay.h	2026-10-03 23:00:00
@@ -1192,6 +2691,63 @@ diff -ruN a/include/AM3/MuonDecay.h b/include/AM3/MuonDecay.h
      // muon neutrinos from muon decay
      Eigen::MatrixXd KER_FNU1p; /**< kernel mu+ -> mu neutrinos */
      Eigen::MatrixXd KER_FNU1m; /**< kernel mu- -> mu neutrinos */
+diff -ruN a/include/AM3/SimulationManager.h b/include/AM3/SimulationManager.h
+--- a/include/AM3/SimulationManager.h	2026-10-03 23:00:00
++++ b/include/AM3/SimulationManager.h	2026-10-03 23:00:00
+@@ -171,6 +171,11 @@
+     // internal step counter
+     int step_counter;
+ 
++    // am3_mojo fix: the pion, muon and neutrino components of each origin are
++    // evolved in this step. The e+- synchrotron kernel is the quantum one.
++    bool pchain_pg = false, pchain_pp = false, syn_qsyn = false, comp_built = false; // comp_built: init_kernels built the e+- inverse-Compton kernels
++    bool last_step_merged = false; // am3_mojo fix: the last step evolved the merged e+- (SA_ep), whose cooling the e+- estimate reads
++
+     bool solver_simpleqintegration;
+     double
+         // solver_threshold_cool:
+diff -ruN a/include/AM3/Solver.h b/include/AM3/Solver.h
+--- a/include/AM3/Solver.h	2026-10-03 23:00:00
++++ b/include/AM3/Solver.h	2026-10-03 23:00:00
+@@ -83,10 +83,10 @@
+         double delta_t; //!< Time step in units of TUS.
+         int step_counter; //!< step counter
+ 
+-        const bool process_sy; //!< Flag indicating whether to calculate synchrotron cooling.
+-        const bool process_quantum_syn_cooling; //!< Flag indicating whether to include synchrotron cooling in the quantum regime.
+-        const bool process_ic; //!< Flag indicating whether to calculate inverse Compton cooling.
+-        const bool process_decay; //!< Flag indicating whether to calculate particle decay.
++        bool process_sy; //!< Flag indicating whether to calculate synchrotron cooling. (am3_mojo fix: set every step from the switches)
++        bool process_quantum_syn_cooling; //!< Flag indicating whether to include synchrotron cooling in the quantum regime. (am3_mojo fix: likewise)
++        bool process_ic; //!< Flag indicating whether to calculate inverse Compton cooling. (am3_mojo fix: likewise)
++        bool process_decay; //!< Flag indicating whether to calculate particle decay. (am3_mojo fix: set every step from the decay switch)
+         
+         double threshold_cool_dom; //!< Threshold for cooling dominance.
+         double threshold_esc_dom; //!< Threshold for sink dominance.
+@@ -199,11 +199,13 @@
+          * @param q_inj Sum of all source terms.
+          * @param n0 Current spectrum.
+          * @param i0 First index to determine min. energy of grid.
++         * @param first First index of the window (am3_mojo fix).
++         * @param last Index after the window's last (am3_mojo fix).
+          */
+         std::vector<double> solve_steadystate_esc_cool_inj(
+             const std::vector<double> &a_esc, const std::vector<double> &A_cool,
+             const std::vector<double> &q_inj, const std::vector<double> &n0,
+-            const int i0);
++            const int i0, const int first, const int last); // am3_mojo fix: the window
+ 
+         /**
+          * @brief Solve using steady state approx including A term.
+@@ -392,7 +394,7 @@
+             gsl_spline *gsl_spl_fn_q_intg, gsl_interp_accel *gsl_spl_ac_q_intg,
+             gsl_spline *gsl_spl_fn_q2_intg, gsl_interp_accel *gsl_spl_ac_q2_intg,
+             gsl_spline *gsl_spl_fn_q3_intg, gsl_interp_accel *gsl_spl_ac_q3_intg,
+-            int q1_q2_sep, int q2_q3_sep);
++            int q1_q2_sep, int q2_q3_sep, int first, int last); // am3_mojo fix: the window
+ 
+         /**
+          * @brief Evolve seminanalytical with alpha = 0.
 diff -ruN a/include/AM3/consts.h b/include/AM3/consts.h
 --- a/include/AM3/consts.h	2026-10-03 23:00:00
 +++ b/include/AM3/consts.h	2026-10-03 23:00:00
@@ -1200,8 +2756,8 @@ diff -ruN a/include/AM3/consts.h b/include/AM3/consts.h
  //======== Physics, Math Constants ========
  
 +// am3_mojo PDG: the PDG 2026 values (Table 1.1, CODATA 2022, and the particle
-+// listings) of am3_mojo's src/am3_mojo/utils/constants.mojo, the derived ones
-+// (SSC units, erg_GeV, statcol) as am3_mojo's Float64 values
++// listings) of am3_mojo's src/am3_mojo/utils/constants.mojo. The derived
++// constants (SSC units, erg_GeV, statcol) are am3_mojo's Float64 values.
  const double
 -    mathpi = 3.141592654, //!<  math PI
 +    mathpi = 3.141592653589793, //!<  math PI
@@ -1241,4 +2797,24 @@ diff -ruN a/include/AM3/consts.h b/include/AM3/consts.h
 +    c0 = 2.99792458e10,      // speed of light cgs
      mubarn = 1.0e-30, //cm^-2, c0 and densities should be consistent with this. microbarn
      mrp2e = massp / masse; //!< ratio between proton and electron masses
+ 
+diff -ruN a/include/AM3/math.h b/include/AM3/math.h
+--- a/include/AM3/math.h	2026-10-03 23:00:00
++++ b/include/AM3/math.h	2026-10-03 23:00:00
+@@ -17,13 +17,11 @@
+ 
+-double int_bk53l(double x); //!< Calculate asymptotic approximation of the integral of modified Bessel function of fractional order 5/3 from x to infinity, for x > 10
++double int_bk53m(double x); //!< Compute the integral of modified Bessel function of fractional order 5/3 from x to infinity, for x > 0.001 (am3_mojo fix: to 3e-14 for every x, no int_bk53l)
+ 
+-double int_bk53m(double x); //!< Compute the integral of modified Bessel function of fractional order 5/3 from x to infinity, for 0.001 < x < 10
+-
+-double int_bk53s(double x); //!< Calculate asymptotic approximation of the integral of modified Bessel function of fractional order 5/3 from x to infinity, for x < 0.001
++double int_bk53s(double x); //!< Calculate the series of the integral of modified Bessel function of fractional order 5/3 from x to infinity, for x < 0.001 (am3_mojo fix: exact coefficients, the x^(4/3) term)
+ 
+ double int_bessel_k53(double x); //!< Compute the integral of modified Bessel function of fractional order 5/3 from x to infinity, for all x > 0
+ 
+-double polylog(double z); //!< Compute polylogarithm of order 2 and argument -z, = Li_2(-z)
++double polylog(double z); //!< Compute the dilogarithm Li_2(z) for real z <= 1 (am3_mojo fix: Li_2(z), not Li_2(-z), to rounding)
+ 
+ void number_split(int *i, double *r, double x, double dlnE); //!< Split the integer (*i) and fractional (*r) parts of x [double].
  

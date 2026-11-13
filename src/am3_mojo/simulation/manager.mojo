@@ -1,5 +1,4 @@
-"""Port of SimulationManager (SimulationManager.cc): switches, per-step
-coefficient calculation and evolution of all species."""
+"""Port of SimulationManager (SimulationManager.cc)."""
 
 from std.time import perf_counter_ns
 from am3_mojo.model.arrays import AM3Arrays
@@ -15,6 +14,19 @@ from am3_mojo.physics.decays import (
     kaon_mass,
     kaon_lifetime,
     kaon_name,
+    PR_PIP,
+    PR_PIM,
+    PR_PI0,
+    PR_MUPL,
+    PR_MUPR,
+    PR_MUML,
+    PR_MUMR,
+    PR_EM,
+    PR_EP,
+    PR_NUE,
+    PR_NUEB,
+    PR_NUM,
+    PR_NUMB,
     N_PROD,
     KaonDecay,
     charm_mass,
@@ -22,13 +34,23 @@ from am3_mojo.physics.decays import (
     charm_charged,
     charm_name,
     CP_PIP,
+    CP_PIM,
     CP_PI0,
+    CP_MUPL,
+    CP_MUPR,
+    CP_MUML,
+    CP_MUMR,
     CP_KP,
     CP_P,
     CP_N,
     CP_EM,
     CP_EP,
     CP_NUE,
+    CP_NUEB,
+    CP_NUM,
+    CP_NUMB,
+    CP_NUT,
+    CP_NUTB,
     CP_GAM,
     N_CPROD,
     CharmDecay,
@@ -41,7 +63,7 @@ from am3_mojo.physics.inverse_compton import Comp
 from am3_mojo.physics.pair_annihilation import PairAnnihilation
 from am3_mojo.physics.pair_production import Pair
 from am3_mojo.physics.photohadron import PhotoHadron
-from am3_mojo.physics.proton_proton import ProtonProton
+from am3_mojo.physics.proton_proton import PP_E_TRANS_NEGATIVE, ProtonProton
 from am3_mojo.physics.synchrotron import Syn, SynP
 from am3_mojo.physics.triplet import TripletPairProduction
 from am3_mojo.simulation.coeffs import *
@@ -60,9 +82,17 @@ from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.parallel import default_num_threads, parallel_tasks
 
+# a species that does not decay gets this mean life [s] (AM3's t_nodecay_s),
+# and the neutrinos and photons this mass [GeV] (AM3's mass_nu and mass_g)
+comptime T_NO_DECAY = 1.0e7
+comptime MASS_NONE = 1e-100
+# the largest center-of-momentum energy bin of the full gamma-gamma pair
+# kernel (AM3's member annihilation_pair_emission_max_com_energy, which nothing
+# changes)
+comptime ANNIHILATION_PAIR_EMISSION_MAX_COM_ENERGY = 138
 
-# profiler slots: 0-35 are AM3's stages (get_profiled_time_labels), the rest
-# the stages of the processes am3_mojo adds
+# profiler slots: 0-35 are AM3's stages (get_profiled_time_labels), and the
+# rest are the stages of the processes that am3_mojo adds
 comptime T_PAIR_ANN = 36
 comptime T_TRIPLET = 37
 comptime T_NEUTRON_DECAY = 38
@@ -75,6 +105,12 @@ comptime T_CHARM_EVOLVE = 44
 comptime T_CHARM_SYN = 45
 comptime T_CHARM_IC = 46
 comptime N_TIMING = 47
+
+# The numbers of decay products in the coefficient blocks of coeffs.mojo, in the
+# order of physics/decays.mojo. Calc_C asserts the layout of the blocks.
+comptime N_KPROD_HAD = PR_MUMR - PR_PIP + 1
+comptime N_KPROD_NU = PR_NUMB - PR_NUE + 1
+comptime N_CPROD_NU = CP_NUTB - CP_NUE + 1
 
 
 def _phot_part_work(m: Pointer[SimulationManager, MutUntrackedOrigin], k: Int):
@@ -106,7 +142,6 @@ struct SimulationManager(Movable):
     var oInj: Injection
     var oExtraCool: ExtraCooling
 
-    # switches
     var estimate_max_energies: Bool
     var process_parse_sed: Bool
     var process_hadronic: Bool
@@ -190,12 +225,18 @@ struct SimulationManager(Movable):
     var optimize_compton_emission_grid: Bool
     var optimize_compton_target_grid: Bool
     var optimize_annihilation_pair_emission: Bool
-    var annihilation_pair_emission_max_com_energy: Int
     var optimize_bethe_heitler_outgoing_pairs_grid: Bool
     var optimize_bethe_heitler_incoming_protons_min: Int
     var optimize_bethe_heitler_target_photon_max: Int
     var optimize_photopion_target_photon_grid: Bool
     var optimize_photopion_target_photon_max: Int
+    # The energies [eV] that the setters of the five limits above asked for.
+    # update_energy_grid takes the limits of the new grid from them.
+    var asked_compton_emission_emin: Float64
+    var asked_compton_target_emax: Float64
+    var asked_bethe_heitler_incoming_protons_min: Float64
+    var asked_bethe_heitler_target_photon_max: Float64
+    var asked_photopion_target_photon_max: Float64
     var pp_model_charged_pions: Int
     var pp_model_neutral_pions: Int
     var pp_transition_energy_to_delta_approx: Float64
@@ -207,37 +248,55 @@ struct SimulationManager(Movable):
 
     var S: List[SolverAlgorithm]
 
-    # coefficient arrays, indexed by the C_* constants of simulation/coeffs.mojo
     var c: List[Vec]
 
     var profile_timing: Bool
-    # the kaon or charm stage did this step's photo-hadronic convolution
     var pg_conv_fresh: Bool
-    var kernels_ready: Bool  # init_kernels ran for the current grid
-    var pair_halves_valid: Bool  # e-/e+ parts of the pair components current
-    # per kaon origin (photo-hadronic, pp): the pions, muons and neutrinos of
-    # the kaon decays are evolved in this step / may be non-zero
+    var kc_idle: Bool
+    var kc_zeroed: Bool
+    var pi0_pp_direct: Vec
+    var kernels_ready: Bool
+    var pair_halves_valid: Bool
+    var components_stale: Bool
+    var last_step_merged: Bool
+    var last_step_hadronic: Bool
     var kchain: List[Bool]
     var kchain_live: List[Bool]
-    # the same for the decay chain of the charm hadrons (kaons, pions, muons,
-    # neutrinos) of each origin
     var cchain: List[Bool]
     var cchain_live: List[Bool]
-    # the kaons of the charm decays of each origin are evolved in this step /
-    # may be non-zero (with or without the components)
     var ckaons: List[Bool]
     var ckaons_live: List[Bool]
-    var hadronic_built: Bool  # init_kernels ran with the hadronic processes
+    var kaons_ev: List[Bool]
+    var kaons_live: List[Bool]
+    var charm_ev: List[Bool]
+    var charm_live: List[Bool]
+    var pchain: List[Bool]
+    var pchain_live: List[Bool]
+    var syn_built: Bool
+    var syn_field: Float64
+    var syn_qsyn: Bool
+    var synp_built: Bool
+    var synp_field: Float64
+    var hadronic_built: Bool
+    var ic_built: Bool
+    var bh_built: Bool
+    # the version that the photo-hadronic and pp kernels were built on
+    # (-1: none)
+    var grid_gen: Int
+    var pg_grid: Int
+    var pp_grid: Int
+    var pp_built_e_trans: Float64
+    var pp_built_charged: Int
+    var pp_built_neutral: Int
+    var pg_built_photon_max: Int
+    var bh_built_protons_min: Int
+    var bh_built_photon_max: Int
+    var ic_built_emin: Int
+    var ic_built_photon_max: Int
     var timing: List[Float64]
     var nthreads: Int
-    # cooling rates computed in this step (evolve_group): the generation
-    # counts the steps (never reset), `fresh` the solvers of this generation's
-    # rates and the photon arrays they used
-    var cool_gen: Int
-    var fresh_gen: Int
     var fresh: List[Int]
     var fresh_nphot: List[Int]
-    # the parts of Calc_Coeff_Phot that run as parallel tasks (_phot_part)
     var phot_parts: List[Int]
 
     def __init__(out self):
@@ -263,8 +322,6 @@ struct SimulationManager(Movable):
         self.oInj = Injection(self.dat, False)
         self.oExtraCool = ExtraCooling(self.dat)
         self.nthreads = default_num_threads()
-        self.cool_gen = 0
-        self.fresh_gen = -1
         self.fresh = List[Int]()
         self.phot_parts = List[Int]()
         self.fresh_nphot = List[Int]()
@@ -331,7 +388,6 @@ struct SimulationManager(Movable):
         self.process_annihilation_cooling = True
         self.process_annihilation_emission = True
         self.optimize_annihilation_pair_emission = True
-        self.annihilation_pair_emission_max_com_energy = 138
         self.process_bethe_heitler = True
         self.process_bethe_heitler_cooling = True
         self.process_bethe_heitler_emission = True
@@ -344,6 +400,24 @@ struct SimulationManager(Movable):
         self.process_photopion_photon_loss = True
         self.optimize_photopion_target_photon_grid = True
         self.optimize_photopion_target_photon_max = 280
+        self.asked_compton_emission_emin = (
+            self.dat.egrid_pho[self.optimize_compton_emission_emin] * MEC2_EV
+        )
+        self.asked_compton_target_emax = (
+            self.dat.egrid_pho[self.optimize_compton_target_emax] * MEC2_EV
+        )
+        self.asked_bethe_heitler_incoming_protons_min = (
+            self.dat.egrid_had[self.optimize_bethe_heitler_incoming_protons_min]
+            * 1e9
+        )
+        self.asked_bethe_heitler_target_photon_max = (
+            self.dat.egrid_pho[self.optimize_bethe_heitler_target_photon_max]
+            * MEC2_EV
+        )
+        self.asked_photopion_target_photon_max = (
+            self.dat.egrid_pho[self.optimize_photopion_target_photon_max]
+            * MEC2_EV
+        )
         self.process_pp = True
         self.process_pp_emission = True
         self.process_pp_emission_pi0_into_cascade = False
@@ -385,20 +459,50 @@ struct SimulationManager(Movable):
         self.step_counter = 0
         self.profile_timing = False
         self.pg_conv_fresh = False
+        self.kc_idle = False
+        self.kc_zeroed = False
+        self.pi0_pp_direct = Vec()
         self.kernels_ready = False
         self.hadronic_built = False
+        self.ic_built = False
+        self.bh_built = False
+        self.grid_gen = 0
+        self.pg_grid = -1
+        self.pp_grid = -1
+        self.pp_built_e_trans = 0.0
+        self.pp_built_charged = 0
+        self.pp_built_neutral = 0
+        self.pg_built_photon_max = 0
+        self.bh_built_protons_min = 0
+        self.bh_built_photon_max = 0
+        self.ic_built_emin = 0
+        self.ic_built_photon_max = 0
         self.pair_halves_valid = True
+        self.components_stale = False
+        self.last_step_merged = False
+        self.last_step_hadronic = False
         self.kchain = [False, False]
         self.kchain_live = [False, False]
         self.cchain = [False, False]
         self.cchain_live = [False, False]
         self.ckaons = [False, False]
         self.ckaons_live = [False, False]
+        self.kaons_ev = [False, False]
+        self.kaons_live = [False, False]
+        self.charm_ev = [False, False]
+        self.charm_live = [False, False]
+        self.pchain = [False, False]
+        self.pchain_live = [False, False]
+        self.syn_built = False
+        self.syn_field = 0.0
+        self.syn_qsyn = False
+        self.synp_built = False
+        self.synp_field = 0.0
         self.timing = zeros(N_TIMING)
         self.Initialize_Solver_Algorithms()
         self.reset_coefficients()  # (getters work before init_kernels)
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def update_verbosity(mut self, v: Bool):
         if v:
             print("updated verbosity to ", 1 if v else 0, sep="")
@@ -423,54 +527,67 @@ struct SimulationManager(Movable):
         for i in range(len(self.S)):
             self.S[i].verbose = v
 
-    def init_kernels(mut self) raises:
-        # the pp delta approximation's transition energy must lie on the hadron
-        # grid: above its top AM3 crashes, and unchecked the pions get no energy
+    def _check_pp_transition_energy(self) raises:
+        """The transition energy of the pp delta approximation must lie on the
+        hadron grid. Above the top of the grid, AM3 crashes. Without this
+        check, the pions get no energy. The check reads the energy as
+        ProtonProton.initialize_kernels takes it: a negative energy stands
+        for PP_E_TRANS_NEGATIVE, which can lie above a small grid. NaN also
+        fails the check."""
         var etop = self.dat.egrid_had[self.dat.nbins_had - 1]
-        if (
-            self.process_hadronic
-            and self.process_pp
-            and self.pp_transition_energy_to_delta_approx > etop
-        ):
+        var e_trans = self.pp_transition_energy_to_delta_approx
+        if e_trans < 0.0:
+            e_trans = PP_E_TRANS_NEGATIVE
+        if not (e_trans <= etop):
             raise Error(
                 String(
                     "the transition energy of the pp delta approximation (",
-                    self.pp_transition_energy_to_delta_approx * 1e9,
-                    " eV) lies above the hadron grid (top: ",
+                    e_trans * 1e9,
+                    " eV) is not a number or lies above the hadron grid",
+                    " (top: ",
                     etop * 1e9,
                     " eV): set_pp_transition_energy_to_delta_approx() a lower",
                     " value or update_energy_grid() a larger grid",
                 )
             )
+
+    def init_kernels(mut self) raises:
+        if self.process_hadronic and self.process_pp:
+            self._check_pp_transition_energy()
         print("init. AM3 kernels:")
         self.print_process_switches()
         print()
         self.rp.print_params()
 
-        self.oSyn.reinitialize_empty_kernels(self.dat)
+        # (the synchrotron kernels are built for the field before their first
+        #  use: _build_syn_kernels)
+        self.syn_built = False
+        self.synp_built = False
         self.oComp.reinitialize_empty_kernels(self.dat)
         if self.process_electron_compton:
-            # (the C++ "every 2nd grid point" options are unreachable: the
-            #  optimize_*_grid switches are C++ bools, i.e. step 1)
+            # (The C++ "every 2nd grid point" options are unreachable: the
+            #  optimize_*_grid switches are C++ bools, that is, step 1. Both
+            #  kernels are built, whatever the emission and photon-loss
+            #  switches.)
             self.oComp.initialize_kernels(
                 self.dat,
-                self.process_electron_compton_emission,
-                self.process_compton_photon_energy_loss,
+                True,
                 self.optimize_compton_emission_emin,
                 self.optimize_compton_target_emax,
             )
+            self.ic_built_emin = self.optimize_compton_emission_emin
+            self.ic_built_photon_max = self.optimize_compton_target_emax
+        self.ic_built = self.process_electron_compton
         self.oPair.reinitialize_empty_kernels(
             self.dat, self.optimize_annihilation_pair_emission
         )
         if self.process_annihilation:
+            # (both kernels, whatever the cooling and emission switches)
             self.oPair.initialize_kernels(
-                self.rp,
-                self.dat,
-                self.process_annihilation_cooling,
-                self.process_annihilation_emission,
-                self.optimize_annihilation_pair_emission,
+                self.rp, self.dat, self.optimize_annihilation_pair_emission
             )
-        if self.pair_annihilation_active():
+        # (whatever the positron merge, which can be switched off after it)
+        if self.process_pair_annihilation:
             self.oPairAnn.initialize_kernels(self.dat)
         else:
             self.oPairAnn.free_kernels()  # (no stale kernels of another grid)
@@ -478,31 +595,17 @@ struct SimulationManager(Movable):
             self.oTPP.initialize_kernels(self.dat)
         else:
             self.oTPP.free_kernels()
+        self.bh_built = False
         if self.process_hadronic:
-            self.oSynP.reinitialize_empty_kernels(self.dat)
-            self.oHadIC.reinitialize_empty_kernels(
-                self.dat, True, True, True, True, True
-            )
+            self.oHadIC.reinitialize_empty_kernels(self.dat)
             # (the step tables are cheap and always built, so that an emission
             #  switched on after init_kernels gets the right one)
             self.oHadIC.initialize_kernels(self.dat)
-            self.oBH.reinitialize_empty_kernels(
-                self.dat,
-                Int(self.optimize_bethe_heitler_outgoing_pairs_grid),
-                self.optimize_bethe_heitler_target_photon_max,
-            )
             if self.process_bethe_heitler:
-                self.oBH.initialize_kernels(
-                    self.dat,
-                    Int(self.process_bethe_heitler_emission),
-                    Int(self.process_bethe_heitler_cooling),
-                    Int(self.optimize_bethe_heitler_outgoing_pairs_grid),
-                    self.optimize_bethe_heitler_incoming_protons_min,
-                    self.optimize_bethe_heitler_target_photon_max,
-                )
-            self.oPionDec.reinitialize_empty_kernels(self.dat)
+                self._build_bh_kernels()
+            else:
+                self.oBH.reinitialize_empty_kernels(self.dat)
             self.oPionDec.initialize_kernels(self.dat)
-            self.oMuonDec.reinitialize_empty_kernels(self.dat)
             self.oMuonDec.initialize_kernels(self.dat)
             if self.process_neutron_decay:
                 self.oNeutronDec.initialize_kernels(self.dat)
@@ -517,37 +620,127 @@ struct SimulationManager(Movable):
                 self.oCharmDec.initialize_kernels(self.dat)
             else:
                 self.oCharmDec.free_kernels()
-            # (the modules are always reset to the current grid, so that no
-            #  kernel of an earlier grid survives)
-            self.oPhotoHadron.reinitialize_empty_kernels(
-                self.dat, self.optimize_photopion_target_photon_max
-            )
+            # (The modules are reset to the current grid, so that no kernel of
+            #  an earlier grid survives. With the process off, the kernels of
+            #  this grid stay, as in AM3, for the process switched on again.)
             if self.process_photopion:
-                # (the "every n-th target photon" option is unreachable: the
-                #  optimize_photopion_target_photon_grid switch is a C++ bool)
-                self.oPhotoHadron.initialize_kernels(
-                    self.dat,
-                    Int(self.process_photopion_emission),
-                    Int(self.process_photopion_cooling),
-                    Int(self.process_photopion_photon_loss),
-                    self.optimize_photopion_target_photon_max,
-                    self.process_kaons,
-                    self.process_charm,
-                )
-            self.oProtonProton.reinitialize_empty_kernels(self.dat)
+                self._build_pg_kernels(self.process_kaons, self.process_charm)
+            elif self.pg_grid != self.grid_gen:
+                self.oPhotoHadron.reinitialize_empty_kernels(self.dat)
+                self.pg_grid = -1
             if self.process_pp:
-                self.oProtonProton.initialize_kernels(
-                    self.dat,
-                    self.pp_transition_energy_to_delta_approx,
-                    self.pp_model_charged_pions,
-                    self.pp_model_neutral_pions,
-                    self.process_kaons,
-                    self.process_charm,
-                )
-        self.Update_Mag_Field(self.rp.mag_field)
+                self._build_pp_kernels(self.process_kaons, self.process_charm)
+            elif self.pp_grid != self.grid_gen:
+                self.oProtonProton.reinitialize_empty_kernels(self.dat)
+                self.pp_grid = -1
         self.clear_am3()
         self.kernels_ready = True
         self.hadronic_built = self.process_hadronic
+
+    def _build_bh_kernels(mut self) raises:
+        """Both Bethe-Heitler kernels, whatever the emission and cooling
+        switches."""
+        self.oBH.initialize_kernels(
+            self.dat,
+            self.optimize_bethe_heitler_incoming_protons_min,
+            self.optimize_bethe_heitler_target_photon_max,
+        )
+        self.bh_built = True
+        self.bh_built_protons_min = (
+            self.optimize_bethe_heitler_incoming_protons_min
+        )
+        self.bh_built_photon_max = self.optimize_bethe_heitler_target_photon_max
+
+    def _build_pg_kernels(mut self, kaons: Bool, charm: Bool):
+        """All photo-hadronic kernels, whatever the emission, cooling and
+        photon-loss switches. (The "every n-th target photon" option is
+        unreachable: the optimize_photopion_target_photon_grid switch is a C++
+        bool.)"""
+        self.oPhotoHadron.reinitialize_empty_kernels(self.dat)
+        self.oPhotoHadron.initialize_kernels(
+            self.dat, self.optimize_photopion_target_photon_max, kaons, charm
+        )
+        self.pg_grid = self.grid_gen
+        self.pg_built_photon_max = self.optimize_photopion_target_photon_max
+
+    def _build_pp_kernels(mut self, kaons: Bool, charm: Bool):
+        self.oProtonProton.reinitialize_empty_kernels(self.dat)
+        self.oProtonProton.initialize_kernels(
+            self.dat,
+            self.pp_transition_energy_to_delta_approx,
+            self.pp_model_charged_pions,
+            self.pp_model_neutral_pions,
+            kaons,
+            charm,
+        )
+        self.pp_grid = self.grid_gen
+        self.pp_built_e_trans = self.pp_transition_energy_to_delta_approx
+        self.pp_built_charged = self.pp_model_charged_pions
+        self.pp_built_neutral = self.pp_model_neutral_pions
+
+    def _rebuild_changed_kernels(mut self) raises:
+        """A setting changed after init_kernels acts as set before it (AM3's
+        kernels keep those of init_kernels, while the getters report the new
+        ones). Kernels not built stay so. Their process, if switched on after an
+        init_kernels without it, makes nothing (pp, Bethe-Heitler, inverse
+        Compton, as in AM3). For photo-pion production, evolve_step raises
+        instead. A rebuild keeps the kaons and charm hadrons of the kernels
+        (kaons_can_act)."""
+        if self.process_hadronic:
+            if (
+                self.process_pp
+                and self.pp_grid == self.grid_gen
+                and (
+                    self.pp_transition_energy_to_delta_approx
+                    != self.pp_built_e_trans
+                    or self.pp_model_charged_pions != self.pp_built_charged
+                    or self.pp_model_neutral_pions != self.pp_built_neutral
+                )
+            ):
+                self._check_pp_transition_energy()
+                var kaons = self.oProtonProton.kaons_built
+                var charm = self.oProtonProton.charm_built
+                self._build_pp_kernels(kaons, charm)
+            if (
+                self.process_photopion
+                and self.pg_grid == self.grid_gen
+                and self.optimize_photopion_target_photon_max
+                != self.pg_built_photon_max
+            ):
+                var kaons = self.oPhotoHadron.kaons_built
+                var charm = self.oPhotoHadron.charm_built
+                self._build_pg_kernels(kaons, charm)
+            # (the proton-loss kernel takes neither limit)
+            if (
+                self.process_bethe_heitler
+                and self.process_bethe_heitler_emission
+                and self.bh_built
+                and (
+                    self.optimize_bethe_heitler_incoming_protons_min
+                    != self.bh_built_protons_min
+                    or self.optimize_bethe_heitler_target_photon_max
+                    != self.bh_built_photon_max
+                )
+            ):
+                self._build_bh_kernels()
+        # (the emission kernel: the photon-loss kernel takes neither limit)
+        if (
+            self.process_electron_compton
+            and self.process_electron_compton_emission
+            and self.ic_built
+            and (
+                self.optimize_compton_emission_emin != self.ic_built_emin
+                or self.optimize_compton_target_emax != self.ic_built_photon_max
+            )
+        ):
+            self.oComp.initialize_kernels(
+                self.dat,
+                False,
+                self.optimize_compton_emission_emin,
+                self.optimize_compton_target_emax,
+            )
+            self.ic_built_emin = self.optimize_compton_emission_emin
+            self.ic_built_photon_max = self.optimize_compton_target_emax
 
     def ReInit_Physics_Modules(mut self):
         if self.verbose:
@@ -570,29 +763,108 @@ struct SimulationManager(Movable):
         self.oEscape.clear_internal_arrays(self.dat)
         self.oInj.clear_internal_arrays(self.dat)
         self.oExtraCool.clear_internal_arrays(self.dat)
-        for i in range(self.dat.nbins_pho):
-            self.dat.n[P_photons_on_had_grid][i] = 0.0
 
     def clear_particle_densities(mut self):
         if self.verbose:
             print("Sim.Manager: clear_particle_densities")
         self.dat.clear_all_particle_arrays()
+        # the nucleons of the last step's charm decays, a source of the next
+        fill_zero(self.c[C_qpro_C])
+        fill_zero(self.c[C_qntr_C])
         self.step_counter = 0
         self.pair_halves_valid = True  # (all zero)
+        self.components_stale = False
+        self.last_step_merged = False
+        self.last_step_hadronic = False
         self.kchain_live = [False, False]
         self.cchain_live = [False, False]
         self.ckaons_live = [False, False]
+        self.kaons_live = [False, False]
+        self.charm_live = [False, False]
+        self.pchain_live = [False, False]
+        # and the populations the last step evolved, which the kaon and charm
+        # cooling getters follow until the next step
+        self.ckaons = [False, False]
+        self.kaons_ev = [False, False]
+        self.charm_ev = [False, False]
+        self.kc_zeroed = False
+        # The estimated maximum energies of a fresh object, not the last run's.
+        # Otherwise, the first step (without an estimate) reports the old ones.
+        var fresh = RunParams()
+        self.rp.estimated_electron_emax = fresh.estimated_electron_emax
+        self.rp.estimated_proton_emax = fresh.estimated_proton_emax
 
     def clear_am3(mut self):
         if self.verbose:
-            print("Sim.Manager: clear_particle_densities")
+            print("Sim.Manager: clear_am3")
         self.clear_particle_densities()
         self.reset_coefficients()
         self.ReInit_Physics_Modules()
         self.Initialize_Solver_Algorithms()
 
+    def zero_components(mut self):
+        """The kaons and charm hadrons of each origin, the kaons of the charm
+        decays and the nu_tau of the charm decay chains are not components. They
+        are evolved without parse_sed too."""
+        comptime assert (
+            P_muon_plus_left_Kpp + 4 - P_pion_plus_Kpg == 2 * (2 + 4)
+            and P_muon_plus_left_Cpp + 4 - P_pion_plus_Cpg == 2 * (2 + 4)
+            and P_neutrino_el_Cpp + 4 - P_neutrino_el_anti_ndec
+            == 1 + 4 * 4 + 2 * 2
+            and P_pairs_ndec + 1 - P_pairs_in_ele == 2 * N_PAIR_COMP + 2
+        )
+        var first: List[Int] = [
+            P_pion_plus_pg,
+            P_muon_plus_left_pg,
+            P_pion_plus_Kpg,
+            P_pion_plus_Cpg,
+            P_neutrino_el_pg,
+            P_neutrino_el_anti_ndec,
+            P_pairs_in,
+            P_pairs_in_ele,
+            P_photons_insy,
+            P_photons_pair_ann,
+        ]
+        var last: List[Int] = [
+            P_pion_0_pp,
+            P_muon_minus_right_pp,
+            P_muon_plus_left_Kpp + 3,
+            P_muon_plus_left_Cpp + 3,
+            P_neutrino_mu_anti_pp,
+            P_neutrino_el_Cpp + 3,
+            P_pairs_pp,
+            P_pairs_ndec,
+            P_photons_inj,
+            P_photons_chic,
+        ]
+        for r in range(len(first)):
+            for id in range(first[r], last[r] + 1):
+                fill_zero(self.dat.n[id])
+        self.pair_halves_valid = True
+        self.pchain_live = [False, False]
+        self.kchain_live = [False, False]
+        self.cchain_live = [False, False]
+        self.components_stale = False
+
     def _nonzero(self, id: Int) -> Bool:
         for v in self.dat.n[id]:
+            if v != 0.0:
+                return True
+        return False
+
+    def _block_nonzero(self, id0: Int, n: Int) -> Bool:
+        for k in range(n):
+            if self._nonzero(id0 + k):
+                return True
+        return False
+
+    def _live(self, id: Int, q: Int) -> Bool:
+        """A component that holds particles or gets some is evolved, also after
+        its process is switched off. So it escapes and cools like the total that
+        it is part of. (AM3 froze it while the total evolved.)"""
+        if self._nonzero(id):
+            return True
+        for v in self.c[q]:
             if v != 0.0:
                 return True
         return False
@@ -602,7 +874,6 @@ struct SimulationManager(Movable):
             resize_zero(self.c[id], n)
 
     def reset_coefficients(mut self):
-        """Resize every coefficient array to its grid and set it to zero."""
         if self.verbose:
             print("Sim.Manager: reset coefficient arrays")
         self._reset_coeffs(C_HAD_BEGIN, C_HAD_END, self.dat.nbins_had)
@@ -726,9 +997,9 @@ struct SimulationManager(Movable):
             ")",
             sep="",
         )
-        var opt = (
-            "(opt. 14-bin kernel)" if self.optimize_annihilation_pair_emission else "(full kernel)"
-        )
+        var opt = "(opt. eight-bin kernel)" if (
+            self.optimize_annihilation_pair_emission
+        ) else "(full kernel)"
         print(
             "pair prod. (gamma+gamma->e+e): ",
             b(self.process_annihilation),
@@ -854,9 +1125,9 @@ struct SimulationManager(Movable):
             sep="",
         )
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # solver algorithms
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def _mk(
         self,
         name: String,
@@ -867,12 +1138,11 @@ struct SimulationManager(Movable):
         TUS: Float64,
         HLS: Float64,
         MR: Float64,
-        Dt: Float64,
-        sy: Bool,
-        qsc: Bool,
-        ic: Bool,
-        dec: Bool,
     ) -> SolverAlgorithm:
+        """The solver's time step and its cooling and decay switches are set
+        before every use (evolve_group, the _sync_* functions of evolve_step,
+        AM3._current_cooling). So the solver starts without them. (AM3 gives
+        them here, and nowhere else.)"""
         return SolverAlgorithm(
             name,
             NB,
@@ -883,11 +1153,11 @@ struct SimulationManager(Movable):
             TUS,
             HLS,
             MR,
-            Dt,
-            sy,
-            qsc,
-            ic,
-            dec,
+            0.0,
+            False,
+            False,
+            False,
+            False,
             self.solver_threshold_cool_dom,
             self.solver_threshold_esc_dom,
             self.solver_threshold_matrix,
@@ -895,138 +1165,73 @@ struct SimulationManager(Movable):
             self.verbose,
         )
 
-    def _mk_kaon(
-        self,
-        s: Int,
-        nh: Int,
-        pgo_h: Int,
-        dt_sec: Float64,
-        sy: Bool,
-        qsc: Bool,
-        ic: Bool,
+    def _mk_hadron(
+        self, name: String, tau: Float64, mass: Float64
     ) -> SolverAlgorithm:
-        """Solver of kaon species s: synchrotron and inverse-Compton cooling
-        for K+- (as for charged pions), decay."""
-        var charged = s == KP or s == KM
+        """Solver of a hadron or muon of mean life tau [s] and mass [GeV], on
+        the hadron grid in seconds and GeV."""
         return self._mk(
-            kaon_name(s),
-            nh,
-            pgo_h,
+            name,
+            self.dat.nbins_had,
+            -self.dat.ind_min_energy_pho_hadgrid,
             1.0,
             1.0,
             1.0,
-            kaon_lifetime(s),
-            kaon_mass(s) / MASS_E,
-            dt_sec,
-            sy and charged,
-            qsc and charged,
-            ic and charged,
-            self.process_kaon_decay,
+            tau,
+            mass / MASS_E,
         )
 
-    def _mk_charm(
-        self,
-        s: Int,
-        nh: Int,
-        pgo_h: Int,
-        dt_sec: Float64,
-        sy: Bool,
-        qsc: Bool,
-        ic: Bool,
-    ) -> SolverAlgorithm:
-        """Solver of charm species s: synchrotron and inverse-Compton cooling
-        for the charged ones (as for charged pions), decay."""
-        var charged = charm_charged(s)
+    def _mk_neutrino(self, name: String) -> SolverAlgorithm:
         return self._mk(
-            charm_name(s),
-            nh,
-            pgo_h,
+            name,
+            self.dat.nbins_nu,
+            -self.dat.ind_min_energy_pho_hadgrid,
             1.0,
             1.0,
             1.0,
-            charm_lifetime(s),
-            charm_mass(s) / MASS_E,
-            dt_sec,
-            sy and charged,
-            qsc and charged,
-            ic and charged,
-            self.process_charm_decay,
+            T_NO_DECAY,
+            MASS_NONE / MASS_E,
         )
+
+    def _mk_lepton(self, name: String) -> SolverAlgorithm:
+        return self._mk(
+            name,
+            self.dat.nbins_lep,
+            -self.dat.ind_min_energy_pho,
+            MASS_E,
+            L_SSC,
+            T_SSC,
+            T_NO_DECAY,
+            1.0,
+        )
+
+    def _mk_photon(self, name: String) -> SolverAlgorithm:
+        return self._mk(
+            name,
+            self.dat.nbins_pho,
+            0,
+            MASS_NONE,
+            L_SSC,
+            T_SSC,
+            T_NO_DECAY,
+            1.0,
+        )
+
+    def _mk_kaon(self, s: Int) -> SolverAlgorithm:
+        return self._mk_hadron(kaon_name(s), kaon_lifetime(s), kaon_mass(s))
+
+    def _mk_charm(self, s: Int) -> SolverAlgorithm:
+        return self._mk_hadron(charm_name(s), charm_lifetime(s), charm_mass(s))
 
     def Initialize_Solver_Algorithms(mut self):
         if self.verbose:
             print("Initialize_Solver_Algorithms")
-        var t_nodecay_s = 1.0e7
-        var mass_nu = 1e-100
-        var mass_g = 1e-100
-        var dt_sec = self.rp.dt
-        var dt_SSC = dt_sec / T_SSC
-        var nh = self.dat.nbins_had
-        var nn = self.dat.nbins_nu
-        var nl = self.dat.nbins_lep
-        var ng = self.dat.nbins_pho
-        var pgo_h = -self.dat.ind_min_energy_pho_hadgrid
-        var pgo_l = -self.dat.ind_min_energy_pho
-        var qsc = self.process_quantum_syn_cooling
-        var p_sy = self.process_proton_syn and self.process_proton_syn_cooling
-        var p_ic = (
-            self.process_proton_compton and self.process_proton_compton_cooling
-        )
-        var pi_sy = self.process_pion_syn and self.process_pion_syn_cooling
-        var pi_ic = (
-            self.process_pion_compton and self.process_pion_compton_cooling
-        )
-        var mu_sy = self.process_muon_syn and self.process_muon_syn_cooling
-        var mu_ic = (
-            self.process_muon_compton and self.process_muon_compton_cooling
-        )
-        var e_sy = (
-            self.process_electron_syn and self.process_electron_syn_cooling
-        )
-        var e_ic = (
-            self.process_electron_compton
-            and self.process_electron_compton_cooling
-        )
-        var pid = self.process_pion_decay
-        var mud = self.process_muon_decay
 
         var S = List[SolverAlgorithm](capacity=N_SOLVERS)
-        S.append(
-            self._mk(
-                "proton",
-                nh,
-                pgo_h,
-                1.0,
-                1.0,
-                1.0,
-                t_nodecay_s,
-                MASS_P / MASS_E,
-                dt_sec,
-                p_sy,
-                qsc,
-                p_ic,
-                False,
-            )
-        )
+        S.append(self._mk_hadron("proton", T_NO_DECAY, MASS_P))
         # neutron decay (am3_mojo addition): PDG 2026 mean life and mass. AM3
         # gives the neutron solver 879.5 s and m_p, with the decay off.
-        S.append(
-            self._mk(
-                "neutron",
-                nh,
-                pgo_h,
-                1.0,
-                1.0,
-                1.0,
-                TAU_N,
-                MASS_N / MASS_E,
-                dt_sec,
-                False,
-                False,
-                False,
-                self.process_neutron_decay,
-            )
-        )
+        S.append(self._mk_hadron("neutron", TAU_N, MASS_N))
         var pion_names = List[String]()
         pion_names.append("pion_plus")
         pion_names.append("pion_minus")
@@ -1035,24 +1240,7 @@ struct SimulationManager(Movable):
         pion_names.append("pp_produced_pion_plus")
         pion_names.append("pp_produced_pion_minus")
         for k in range(6):
-            var mr = MASS_PI / MASS_E
-            S.append(
-                self._mk(
-                    pion_names[k],
-                    nh,
-                    pgo_h,
-                    1.0,
-                    1.0,
-                    1.0,
-                    TAU_PI,
-                    mr,
-                    dt_sec,
-                    pi_sy,
-                    qsc,
-                    pi_ic,
-                    pid,
-                )
-            )
+            S.append(self._mk_hadron(pion_names[k], TAU_PI, MASS_PI))
         var mu_names = List[String]()
         for pre in ["", "pgamma_produced_", "pp_produced_"]:
             for n in [
@@ -1063,23 +1251,7 @@ struct SimulationManager(Movable):
             ]:
                 mu_names.append(String(pre) + String(n))
         for k in range(12):
-            S.append(
-                self._mk(
-                    mu_names[k],
-                    nh,
-                    pgo_h,
-                    1.0,
-                    1.0,
-                    1.0,
-                    TAU_MU,
-                    MASS_MU / MASS_E,
-                    dt_sec,
-                    mu_sy,
-                    qsc,
-                    mu_ic,
-                    mud,
-                )
-            )
+            S.append(self._mk_hadron(mu_names[k], TAU_MU, MASS_MU))
         var nu_names = List[String]()
         for pre in ["", "pgamma_produced_", "pp_produced_"]:
             for n in [
@@ -1090,23 +1262,7 @@ struct SimulationManager(Movable):
             ]:
                 nu_names.append(String(pre) + String(n))
         for k in range(12):
-            S.append(
-                self._mk(
-                    nu_names[k],
-                    nn,
-                    pgo_h,
-                    1.0,
-                    1.0,
-                    1.0,
-                    t_nodecay_s,
-                    mass_nu / MASS_E,
-                    dt_sec,
-                    False,
-                    False,
-                    False,
-                    False,
-                )
-            )
+            S.append(self._mk_neutrino(nu_names[k]))
         var lep_names = List[String]()
         for n in [
             "electron",
@@ -1120,23 +1276,7 @@ struct SimulationManager(Movable):
         ]:
             lep_names.append(String(n))
         for k in range(8):
-            S.append(
-                self._mk(
-                    lep_names[k],
-                    nl,
-                    pgo_l,
-                    MASS_E,
-                    L_SSC,
-                    T_SSC,
-                    t_nodecay_s,
-                    1.0,
-                    dt_SSC,
-                    e_sy,
-                    qsc,
-                    e_ic,
-                    False,
-                )
-            )
+            S.append(self._mk_lepton(lep_names[k]))
         var g_names = List[String]()
         for n in [
             "photon",
@@ -1163,367 +1303,79 @@ struct SimulationManager(Movable):
         ]:
             g_names.append(String(n))
         for k in range(21):
-            S.append(
-                self._mk(
-                    g_names[k],
-                    ng,
-                    0,
-                    mass_g,
-                    L_SSC,
-                    T_SSC,
-                    t_nodecay_s,
-                    1.0,
-                    dt_SSC,
-                    False,
-                    False,
-                    False,
-                    False,
-                )
-            )
+            S.append(self._mk_photon(g_names[k]))
         # species am3_mojo adds to AM3
-        S.append(
-            self._mk(
-                "photon_pair_annihilation",
-                ng,
-                0,
-                mass_g,
-                L_SSC,
-                T_SSC,
-                t_nodecay_s,
-                1.0,
-                dt_SSC,
-                False,
-                False,
-                False,
-                False,
-            )
-        )
-        S.append(
-            self._mk(
-                "triplet_produced_pairs",
-                nl,
-                pgo_l,
-                MASS_E,
-                L_SSC,
-                T_SSC,
-                t_nodecay_s,
-                1.0,
-                dt_SSC,
-                e_sy,
-                qsc,
-                e_ic,
-                False,
-            )
-        )
+        S.append(self._mk_photon("photon_pair_annihilation"))
+        S.append(self._mk_lepton("triplet_produced_pairs"))
         for n in ["photon_triplet-produced_syn", "photon_triplet-produced_IC"]:
-            S.append(
-                self._mk(
-                    String(n),
-                    ng,
-                    0,
-                    mass_g,
-                    L_SSC,
-                    T_SSC,
-                    t_nodecay_s,
-                    1.0,
-                    dt_SSC,
-                    False,
-                    False,
-                    False,
-                    False,
-                )
-            )
-        S.append(
-            self._mk(
-                "neutron_decay_electrons",
-                nl,
-                pgo_l,
-                MASS_E,
-                L_SSC,
-                T_SSC,
-                t_nodecay_s,
-                1.0,
-                dt_SSC,
-                e_sy,
-                qsc,
-                e_ic,
-                False,
-            )
-        )
+            S.append(self._mk_photon(String(n)))
+        S.append(self._mk_lepton("neutron_decay_electrons"))
         for n in [
             "photon_neutron-decay-electrons_syn",
             "photon_neutron-decay-electrons_IC",
         ]:
-            S.append(
-                self._mk(
-                    String(n),
-                    ng,
-                    0,
-                    mass_g,
-                    L_SSC,
-                    T_SSC,
-                    t_nodecay_s,
-                    1.0,
-                    dt_SSC,
-                    False,
-                    False,
-                    False,
-                    False,
-                )
-            )
-        S.append(
-            self._mk(
-                "neutron_decay_electron_anti_neutrino",
-                nn,
-                pgo_h,
-                1.0,
-                1.0,
-                1.0,
-                t_nodecay_s,
-                mass_nu / MASS_E,
-                dt_sec,
-                False,
-                False,
-                False,
-                False,
-            )
-        )
-        var k_sy = self.process_kaon_syn and self.process_kaon_syn_cooling
-        var k_ic = (
-            self.process_kaon_compton and self.process_kaon_compton_cooling
-        )
+            S.append(self._mk_photon(String(n)))
+        S.append(self._mk_neutrino("neutron_decay_electron_anti_neutrino"))
         for s in range(N_KAON):  # kaons from photo-hadronic interactions
-            S.append(self._mk_kaon(s, nh, pgo_h, dt_sec, k_sy, qsc, k_ic))
-        S.append(
-            self._mk(
-                "photon_kaon_syn",
-                ng,
-                0,
-                mass_g,
-                L_SSC,
-                T_SSC,
-                t_nodecay_s,
-                1.0,
-                dt_SSC,
-                False,
-                False,
-                False,
-                False,
-            )
-        )
-        S.append(
-            self._mk(
-                "photon_kaon_IC",
-                ng,
-                0,
-                mass_g,
-                L_SSC,
-                T_SSC,
-                t_nodecay_s,
-                1.0,
-                dt_SSC,
-                False,
-                False,
-                False,
-                False,
-            )
-        )
+            S.append(self._mk_kaon(s))
+        S.append(self._mk_photon("photon_kaon_syn"))
+        S.append(self._mk_photon("photon_kaon_IC"))
         for s in range(N_KAON):  # kaons from pp collisions
-            S.append(self._mk_kaon(s, nh, pgo_h, dt_sec, k_sy, qsc, k_ic))
-        # the pions, muons and neutrinos of the kaon decays, per kaon origin:
-        # configured as AM3's pion, muon and neutrino components
+            S.append(self._mk_kaon(s))
+        # the pions, muons and neutrinos of the kaon decays are configured as
+        # AM3's pion, muon and neutrino components
         var kpre: List[String] = ["pgamma_kaon_decay_", "pp_kaon_decay_"]
         for o in range(2):
             for k in range(2):
                 S.append(
-                    self._mk(
-                        kpre[o] + pion_names[k],
-                        nh,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        TAU_PI,
-                        MASS_PI / MASS_E,
-                        dt_sec,
-                        pi_sy,
-                        qsc,
-                        pi_ic,
-                        pid,
-                    )
+                    self._mk_hadron(kpre[o] + pion_names[k], TAU_PI, MASS_PI)
                 )
         for o in range(2):
             for k in range(4):
                 S.append(
-                    self._mk(
-                        kpre[o] + mu_names[k],
-                        nh,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        TAU_MU,
-                        MASS_MU / MASS_E,
-                        dt_sec,
-                        mu_sy,
-                        qsc,
-                        mu_ic,
-                        mud,
-                    )
+                    self._mk_hadron(kpre[o] + mu_names[k], TAU_MU, MASS_MU)
                 )
         for o in range(2):
             for k in range(4):
-                S.append(
-                    self._mk(
-                        kpre[o] + nu_names[k],
-                        nn,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        t_nodecay_s,
-                        mass_nu / MASS_E,
-                        dt_sec,
-                        False,
-                        False,
-                        False,
-                        False,
-                    )
-                )
+                S.append(self._mk_neutrino(kpre[o] + nu_names[k]))
         # the nu_mu and anti-nu_mu of the decays of the pions made in the
-        # interactions, per origin: configured as AM3's neutrino components
+        # interactions are configured as AM3's neutrino components
         var ppre: List[String] = [
             "pgamma_produced_pion_decay_",
             "pp_produced_pion_decay_",
         ]
         for o in range(2):
             for k in range(2, 4):
-                S.append(
-                    self._mk(
-                        ppre[o] + nu_names[k],
-                        nn,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        t_nodecay_s,
-                        mass_nu / MASS_E,
-                        dt_sec,
-                        False,
-                        False,
-                        False,
-                        False,
-                    )
-                )
+                S.append(self._mk_neutrino(ppre[o] + nu_names[k]))
         # charm hadrons (photo-hadronic, their photon components, pp) and the
         # kaons, pions, muons and neutrinos of their decays, per origin
-        var c_sy = self.process_charm_syn and self.process_charm_syn_cooling
-        var c_ic = (
-            self.process_charm_compton and self.process_charm_compton_cooling
-        )
         for s in range(N_CHARM):
-            S.append(self._mk_charm(s, nh, pgo_h, dt_sec, c_sy, qsc, c_ic))
+            S.append(self._mk_charm(s))
         for n in ["photon_charm_syn", "photon_charm_IC"]:
-            S.append(
-                self._mk(
-                    String(n),
-                    ng,
-                    0,
-                    mass_g,
-                    L_SSC,
-                    T_SSC,
-                    t_nodecay_s,
-                    1.0,
-                    dt_SSC,
-                    False,
-                    False,
-                    False,
-                    False,
-                )
-            )
+            S.append(self._mk_photon(String(n)))
         for s in range(N_CHARM):
-            S.append(self._mk_charm(s, nh, pgo_h, dt_sec, c_sy, qsc, c_ic))
+            S.append(self._mk_charm(s))
         for _ in range(2):
             for s in range(N_KAON):
-                S.append(self._mk_kaon(s, nh, pgo_h, dt_sec, k_sy, qsc, k_ic))
+                S.append(self._mk_kaon(s))
         var cpre: List[String] = ["pgamma_charm_decay_", "pp_charm_decay_"]
         for o in range(2):
             for k in range(2):
                 S.append(
-                    self._mk(
-                        cpre[o] + pion_names[k],
-                        nh,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        TAU_PI,
-                        MASS_PI / MASS_E,
-                        dt_sec,
-                        pi_sy,
-                        qsc,
-                        pi_ic,
-                        pid,
-                    )
+                    self._mk_hadron(cpre[o] + pion_names[k], TAU_PI, MASS_PI)
                 )
         for o in range(2):
             for k in range(4):
                 S.append(
-                    self._mk(
-                        cpre[o] + mu_names[k],
-                        nh,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        TAU_MU,
-                        MASS_MU / MASS_E,
-                        dt_sec,
-                        mu_sy,
-                        qsc,
-                        mu_ic,
-                        mud,
-                    )
+                    self._mk_hadron(cpre[o] + mu_names[k], TAU_MU, MASS_MU)
                 )
         for o in range(2):
             for k in range(4):
-                S.append(
-                    self._mk(
-                        cpre[o] + nu_names[k],
-                        nn,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        t_nodecay_s,
-                        mass_nu / MASS_E,
-                        dt_sec,
-                        False,
-                        False,
-                        False,
-                        False,
-                    )
-                )
+                S.append(self._mk_neutrino(cpre[o] + nu_names[k]))
         var tau_names: List[String] = ["tau_neutrino", "tau_anti_neutrino"]
         for o in range(2):
             for k in range(2):
-                S.append(
-                    self._mk(
-                        cpre[o] + tau_names[k],
-                        nn,
-                        pgo_h,
-                        1.0,
-                        1.0,
-                        1.0,
-                        t_nodecay_s,
-                        mass_nu / MASS_E,
-                        dt_sec,
-                        False,
-                        False,
-                        False,
-                        False,
-                    )
-                )
+                S.append(self._mk_neutrino(cpre[o] + tau_names[k]))
         comptime assert (
             SA_gpann == 61
             and SA_eptpp == 62
@@ -1564,14 +1416,23 @@ struct SimulationManager(Movable):
             and SA_nutau_Cpp == 151
             and N_SOLVERS == 153
         )
+        # Keep the inverse-Compton cooling kernels of the solvers before. They
+        # depend only on the grid, the units and the mass (same_ic_kernel). So
+        # the step after a clear_am3 does not compute them again (AM3 does, and
+        # so does a step on a new grid).
+        if len(self.S) == len(S):
+            for k in range(len(S)):
+                if self.S[k].ker_status == 1 and S[k].same_ic_kernel(self.S[k]):
+                    swap(S[k].ker_ic_t, self.S[k].ker_ic_t)
+                    S[k].ker_status = 1
         self.S = S^
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # species evolution
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def _ensure_ic_kernel(mut self, k: Int) raises:
         """IC cooling kernels are identical for solvers with the same grid,
-        units and mass: compute once and copy."""
+        units and mass."""
         if not self.S[k].process_ic or self.S[k].ker_status != 0:
             return
         for o in range(len(self.S)):
@@ -1586,18 +1447,10 @@ struct SimulationManager(Movable):
         self.S[k].compute_ic_ker(self.nthreads)
 
     def evolve_group(mut self, rows: List[Evolution]) raises:
-        """Advance a group of independent species by one time step.
-
-        Cooling rates depend only on the species, the field and the target
-        photons, all fixed during a step: the first solver of each
-        configuration computes them, unless a solver of an earlier group did
-        so in this step, and the others share them. The new rates are
-        computed in parallel, then the solves run in parallel."""
+        """Cooling rates depend only on the species, the field and the target
+        photons, which are all fixed during a step. Solvers of the same
+        configuration share them."""
         var b = self.rp.mag_field
-        if self.fresh_gen != self.cool_gen:
-            self.fresh.clear()
-            self.fresh_nphot.clear()
-            self.fresh_gen = self.cool_gen
         var distinct = True
         var lead = List[Int](length=len(rows), fill=-1)
         var cjobs = List[CoolJob]()
@@ -1615,7 +1468,6 @@ struct SimulationManager(Movable):
                 ):
                     ld = rows[o].solver
             if ld < 0:
-                # computed by a solver of an earlier group in this step
                 for f in range(len(self.fresh)):
                     var j = self.fresh[f]
                     if self.fresh_nphot[f] == rows[r].nphot and self.S[
@@ -1648,9 +1500,12 @@ struct SimulationManager(Movable):
                     self.fresh.append(k)
                     self.fresh_nphot.append(rows[r].nphot)
             else:
-                var asy = self.S[lead[r]].Asy.copy()
-                var aic = self.S[lead[r]].Aic.copy()
-                self.S[k].share_cooling(asy, aic, self.S[lead[r]].cooling_on)
+                # (through pointers: passed as arguments of a call on self.S[k],
+                #  the lead's arrays need copies, one allocation each)
+                var asy = pd(self.S[lead[r]].Asy)
+                var aic = pd(self.S[lead[r]].Aic)
+                var con = self.S[lead[r]].cooling_on
+                self.S[k].share_cooling(asy, aic, con)
         var jobs = List[EvolveJob](capacity=len(rows))
         for r in range(len(rows)):
             ref R = rows[r]
@@ -1677,9 +1532,9 @@ struct SimulationManager(Movable):
         a: Int,
         A: Int,
     ):
-        """Four rows for the four states of a species (muons or neutrinos) of
-        one variant (0 all, 1 p-gamma, 2 p-p): solver, density and source ids of
-        a variant are consecutive blocks of four."""
+        """Variant 0 is the block at the ids given, 1 (p-gamma) and 2 (p-p) the
+        blocks after it. The solver, density and source ids of a variant are
+        consecutive blocks of four."""
         var o = 4 * variant
         for k in range(4):
             rows.append(
@@ -1696,9 +1551,8 @@ struct SimulationManager(Movable):
     def _pion_decay_rows(
         self, mut rows: List[Evolution], solver0: Int, target0: Int, q0: Int
     ):
-        """Two rows for the nu_mu and anti-nu_mu of the decays of the pions made
-        in the interactions of one origin (P_neutrino_mu_pidec_pg or _pp),
-        evolved as the other neutrinos."""
+        """The nu_mu and anti-nu_mu of the decays of the pions made in the
+        interactions are evolved as the other neutrinos."""
         for k in range(2):
             rows.append(
                 Evolution(
@@ -1711,9 +1565,9 @@ struct SimulationManager(Movable):
                 )
             )
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # evolve one step
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     @inline(.always)
     def _tic(self) -> Int:
         return perf_counter_ns()
@@ -1728,10 +1582,143 @@ struct SimulationManager(Movable):
         if self.profile_timing:
             self.timing[idx] += Float64(perf_counter_ns() - t0)
 
+    def _sync_decay_sinks(mut self):
+        """Each solver's decay sink as the decay products of the step. The
+        solvers take the switches at init_kernels. So a decay switched off after
+        init_kernels kept removing the particles without products. A decay
+        switched on after init_kernels made products without removing the
+        particles (AM3 bug for pion and muon decay)."""
+        var pid = self.process_pion_decay
+        var mud = self.process_muon_decay
+        var kad = self.kaon_decay_sink()
+        var chd = self.charm_decay_sink()
+        for k in range(SA_Pip, SA_Pim_pp + 1):
+            self.S[k].process_decay = pid
+        for k in range(SA_MpL, SA_MmR_pp + 1):
+            self.S[k].process_decay = mud
+        for o in range(2):
+            var kpi = SA_Pip_Kpg if o == 0 else SA_Pip_Kpp
+            var cpi = SA_Pip_Cpg if o == 0 else SA_Pip_Cpp
+            var kmu = SA_MpL_Kpg if o == 0 else SA_MpL_Kpp
+            var cmu = SA_MpL_Cpg if o == 0 else SA_MpL_Cpp
+            var ck = SA_K_Cpg if o == 0 else SA_K_Cpp
+            for k in range(2):
+                self.S[kpi + k].process_decay = pid
+                self.S[cpi + k].process_decay = pid
+            for k in range(4):
+                self.S[kmu + k].process_decay = mud
+                self.S[cmu + k].process_decay = mud
+            for s in range(N_KAON):
+                self.S[kaon_solver(s, o == 1)].process_decay = kad
+                self.S[ck + s].process_decay = kad
+            for s in range(N_CHARM):
+                self.S[charm_solver(s, o == 1)].process_decay = chd
+        self.S[SA_neutron].process_decay = self.neutron_decay_sink()
+
+    def kaon_decay_sink(self) -> Bool:
+        return self.process_kaon_decay and self.oKaonDec.ready(self.dat)
+
+    def charm_decay_sink(self) -> Bool:
+        return self.process_charm_decay and self.oCharmDec.ready(self.dat)
+
+    def neutron_decay_sink(self) -> Bool:
+        return self.process_neutron_decay and self.oNeutronDec.ready(self.dat)
+
+    def _set_cooling(mut self, k0: Int, n: Int, sy: Bool, qsc: Bool, ic: Bool):
+        for k in range(k0, k0 + n):
+            self.S[k].process_sy = sy
+            self.S[k].process_quantum_syn_cooling = qsc
+            self.S[k].process_ic = ic
+
+    def _sync_cooling_switches(mut self):
+        """Each solver's synchrotron, inverse-Compton and quantum-synchrotron
+        cooling with the switches of its species, as
+        Initialize_Solver_Algorithms sets them. The solvers take the switches
+        at init_kernels. So a cooling switched off after init_kernels kept
+        cooling the particles whose emission stopped. A cooling switched on
+        after init_kernels did not cool them (AM3 bug)."""
+        var qsc = self.process_quantum_syn_cooling
+        var p_sy = self.process_proton_syn and self.process_proton_syn_cooling
+        var p_ic = (
+            self.process_proton_compton and self.process_proton_compton_cooling
+        )
+        var pi_sy = self.process_pion_syn and self.process_pion_syn_cooling
+        var pi_ic = (
+            self.process_pion_compton and self.process_pion_compton_cooling
+        )
+        var mu_sy = self.process_muon_syn and self.process_muon_syn_cooling
+        var mu_ic = (
+            self.process_muon_compton and self.process_muon_compton_cooling
+        )
+        var e_sy = (
+            self.process_electron_syn and self.process_electron_syn_cooling
+        )
+        # (Inverse Compton cools the e+- only with the kernels of their
+        #  emission and photon loss. Otherwise, inverse Compton switched on
+        #  after an init_kernels without it cools them without photons.)
+        var e_ic = (
+            self.process_electron_compton
+            and self.process_electron_compton_cooling
+            and self.ic_built
+        )
+        var k_sy = self.process_kaon_syn and self.process_kaon_syn_cooling
+        var k_ic = (
+            self.process_kaon_compton and self.process_kaon_compton_cooling
+        )
+        var c_sy = self.process_charm_syn and self.process_charm_syn_cooling
+        var c_ic = (
+            self.process_charm_compton and self.process_charm_compton_cooling
+        )
+        self._set_cooling(SA_proton, 1, p_sy, qsc, p_ic)
+        self._set_cooling(SA_Pip, SA_Pim_pp + 1 - SA_Pip, pi_sy, qsc, pi_ic)
+        self._set_cooling(SA_MpL, SA_MmR_pp + 1 - SA_MpL, mu_sy, qsc, mu_ic)
+        self._set_cooling(SA_e, SA_eppp + 1 - SA_e, e_sy, qsc, e_ic)
+        self._set_cooling(SA_eptpp, 1, e_sy, qsc, e_ic)
+        self._set_cooling(SA_endec, 1, e_sy, qsc, e_ic)
+        for o in range(2):
+            var kpi = SA_Pip_Kpg if o == 0 else SA_Pip_Kpp
+            var cpi = SA_Pip_Cpg if o == 0 else SA_Pip_Cpp
+            var kmu = SA_MpL_Kpg if o == 0 else SA_MpL_Kpp
+            var cmu = SA_MpL_Cpg if o == 0 else SA_MpL_Cpp
+            self._set_cooling(kpi, 2, pi_sy, qsc, pi_ic)
+            self._set_cooling(cpi, 2, pi_sy, qsc, pi_ic)
+            self._set_cooling(kmu, 4, mu_sy, qsc, mu_ic)
+            self._set_cooling(cmu, 4, mu_sy, qsc, mu_ic)
+            var ck = SA_K_Cpg if o == 0 else SA_K_Cpp
+            for s in range(N_KAON):
+                var ch = s == KP or s == KM
+                var sy = k_sy and ch
+                var q = qsc and ch
+                var ic = k_ic and ch
+                self._set_cooling(kaon_solver(s, o == 1), 1, sy, q, ic)
+                self._set_cooling(ck + s, 1, sy, q, ic)
+            for s in range(N_CHARM):
+                var ch = charm_charged(s)
+                self._set_cooling(
+                    charm_solver(s, o == 1),
+                    1,
+                    c_sy and ch,
+                    qsc and ch,
+                    c_ic and ch,
+                )
+
+    def _sync_solver_settings(mut self):
+        """Each solver's regime thresholds and source integral as their
+        setters now have them. The solvers take them when they are built
+        (clear_am3). So a setting changed after the build was ignored, while
+        its getter reported it (AM3 bug)."""
+        for k in range(len(self.S)):
+            self.S[k].threshold_cool_dom = self.solver_threshold_cool_dom
+            self.S[k].threshold_esc_dom = self.solver_threshold_esc_dom
+            self.S[k].threshold_matrix = self.solver_threshold_matrix
+            self.S[k].simpleqintegration = self.solver_simpleqintegration
+
     def evolve_step(mut self) raises:
         if self.verbose:
             print("evolve for 1 step")
-        self.cool_gen += 1  # the cooling rates of earlier steps are stale
+        # the cooling rates of earlier steps are stale
+        self.fresh.clear()
+        self.fresh_nphot.clear()
         if not self.kernels_ready:
             raise Error(
                 "init_kernels() must be called before evolve_step() (and"
@@ -1742,34 +1729,44 @@ struct SimulationManager(Movable):
                 "the hadronic processes were switched on after init_kernels():"
                 " call init_kernels() again"
             )
-        # kaons are made in this step where they are switched on and their
-        # kernels were built at init_kernels
+        # (Without its kernels, photo-pion production does nothing while
+        #  switched on. AM3 crashes. pp collisions, Bethe-Heitler and
+        #  gamma-gamma pair production and inverse Compton without theirs make
+        #  nothing, as in AM3, and their docstrings say so.)
+        if (
+            self.process_hadronic
+            and self.process_photopion
+            and self.pg_grid != self.grid_gen
+        ):
+            raise Error(
+                "photo-pion production was switched on after an init_kernels()"
+                " without it: call init_kernels() again"
+            )
+        self._rebuild_changed_kernels()
+        self._build_syn_kernels()
+        self._sync_decay_sinks()
+        self._sync_cooling_switches()
+        self._sync_solver_settings()
+        if not self.process_parse_sed:
+            self.components_stale = True
         var had = self.process_hadronic
+        self.last_step_hadronic = had
         self.oPhotoHadron.set_kaons(had and self.kaons_pg_active())
-        self.oProtonProton.kaons_src = (
-            had and self.kaons_pp_active() and self.oProtonProton.kaons_built
-        )
+        self.oProtonProton.kaons_src = had and self.kaons_pp_active()
         # (as for AM3's pions, the protons lose the energy that goes into
         #  kaons whether or not the emission is followed)
         self.oProtonProton.kaons_loss = (
-            had
-            and self.process_kaons
-            and self.process_pp
-            and self.oProtonProton.kaons_built
+            had and self.process_pp and self.kaons_can_act(1)
         )
-        self._update_kaon_chain()
-        # the same for the charm hadrons
         self.oPhotoHadron.set_charm(had and self.charm_pg_active())
-        self.oProtonProton.charm_src = (
-            had and self.charm_pp_active() and self.oProtonProton.charm_built
-        )
+        self.oProtonProton.charm_src = had and self.charm_pp_active()
         self.oProtonProton.charm_loss = (
-            had
-            and self.process_charm
-            and self.process_pp
-            and self.oProtonProton.charm_built
+            had and self.process_pp and self.charm_can_act(1)
         )
-        self._update_charm_chain()
+        self._update_populations(had)
+        self._update_pion_chains(had)
+        self._update_kaon_chain()
+        self._update_charm_chain(had)
         if self.estimate_max_energies and self.step_counter > 0:
             self.estimate_maximum_lepton_energy()
             self.estimate_maximum_proton_energy()
@@ -1807,20 +1804,44 @@ struct SimulationManager(Movable):
             t0 = self._tic()
             self.Calc_PRO()
             self._toc(3, t0)
-            # the kaons and charm hadrons before the pions (defined after
-            # them): their decays feed this step's pions, muons and neutrinos
+            # The kaons and charm hadrons before the pions: their decays feed
+            # this step's pions, muons and neutrinos. Without any (kc_idle), the
+            # stage only sets their products and totals to zero. It is skipped
+            # after a step without any (kc_zeroed), and the sums of the later
+            # stages leave them out.
+            self.kc_idle = not (
+                self.kaons_ev[0]
+                or self.kaons_ev[1]
+                or self.ckaons[0]
+                or self.ckaons[1]
+                or self.charm_ev[0]
+                or self.charm_ev[1]
+                or self.kchain[0]
+                or self.kchain[1]
+                or self.cchain[0]
+                or self.cchain[1]
+            )
+            var kc = not (self.kc_idle and self.kc_zeroed)
+            self.kc_zeroed = False  # (until the stage runs)
             t0 = self._tic()
-            self.Calc_Coeff_K()
+            if kc:
+                self.Calc_Coeff_K()
+            else:
+                self.pg_conv_fresh = False
             self._toc(T_KAON_COEFF, t0)
             t0 = self._tic()
-            self.Calc_K()
+            if kc:
+                self.Calc_K()
             self._toc(T_KAON_EVOLVE, t0)
             t0 = self._tic()
-            self.Calc_Coeff_C()
+            if kc:
+                self.Calc_Coeff_C()
             self._toc(T_CHARM_COEFF, t0)
             t0 = self._tic()
-            self.Calc_C()
+            if kc:
+                self.Calc_C()
             self._toc(T_CHARM_EVOLVE, t0)
+            self.kc_zeroed = self.kc_idle
             t0 = self._tic()
             self.Calc_Coeff_PI()
             self._toc(6, t0)
@@ -1880,16 +1901,33 @@ struct SimulationManager(Movable):
     def Calc_Coeff_proton_NTR(mut self):
         if self.verbose:
             print(" Calculate proton + neutron coefficient")
+        # (The loss rates of a process that is off are zero, as the getters and
+        #  the proton maximum-energy estimate read them. AM3 kept those of its
+        #  last step with the process on.)
         if self.process_bethe_heitler and self.process_bethe_heitler_cooling:
             self.oBH.Calc_BH_Cool(self.dat)
+        else:
+            fill_zero(self.oBH.ABHHadP)
         if self.process_photopion and self.process_photopion_cooling:
+            # (before the nucleons are evolved: with the bins of their
+            #  injection and of the nucleons of the last step's charm decays)
             self.oPhotoHadron.Calc_PhotoHadron_PhotonConvolution(
-                self.dat, self.optimize_photopion_target_photon_max
+                self.dat,
+                max(
+                    PhotoHadron.nonzero_top(self.oInj.inj_proton),
+                    PhotoHadron.nonzero_top(self.oInj.inj_neutron),
+                    PhotoHadron.nonzero_top(self.c[C_qpro_C]),
+                    PhotoHadron.nonzero_top(self.c[C_qntr_C]),
+                ),
             )
             self.oPhotoHadron.Calc_PhotoHadron_ProtonNeutronReinj(self.dat)
             self.oPhotoHadron.Calc_PhotoHadron_ProtonNeutronLoss(self.dat)
+        else:
+            fill_zero(self.oPhotoHadron.afPG_PRO)
         if self.process_pp and self.process_pp_cooling:
             self.oProtonProton.Calc_PP_ProtonLoss(self.rp)
+        else:
+            fill_zero(self.oProtonProton.APP_PRO)
 
     def Pass_Coeff_PRO(mut self):
         if self.verbose:
@@ -1923,10 +1961,10 @@ struct SimulationManager(Movable):
         if self.neutron_decay_on():
             for i in range(self.dat.nbins_had):
                 self.c[C_qpro][i] += self.c[C_qpro_ndec][i]
-        # the protons of the charm decays of the last step (am3_mojo addition)
-        if self.process_charm:
-            for i in range(self.dat.nbins_had):
-                self.c[C_qpro][i] += self.c[C_qpro_C][i]
+        # the protons of the charm decays of the last step (am3_mojo addition,
+        # zero without them)
+        for i in range(self.dat.nbins_had):
+            self.c[C_qpro][i] += self.c[C_qpro_C][i]
 
     def Calc_PRO(mut self) raises:
         if self.verbose:
@@ -1954,18 +1992,19 @@ struct SimulationManager(Movable):
         var exh = fbool(self.process_expansion) * Expansion.afExpHad(self.rp)
         for i in range(self.dat.nbins_had):
             self.c[C_Antr][i] = self.oExtraCool.AExtraCoolNTR[i]
+            # (the neutrons' photo-hadronic loss rate is the protons')
             self.c[C_antr][i] = (
-                pgc * self.oPhotoHadron.afPG_NTR[i]
+                pgc * self.oPhotoHadron.afPG_PRO[i]
                 + esc * self.oEscape.afescNTR[i]
                 + exh
             )
             self.c[C_qntr][i] = (
                 pgc * self.oPhotoHadron.QPG_NTRGen[i] + self.oInj.inj_neutron[i]
             )
-        # the neutrons of the charm decays of the last step (am3_mojo addition)
-        if self.process_charm:
-            for i in range(self.dat.nbins_had):
-                self.c[C_qntr][i] += self.c[C_qntr_C][i]
+        # the neutrons of the charm decays of the last step (am3_mojo addition,
+        # zero without them)
+        for i in range(self.dat.nbins_had):
+            self.c[C_qntr][i] += self.c[C_qntr_C][i]
 
     def Calc_NTR(mut self) raises:
         if self.verbose:
@@ -1983,13 +2022,12 @@ struct SimulationManager(Movable):
         )
         self.evolve_group(rows)
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # neutron decay: n -> p e- anti-nu_e (am3_mojo addition)
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def neutron_decay_on(self) -> Bool:
-        """Neutron decay acts in the step: the hadronic processes are on, and
-        init_kernels set up both the neutron solver's decay sink and the
-        product kernels (they must agree)."""
+        """The neutron solver's decay sink needs the product kernels of
+        init_kernels (_sync_decay_sinks), and the two must agree."""
         return (
             self.process_hadronic
             and self.S[SA_neutron].process_decay
@@ -1998,24 +2036,21 @@ struct SimulationManager(Movable):
 
     def Calc_Neutron_Decay(mut self):
         """Products of the neutrons that decay in this step, from the evolved
-        neutrons as in AM3's decays: sources of the protons, the electrons
-        (lepton solver units) and the electron antineutrinos."""
+        neutrons as in AM3's decays."""
         if self.verbose:
             print(" Calculate neutron decay")
         if self.neutron_decay_on():
             self.oNeutronDec.Calc_NtoX(self.dat, self.S[SA_neutron].alpha_decay)
         else:
             self.oNeutronDec.clear_internal_arrays(self.dat)
-        for i in range(self.dat.nbins_had):
-            self.c[C_qpro_ndec][i] = self.oNeutronDec.q_p[i]
+        copy_into(self.c[C_qpro_ndec], self.oNeutronDec.q_p)
         for i in range(self.dat.nbins_lep):
             self.c[C_qe_ndec][i] = self.oNeutronDec.q_e[i] / RATE_SSC
-        for i in range(self.dat.nbins_nu):
-            self.c[C_qnuea_ndec][i] = self.oNeutronDec.q_nu[i]
+        copy_into(self.c[C_qnuea_ndec], self.oNeutronDec.q_nu)
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # pions: pi+, pi-, pi0 (AM3)
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def Calc_Coeff_PI(mut self):
         if self.verbose:
             print(" Calculate pion coefficient")
@@ -2024,9 +2059,7 @@ struct SimulationManager(Movable):
                 not (self.process_photopion and self.process_photopion_cooling)
                 and not self.pg_conv_fresh
             ):
-                self.oPhotoHadron.Calc_PhotoHadron_PhotonConvolution(
-                    self.dat, self.optimize_photopion_target_photon_max
-                )
+                self.oPhotoHadron.Calc_PhotoHadron_PhotonConvolution(self.dat)
             self.oPhotoHadron.Calc_PhotoHadron_Rad(self.dat)
         if self.process_pp and self.process_pp_emission:
             self.oProtonProton.Calc_PP_PionSrc(
@@ -2055,38 +2088,29 @@ struct SimulationManager(Movable):
             self.c[C_Apim][i] = adi + self.oExtraCool.AExtraCoolPipm[i]
             self.c[C_apip][i] = esc * self.oEscape.afescPipm[i] + exh
             self.c[C_apim][i] = esc * self.oEscape.afescPipm[i] + exh
-            self.c[C_qpip_pg][i] = pge * self.oPhotoHadron.qpip[i]
-            self.c[C_qpip_pp][i] = (
-                ppe * self.oProtonProton.qpip[i] + self.c[C_qpip_Kpp][i]
-            )
-            self.c[C_qpip_pg][i] += self.c[C_qpip_K][i]
-            # (and those of the charm decay chains)
-            self.c[C_qpip_pg][i] += self.c[C_qpi_Cpg][i]
-            self.c[C_qpip_pp][i] += self.c[C_qpi_Cpp][i]
+            # pge and ppe are 0 or 1, so the products are exact. The totals also
+            # take the pions of the kaon and charm decay chains of each origin,
+            # added in this order.
+            var pip_pg = pge * self.oPhotoHadron.qpip[i]
+            var pip_pp = ppe * self.oProtonProton.qpip[i]
+            var pim_pg = pge * self.oPhotoHadron.qpim[i]
+            var pim_pp = ppe * self.oProtonProton.qpim[i]
             self.c[C_qpip][i] = (
-                self.c[C_qpip_pg][i]
-                + self.c[C_qpip_pp][i]
+                (pip_pg + self.c[C_qpip_K][i] + self.c[C_qpi_Cpg][i])
+                + (pip_pp + self.c[C_qpip_Kpp][i] + self.c[C_qpi_Cpp][i])
                 + self.oInj.inj_piplus[i]
             )
-            self.c[C_qpim_pg][i] = (
-                pge * self.oPhotoHadron.qpim[i] + self.c[C_qpim_K][i]
-            )
-            self.c[C_qpim_pp][i] = (
-                ppe * self.oProtonProton.qpim[i] + self.c[C_qpim_Kpp][i]
-            )
-            self.c[C_qpim_pg][i] += self.c[C_qpi_Cpg + 1][i]
-            self.c[C_qpim_pp][i] += self.c[C_qpi_Cpp + 1][i]
             self.c[C_qpim][i] = (
-                self.c[C_qpim_pg][i]
-                + self.c[C_qpim_pp][i]
+                (pim_pg + self.c[C_qpim_K][i] + self.c[C_qpi_Cpg + 1][i])
+                + (pim_pp + self.c[C_qpim_Kpp][i] + self.c[C_qpi_Cpp + 1][i])
                 + self.oInj.inj_piminus[i]
             )
-            # the photo-hadronic and pp components hold the pions made in the
-            # interactions; those of the kaon decays are P_pion_*_Kpg / _Kpp
-            self.c[C_qpip_pg][i] = pge * self.oPhotoHadron.qpip[i]
-            self.c[C_qpip_pp][i] = ppe * self.oProtonProton.qpip[i]
-            self.c[C_qpim_pg][i] = pge * self.oPhotoHadron.qpim[i]
-            self.c[C_qpim_pp][i] = ppe * self.oProtonProton.qpim[i]
+            # The photo-hadronic and pp components hold the pions made in the
+            # interactions. Those of the kaon decays are P_pion_*_Kpg / _Kpp.
+            self.c[C_qpip_pg][i] = pip_pg
+            self.c[C_qpip_pp][i] = pip_pp
+            self.c[C_qpim_pg][i] = pim_pg
+            self.c[C_qpim_pp][i] = pim_pp
             self.c[C_qpi0_pg][i] = (
                 pge * self.oPhotoHadron.qpi0[i] + self.c[C_qpi0_K][i]
             )
@@ -2097,11 +2121,11 @@ struct SimulationManager(Movable):
             )
             self.c[C_qpi0_pg][i] += (
                 self.c[C_qpip_C + (CP_PI0 - CP_PIP)][i]
-                + self.c[C_qpip_KC + 2][i]
+                + self.c[C_qpip_KC + (PR_PI0 - PR_PIP)][i]
             )
             self.c[C_qpi0_pp][i] += (
                 self.c[C_qpip_Cpp + (CP_PI0 - CP_PIP)][i]
-                + self.c[C_qpip_KCpp + 2][i]
+                + self.c[C_qpip_KCpp + (PR_PI0 - PR_PIP)][i]
             )
             self.c[C_qpi0][i] = (
                 self.c[C_qpi0_pg][i]
@@ -2112,8 +2136,8 @@ struct SimulationManager(Movable):
     def Calc_PI(mut self) raises:
         if self.verbose:
             print(" Calculate pions")
-        # AM3 evolves all pion components with the pi+ solver; the identical
-        # pi- and component solvers give the same result, in parallel
+        # AM3 evolves all pion components with the pi+ solver. The identical
+        # pi- and component solvers give the same result, in parallel.
         var rows = List[Evolution]()
         rows.append(
             Evolution(
@@ -2135,11 +2159,7 @@ struct SimulationManager(Movable):
                 P_photons_on_had_grid,
             )
         )
-        if (
-            self.process_parse_sed
-            and self.process_photopion
-            and self.process_photopion_emission
-        ):
+        if self.pchain[0]:
             rows.append(
                 Evolution(
                     SA_Pip_pg,
@@ -2160,11 +2180,7 @@ struct SimulationManager(Movable):
                     P_photons_on_had_grid,
                 )
             )
-        if (
-            self.process_parse_sed
-            and self.process_pp
-            and self.process_pp_emission
-        ):
+        if self.pchain[1]:
             rows.append(
                 Evolution(
                     SA_Pip_pp,
@@ -2185,7 +2201,6 @@ struct SimulationManager(Movable):
                     P_photons_on_had_grid,
                 )
             )
-        # the pions of the kaon decays, per kaon origin
         for o in range(2):
             if self.kaon_chain_on(o):
                 var p0 = P_pion_plus_Kpg if o == 0 else P_pion_plus_Kpp
@@ -2209,7 +2224,6 @@ struct SimulationManager(Movable):
                         P_photons_on_had_grid,
                     )
                 )
-        # the pions of the charm decay chains, per charm origin
         for o in range(2):
             if self.charm_chain_on(o):
                 for k in range(2):
@@ -2226,31 +2240,42 @@ struct SimulationManager(Movable):
                     )
         self.evolve_group(rows)
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # kaons: K+-, K0_S and K0_L (am3_mojo addition)
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    def kaons_can_act(self, origin: Int) -> Bool:
+        """Kaons of an origin (0 photo-hadronic, 1 pp) can be made and decay. An
+        init_kernels with kaons off frees the kaon decay tables, unless charm is
+        on (the charm decays make kaons). But where their process is off, it
+        keeps the production kernels that an earlier init_kernels built with
+        kaons. Kaons switched on again then stay off until the next
+        init_kernels, as after any init_kernels without them. With charm on, an
+        origin whose process was off and whose kept kernels have kaons is the
+        exception. The production, loss, decay sink (_sync_decay_sinks) and
+        decay products of the kaons all follow kaons_can_act, so that kaons are
+        never removed by decay without products."""
+        var built = self.oProtonProton.kaons_built
+        if origin == 0:
+            built = self.oPhotoHadron.kaons_built
+        return self.process_kaons and built and self.oKaonDec.ready(self.dat)
+
     def kaons_pg_active(self) -> Bool:
-        """Kaons are produced in photo-hadronic interactions: with the
-        photo-pion process and its emission on."""
         return (
-            self.process_kaons
+            self.kaons_can_act(0)
             and self.process_hadronic
             and self.process_photopion
             and self.process_photopion_emission
         )
 
     def kaons_pp_active(self) -> Bool:
-        """Kaons are produced in pp collisions: with the pp process and its
-        emission on."""
         return (
-            self.process_kaons
+            self.kaons_can_act(1)
             and self.process_hadronic
             and self.process_pp
             and self.process_pp_emission
         )
 
-    # the same in the step: switched on and kernels built (set at the start
-    # of evolve_step)
+    # the same in the step (set at the start of evolve_step)
     def kaons_pg_on(self) -> Bool:
         return self.oPhotoHadron.kaons
 
@@ -2258,25 +2283,80 @@ struct SimulationManager(Movable):
         return self.oProtonProton.kaons_src
 
     def kaons_on(self) -> Bool:
-        return self.kaons_pg_on() or self.kaons_pp_on()
+        return self.kaons_ev[0] or self.kaons_ev[1]
+
+    def _update_populations(mut self, had: Bool):
+        """Evolve the kaons and the charm hadrons of each origin's interactions
+        while they are made, otherwise while any are left. So they decay and
+        escape like AM3's pions, which are evolved whatever the switches of
+        their production. The live flags are false where the populations are
+        known to be zero. This spares the scans."""
+        for o in range(2):
+            var k = self.kaons_pg_on() if o == 0 else self.kaons_pp_on()
+            if had and not k and self.kaons_live[o]:
+                k = self._block_nonzero(
+                    P_kaon_plus_pg if o == 0 else P_kaon_plus_pp, N_KAON
+                )
+                self.kaons_live[o] = k
+            if k:
+                self.kaons_live[o] = True
+            self.kaons_ev[o] = k
+            var c = self.charm_pg_on() if o == 0 else self.charm_pp_on()
+            if had and not c and self.charm_live[o]:
+                c = self._block_nonzero(
+                    P_charm_pg if o == 0 else P_charm_pp, N_CHARM
+                )
+                self.charm_live[o] = c
+            if c:
+                self.charm_live[o] = True
+            self.charm_ev[o] = c
 
     def any_kaons_on(self) -> Bool:
-        """Kaons are evolved in this step: made in the interactions or in the
-        charm decays."""
         return self.kaons_on() or self.ckaons[0] or self.ckaons[1]
 
+    def _update_pion_chains(mut self, had: Bool):
+        """Evolve the pion, muon and neutrino components of each origin's
+        interactions while the interactions make pions, otherwise while any are
+        left. So they decay and escape like the totals they are part of (AM3
+        froze them once the emission was switched off). pchain_live is false
+        where the components are known to be zero. This spares the scan."""
+        for o in range(2):
+            var chain = False
+            if self.process_parse_sed and had:
+                if o == 0:
+                    chain = (
+                        self.process_photopion
+                        and self.process_photopion_emission
+                    )
+                else:
+                    chain = self.process_pp and self.process_pp_emission
+                if not chain and self.pchain_live[o]:
+                    chain = self._pion_chain_nonzero(o)
+                self.pchain_live[o] = chain
+            self.pchain[o] = chain
+
+    def _pion_chain_nonzero(self, o: Int) -> Bool:
+        var p0 = P_pion_plus_pg if o == 0 else P_pion_plus_pp
+        var m0 = P_muon_plus_left_pg if o == 0 else P_muon_plus_left_pp
+        var n0 = P_neutrino_el_pg if o == 0 else P_neutrino_el_pp
+        var d0 = P_neutrino_mu_pidec_pg if o == 0 else P_neutrino_mu_pidec_pp
+        return (
+            self._block_nonzero(p0, 2)
+            or self._block_nonzero(m0, 4)
+            or self._block_nonzero(n0, 4)
+            or self._block_nonzero(d0, 2)
+        )
+
     def kaon_chain_on(self, origin: Int) -> Bool:
-        """The kaon decay chain of an origin (0 photo-hadronic, 1 pp) is
-        evolved as components in this step (_update_kaon_chain)."""
         return self.kchain[origin]
 
     def _update_kaon_chain(mut self):
-        """Once per step, with the components on: evolve the kaon decay
-        products of each origin while those kaons decay, otherwise while any are
-        left, so that they escape like their species. kchain_live is false where
-        they are known to be zero, sparing the scan without kaons."""
+        """Evolve the kaon decay products of each origin while those kaons
+        decay, otherwise while any are left. So they escape like their species.
+        kchain_live is false where the products are known to be zero. This
+        spares the scan without kaons."""
         for o in range(2):
-            var on = self.kaons_pg_on() if o == 0 else self.kaons_pp_on()
+            var on = self.kaons_ev[o]
             var chain = False
             if self.process_parse_sed:
                 if on and self.kaon_decay_on():
@@ -2300,54 +2380,58 @@ struct SimulationManager(Movable):
         return False
 
     def kaon_decay_on(self) -> Bool:
-        """Kaon decay as configured in the kaon solvers at init_kernels (their
-        decay sink and the decay products must agree)."""
+        """The decay sink of the kaon solvers (_sync_decay_sinks) and the decay
+        products must agree."""
         return self.kaons_on() and self.S[SA_K].process_decay
 
     def Calc_Coeff_K(mut self):
-        """Kaon sources (photo-hadronic interactions and pp collisions),
-        escape and cooling."""
         if self.verbose:
             print(" Calculate kaon coefficient")
         self.pg_conv_fresh = False
         if not self.kaons_on():
             return
-        var nh = self.dat.nbins_had
         if self.kaons_pg_on():
             if not (self.process_photopion and self.process_photopion_cooling):
-                self.oPhotoHadron.Calc_PhotoHadron_PhotonConvolution(
-                    self.dat, self.optimize_photopion_target_photon_max
-                )
+                self.oPhotoHadron.Calc_PhotoHadron_PhotonConvolution(self.dat)
                 self.pg_conv_fresh = True
             self.oPhotoHadron.Calc_PhotoHadron_Kaons(self.dat)
             for s in range(N_KAON):
-                for i in range(nh):
-                    self.c[C_qK + s][i] = self.oPhotoHadron.qK[s][i]
+                copy_into(self.c[C_qK + s], self.oPhotoHadron.qK[s])
+        else:  # (kaons left from earlier steps only)
+            for s in range(N_KAON):
+                fill_zero(self.c[C_qK + s])
         if self.kaons_pp_on():
             self.oProtonProton.Calc_PP_KaonSrc(self.rp, self.dat)
             for s in range(N_KAON):
-                for i in range(nh):
-                    self.c[C_qKpp + s][i] = self.oProtonProton.qK[s][i]
-        self._kaon_escape_cooling()
+                copy_into(self.c[C_qKpp + s], self.oProtonProton.qK[s])
+        else:
+            for s in range(N_KAON):
+                fill_zero(self.c[C_qKpp + s])
+        self._kaon_charm_escape_cooling(False)
 
-    def _kaon_escape_cooling(mut self):
-        """Escape and cooling of the kaons (also those of the charm decays):
-        charged kaons as charged pions; neutral kaons as neutrons (no
-        adiabatic cooling, neutral escape)."""
+    def _kaon_charm_escape_cooling(mut self, charm: Bool):
+        """The charged kaons and charm hadrons escape and cool as charged pions.
+        The neutral ones (K0_S, K0_L, D0 and anti-D0) escape and cool as
+        neutrons (no adiabatic cooling, neutral escape)."""
         var adi = fbool(self.process_adiabatic_cooling) * Expansion.AAdiHad(
             self.rp
         )
         var esc = fbool(self.process_escape)
         var exh = fbool(self.process_expansion) * Expansion.afExpHad(self.rp)
+        var A = C_AC if charm else C_AK
+        var a = C_aC if charm else C_aK
+        var A0 = C_AC0 if charm else C_AK0
+        var a0 = C_aC0 if charm else C_aK0
         for i in range(self.dat.nbins_had):
-            self.c[C_AK][i] = adi + self.oExtraCool.AExtraCoolK[i]
-            self.c[C_aK][i] = esc * self.oEscape.afescPipm[i] + exh
-            self.c[C_AK0][i] = self.oExtraCool.AExtraCoolK[i]
-            self.c[C_aK0][i] = esc * self.oEscape.afescNTR[i] + exh
+            var x = self.oExtraCool.AExtraCoolC[
+                i
+            ] if charm else self.oExtraCool.AExtraCoolK[i]
+            self.c[A][i] = adi + x
+            self.c[a][i] = esc * self.oEscape.afescPipm[i] + exh
+            self.c[A0][i] = x
+            self.c[a0][i] = esc * self.oEscape.afescNTR[i] + exh
 
     def Calc_K(mut self) raises:
-        """Evolve the kaons of both origins and compute their decay products
-        (pions, muons, neutrinos, e+-), sources for the rest of this step."""
         if self.verbose:
             print(" Calculate kaons")
         comptime assert (
@@ -2355,8 +2439,8 @@ struct SimulationManager(Movable):
             and P_kaon_0S == P_kaon_plus + KS
             and P_kaon_0L == P_kaon_plus + KL
         )
-        var pg = self.kaons_pg_on()
-        var pp = self.kaons_pp_on()
+        var pg = self.kaons_ev[0]
+        var pp = self.kaons_ev[1]
         var rows = List[Evolution]()
         for s in range(N_KAON):
             var a = C_aK if s <= KM else C_aK0
@@ -2393,76 +2477,86 @@ struct SimulationManager(Movable):
                     fg * self.dat.n[P_kaon_plus_pg + s][i]
                     + fp * self.dat.n[P_kaon_plus_pp + s][i]
                 )
-        # products (physics/decays.mojo order) -> coefficient arrays
-        var dest: Array[Int, N_PROD] = [
-            C_qpip_K,
-            C_qpim_K,
-            C_qpi0_K,
-            C_qmupl_K,
-            C_qmupr_K,
-            C_qmuml_K,
-            C_qmumr_K,
-            C_qe_K,
-            C_qp_K,
-            C_qnue_K,
-            C_qnuea_K,
-            C_qnum_K,
-            C_qnuma_K,
-        ]
-        var dest_pp: Array[Int, N_PROD] = [
-            C_qpip_Kpp,
-            C_qpim_Kpp,
-            C_qpi0_Kpp,
-            C_qmupl_Kpp,
-            C_qmupl_Kpp + 1,
-            C_qmupl_Kpp + 2,
-            C_qmupl_Kpp + 3,
-            C_qe_Kpp,
-            C_qp_Kpp,
-            C_qnue_Kpp,
-            C_qnue_Kpp + 1,
-            C_qnue_Kpp + 2,
-            C_qnue_Kpp + 3,
-        ]
+        var dest = Array[Int, N_PROD](fill=0)
+        dest[PR_PIP] = C_qpip_K
+        dest[PR_PIM] = C_qpim_K
+        dest[PR_PI0] = C_qpi0_K
+        dest[PR_MUPL] = C_qmupl_K
+        dest[PR_MUPR] = C_qmupr_K
+        dest[PR_MUML] = C_qmuml_K
+        dest[PR_MUMR] = C_qmumr_K
+        dest[PR_EM] = C_qe_K
+        dest[PR_EP] = C_qp_K
+        dest[PR_NUE] = C_qnue_K
+        dest[PR_NUEB] = C_qnuea_K
+        dest[PR_NUM] = C_qnum_K
+        dest[PR_NUMB] = C_qnuma_K
+        # (the pp muons and neutrinos: blocks in the order of the products)
+        comptime assert (
+            PR_MUPR == PR_MUPL + 1
+            and PR_MUML == PR_MUPL + 2
+            and PR_MUMR == PR_MUPL + 3
+            and PR_NUEB == PR_NUE + 1
+            and PR_NUM == PR_NUE + 2
+            and PR_NUMB == PR_NUE + 3
+        )
+        var dest_pp = Array[Int, N_PROD](fill=0)
+        dest_pp[PR_PIP] = C_qpip_Kpp
+        dest_pp[PR_PIM] = C_qpim_Kpp
+        dest_pp[PR_PI0] = C_qpi0_Kpp
+        for p in range(PR_MUPL, PR_MUMR + 1):
+            dest_pp[p] = C_qmupl_Kpp + (p - PR_MUPL)
+        dest_pp[PR_EM] = C_qe_Kpp
+        dest_pp[PR_EP] = C_qp_Kpp
+        for p in range(PR_NUE, PR_NUMB + 1):
+            dest_pp[p] = C_qnue_Kpp + (p - PR_NUE)
         if self.kaon_decay_on() and (pg or pp):
             self.oKaonDec.Calc_KtoX(
                 self.dat, P_kaon_plus_pg, P_kaon_plus_pp, pg, pp
             )
         else:
             self.oKaonDec.clear_internal_arrays(self.dat)
+        ref out = self.oKaonDec.out
         for origin in range(2):
             for p in range(N_PROD):
                 var d = dest[p] if origin == 0 else dest_pp[p]
-                ref src = self.oKaonDec.out[origin * N_PROD + p]
-                for i in range(len(src)):
-                    self.c[d][i] = src[i]
+                copy_into(self.c[d], out[origin * N_PROD + p])
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # charm hadrons: D+-, D0, anti-D0, Ds+-, Lambda_c+ and anti-Lambda_c-
     # (am3_mojo addition)
-    # ------------------------------------------------------------------
-    def charm_pg_active(self) -> Bool:
-        """Charm hadrons are produced in photo-hadronic interactions: with the
-        photo-pion process and its emission on."""
+    # --------------------------------------------------------------------------
+    def charm_can_act(self, origin: Int) -> Bool:
+        """Charm hadrons of an origin can be made and decay, as kaons_can_act.
+        This needs charm switched on and the charm and kaon decay tables of the
+        last init_kernels (the charm decays make kaons)."""
+        var built = self.oProtonProton.charm_built
+        if origin == 0:
+            built = self.oPhotoHadron.charm_built
         return (
             self.process_charm
+            and built
+            and self.oCharmDec.ready(self.dat)
+            and self.oKaonDec.ready(self.dat)
+        )
+
+    def charm_pg_active(self) -> Bool:
+        return (
+            self.charm_can_act(0)
             and self.process_hadronic
             and self.process_photopion
             and self.process_photopion_emission
         )
 
     def charm_pp_active(self) -> Bool:
-        """Charm hadrons are produced in pp collisions: with the pp process
-        and its emission on."""
         return (
-            self.process_charm
+            self.charm_can_act(1)
             and self.process_hadronic
             and self.process_pp
             and self.process_pp_emission
         )
 
-    # the same in the step: switched on and kernels built (set at the start
-    # of evolve_step)
+    # the same in the step (set at the start of evolve_step)
     def charm_pg_on(self) -> Bool:
         return self.oPhotoHadron.charm
 
@@ -2470,38 +2564,39 @@ struct SimulationManager(Movable):
         return self.oProtonProton.charm_src
 
     def charm_on(self) -> Bool:
-        return self.charm_pg_on() or self.charm_pp_on()
+        return self.charm_ev[0] or self.charm_ev[1]
 
     def charm_decay_on(self) -> Bool:
-        """Charm decay as configured in the charm solvers at init_kernels."""
         return self.charm_on() and self.S[SA_C].process_decay
 
     def charm_kaons_on(self, origin: Int) -> Bool:
-        """The kaons of the charm decays of an origin (0 photo-hadronic, 1
-        pp) are evolved in this step (_update_charm_chain)."""
         return self.ckaons[origin]
 
     def charm_chain_on(self, origin: Int) -> Bool:
-        """The pion, muon and neutrino components of the charm decay chain of
-        an origin are evolved in this step (_update_charm_chain)."""
         return self.cchain[origin]
 
-    def _update_charm_chain(mut self):
-        """Once per step: evolve the kaons of each origin's charm decays while
-        those charm hadrons decay, otherwise while any are left, so that they
-        escape like their species; with the components on, the chain's pions,
-        muons and neutrinos likewise."""
+    def _update_charm_chain(mut self, had: Bool):
+        """Evolve the kaons of each origin's charm decays while those charm
+        hadrons decay, otherwise while any are left. So they escape like their
+        species. The decays of these kaons also feed the chain's pions, muons
+        and neutrinos (as Calc_C decays the kaons). With the hadronic processes
+        off, no kaons are evolved (as in _update_populations). In that case,
+        ckaons_live keeps whether any are left for when the hadronic processes
+        are on again."""
         for o in range(2):
-            var on = self.charm_pg_on() if o == 0 else self.charm_pp_on()
+            var on = self.charm_ev[o]
             var dec = on and self.charm_decay_on()
             var kaons = dec
-            if not kaons and self.ckaons_live[o]:
+            if had and not kaons and self.ckaons_live[o]:
                 kaons = self._charm_kaons_nonzero(o)
-            self.ckaons_live[o] = kaons
+                self.ckaons_live[o] = kaons
+            if kaons:
+                self.ckaons_live[o] = True
             self.ckaons[o] = kaons
+            var kdec = kaons and self.S[SA_K_Cpg].process_decay
             var chain = False
             if self.process_parse_sed:
-                if dec:
+                if dec or kdec:
                     chain = True
                 elif self.cchain_live[o]:
                     chain = self._charm_chain_nonzero(o)
@@ -2509,12 +2604,21 @@ struct SimulationManager(Movable):
             self.cchain[o] = chain
 
     def _charm_kaons_nonzero(self, origin: Int) -> Bool:
+        # (each pp block follows its pg block)
+        comptime assert P_kaon_plus_Cpp == P_kaon_plus_Cpg + 4
         for s in range(N_KAON):
             if self._nonzero(P_kaon_plus_Cpg + 4 * origin + s):
                 return True
         return False
 
     def _charm_chain_nonzero(self, origin: Int) -> Bool:
+        # (each pp block follows its pg block)
+        comptime assert (
+            P_pion_plus_Cpp == P_pion_plus_Cpg + 2
+            and P_muon_plus_left_Cpp == P_muon_plus_left_Cpg + 4
+            and P_neutrino_el_Cpp == P_neutrino_el_Cpg + 4
+            and P_neutrino_tau_Cpp == P_neutrino_tau_Cpg + 2
+        )
         for k in range(4):
             if (
                 (k < 2 and self._nonzero(P_pion_plus_Cpg + 2 * origin + k))
@@ -2528,72 +2632,57 @@ struct SimulationManager(Movable):
         return False
 
     def Calc_Coeff_C(mut self):
-        """Charm sources (photo-hadronic interactions and pp collisions),
-        escape and cooling."""
         if self.verbose:
             print(" Calculate charm coefficient")
         if not self.charm_on():
             return
-        var nh = self.dat.nbins_had
         if self.charm_pg_on():
             if (
                 not (self.process_photopion and self.process_photopion_cooling)
                 and not self.pg_conv_fresh
             ):
-                self.oPhotoHadron.Calc_PhotoHadron_PhotonConvolution(
-                    self.dat, self.optimize_photopion_target_photon_max
-                )
+                self.oPhotoHadron.Calc_PhotoHadron_PhotonConvolution(self.dat)
                 self.pg_conv_fresh = True
             self.oPhotoHadron.Calc_PhotoHadron_Charm(self.dat)
             for s in range(N_CHARM):
-                for i in range(nh):
-                    self.c[C_qC + s][i] = self.oPhotoHadron.qC[s][i]
+                copy_into(self.c[C_qC + s], self.oPhotoHadron.qC[s])
+        else:  # (charm hadrons left from earlier steps only)
+            for s in range(N_CHARM):
+                fill_zero(self.c[C_qC + s])
         if self.charm_pp_on():
             self.oProtonProton.Calc_PP_CharmSrc(self.rp, self.dat)
             for s in range(N_CHARM):
-                for i in range(nh):
-                    self.c[C_qCpp + s][i] = self.oProtonProton.qC[s][i]
-        # escape and cooling: the charged ones as charged pions, D0 and
-        # anti-D0 as neutrons (no adiabatic cooling, neutral escape)
-        var adi = fbool(self.process_adiabatic_cooling) * Expansion.AAdiHad(
-            self.rp
-        )
-        var esc = fbool(self.process_escape)
-        var exh = fbool(self.process_expansion) * Expansion.afExpHad(self.rp)
-        for i in range(nh):
-            self.c[C_AC][i] = adi + self.oExtraCool.AExtraCoolC[i]
-            self.c[C_aC][i] = esc * self.oEscape.afescPipm[i] + exh
-            self.c[C_AC0][i] = self.oExtraCool.AExtraCoolC[i]
-            self.c[C_aC0][i] = esc * self.oEscape.afescNTR[i] + exh
+                copy_into(self.c[C_qCpp + s], self.oProtonProton.qC[s])
+        else:
+            for s in range(N_CHARM):
+                fill_zero(self.c[C_qCpp + s])
+        self._kaon_charm_escape_cooling(True)
 
     def _zero_charm_products(mut self, origin: Int):
-        """The decay products of an origin's charm hadrons and of their
-        kaons, before this step's (or with charm off)."""
         var hb = C_qpip_C if origin == 0 else C_qpip_Cpp
         var kb = C_qpip_KC if origin == 0 else C_qpip_KCpp
         for p in range(N_CPROD_HAD):
             fill_zero(self.c[hb + p])
-        for p in range(7):
+        for p in range(N_KPROD_HAD):
             fill_zero(self.c[kb + p])
         fill_zero(self.c[C_qe_C if origin == 0 else C_qe_Cpp])
         fill_zero(self.c[C_qp_C if origin == 0 else C_qp_Cpp])
-        for k in range(6):
+        for k in range(N_CPROD_NU):
             fill_zero(self.c[(C_qnue_C if origin == 0 else C_qnue_Cpp) + k])
-        for k in range(4):
+        for k in range(N_KPROD_NU):
             fill_zero(self.c[(C_qnue_KC if origin == 0 else C_qnue_KCpp) + k])
         fill_zero(self.c[C_qgma_C if origin == 0 else C_qgma_Cpp])
         for k in range(2):
             fill_zero(self.c[(C_qpi_Cpg if origin == 0 else C_qpi_Cpp) + k])
 
     def Calc_C(mut self) raises:
-        """Evolve the charm hadrons of both origins and compute their decay
-        products; evolve the kaons of these decays and compute theirs: the
-        sources of this step's charm decay chain, and (lagged by a step) of
-        the nucleons."""
+        """The decay products of the charm hadrons and their kaons feed this
+        step's charm decay chain. Lagged by a step, they also feed the
+        nucleons."""
         if self.verbose:
             print(" Calculate charm hadrons")
-        var pg = self.charm_pg_on()
-        var pp = self.charm_pp_on()
+        var pg = self.charm_ev[0]
+        var pp = self.charm_ev[1]
         var rows = List[Evolution]()
         for s in range(N_CHARM):
             var ch = charm_charged(s)
@@ -2633,32 +2722,47 @@ struct SimulationManager(Movable):
                 )
         fill_zero(self.c[C_qpro_C])
         fill_zero(self.c[C_qntr_C])
+        # the products' blocks (coeffs.mojo) hold them in the order of
+        # physics/decays.mojo, each origin's after the other's
+        comptime assert (
+            N_CPROD_HAD == CP_N - CP_PIP + 1
+            and C_qpip_Cpp == C_qpip_C + N_CPROD_HAD
+            and C_qpip_KC == C_qpip_Cpp + N_CPROD_HAD
+            and C_qpip_KCpp == C_qpip_KC + N_KPROD_HAD
+            and C_qpi_Cpg == C_qpip_KCpp + N_KPROD_HAD
+            and C_qnue_Cpp == C_qnue_C + N_CPROD_NU
+            and C_qnue_KC == C_qnue_Cpp + N_CPROD_NU
+            and C_qnue_KCpp == C_qnue_KC + N_KPROD_NU
+            and C_qnu_Cpg == C_qnue_KCpp + N_KPROD_NU
+        )
         for origin in range(2):
             self._zero_charm_products(origin)
         var dec = self.charm_decay_on()
         if dec and (pg or pp):
             self.oCharmDec.Calc_CtoX(self.dat, P_charm_pg, P_charm_pp, pg, pp)
+        # (the products are copied into the coefficient arrays, which keep
+        #  their storage)
         for origin in range(2):
             var on = pg if origin == 0 else pp
             if not (on and dec):
                 continue
+            ref out = self.oCharmDec.out
             var ob = origin * N_CPROD
             var hb = C_qpip_C if origin == 0 else C_qpip_Cpp
             for p in range(N_CPROD_HAD):
-                self.c[hb + p] = self.oCharmDec.out[ob + CP_PIP + p].copy()
+                copy_into(self.c[hb + p], out[ob + CP_PIP + p])
             var qe = C_qe_C if origin == 0 else C_qe_Cpp
             var qp = C_qp_C if origin == 0 else C_qp_Cpp
-            self.c[qe] = self.oCharmDec.out[ob + CP_EM].copy()
-            self.c[qp] = self.oCharmDec.out[ob + CP_EP].copy()
+            copy_into(self.c[qe], out[ob + CP_EM])
+            copy_into(self.c[qp], out[ob + CP_EP])
             var qn = C_qnue_C if origin == 0 else C_qnue_Cpp
-            for k in range(6):
-                self.c[qn + k] = self.oCharmDec.out[ob + CP_NUE + k].copy()
+            for k in range(N_CPROD_NU):
+                copy_into(self.c[qn + k], out[ob + CP_NUE + k])
             var qg = C_qgma_C if origin == 0 else C_qgma_Cpp
-            self.c[qg] = self.oCharmDec.out[ob + CP_GAM].copy()
+            copy_into(self.c[qg], out[ob + CP_GAM])
             for i in range(self.dat.nbins_had):
                 self.c[C_qpro_C][i] += self.oCharmDec.out[ob + CP_P][i]
                 self.c[C_qntr_C][i] += self.oCharmDec.out[ob + CP_N][i]
-        # the kaons of the charm decays, evolved as kaons
         var krows = List[Evolution]()
         for o in range(2):
             if not self.charm_kaons_on(o):
@@ -2676,11 +2780,8 @@ struct SimulationManager(Movable):
                     )
                 )
         if len(krows) > 0:
-            self._kaon_escape_cooling()
+            self._kaon_charm_escape_cooling(False)
             self.evolve_group(krows)
-        # (they add to the kaon totals) and their decays (products in the
-        # order of physics/decays.mojo): pions and muons, e+- and neutrinos
-        # of each origin's chain
         var kdec = List[Bool]()
         for o in range(2):
             kdec.append(
@@ -2702,17 +2803,17 @@ struct SimulationManager(Movable):
             ref kout = self.oKaonDec.out
             var ob = o * N_PROD
             var kb = C_qpip_KC if o == 0 else C_qpip_KCpp
-            for p in range(7):
-                self.c[kb + p] = kout[ob + p].copy()
+            for p in range(N_KPROD_HAD):
+                copy_into(self.c[kb + p], kout[ob + PR_PIP + p])
             var qe = C_qe_C if o == 0 else C_qe_Cpp
             var qp = C_qp_C if o == 0 else C_qp_Cpp
-            for i in range(len(kout[ob + 7])):
-                self.c[qe][i] += kout[ob + 7][i]
-                self.c[qp][i] += kout[ob + 8][i]
+            for i in range(len(kout[ob + PR_EM])):
+                self.c[qe][i] += kout[ob + PR_EM][i]
+                self.c[qp][i] += kout[ob + PR_EP][i]
             var qn = C_qnue_KC if o == 0 else C_qnue_KCpp
-            for k in range(4):
-                self.c[qn + k] = kout[ob + 9 + k].copy()
-        # the sources of the chain's pions: of the charm and kaon decays
+            for k in range(N_KPROD_NU):
+                copy_into(self.c[qn + k], kout[ob + PR_NUE + k])
+        comptime assert CP_PIM == CP_PIP + 1 and PR_PIM == PR_PIP + 1
         for o in range(2):
             var hb = C_qpip_C if o == 0 else C_qpip_Cpp
             var kb = C_qpip_KC if o == 0 else C_qpip_KCpp
@@ -2722,21 +2823,15 @@ struct SimulationManager(Movable):
                     self.c[q0 + k][i] = self.c[hb + k][i] + self.c[kb + k][i]
 
     def _pion_to_muon_sources(mut self, pions: List[Int], blocks: List[Int]):
-        """Muon sources from the decay of the pion sets k, the pi+ and pi-
-        n[pions[k]], n[pions[k] + 1], into the blocks c[blocks[k] .. + 3] =
-        (mu+ left, mu+ right, mu- left, mu- right); the sets in parallel."""
         self.oPionDec.Calc_PItoMU(self.dat, pions)
         for k in range(len(pions)):
             var q0 = blocks[k]
-            for i in range(self.dat.nbins_had):
-                self.c[q0][i] = self.oPionDec.MpLGen[k][i]
-                self.c[q0 + 1][i] = self.oPionDec.MpRGen[k][i]
-                self.c[q0 + 2][i] = self.oPionDec.MmLGen[k][i]
-                self.c[q0 + 3][i] = self.oPionDec.MmRGen[k][i]
+            copy_into(self.c[q0], self.oPionDec.MpLGen[k])
+            copy_into(self.c[q0 + 1], self.oPionDec.MpRGen[k])
+            copy_into(self.c[q0 + 2], self.oPionDec.MmLGen[k])
+            copy_into(self.c[q0 + 3], self.oPionDec.MmRGen[k])
 
     def _add_kaon_muons(mut self, q0: Int, src: Int):
-        """Add the muons from kaon decay c[src .. src + 3] to the block
-        c[q0 .. q0 + 3] = (mu+ left, mu+ right, mu- left, mu- right)."""
         for k in range(4):
             for i in range(self.dat.nbins_had):
                 self.c[q0 + k][i] += self.c[src + k][i]
@@ -2746,8 +2841,8 @@ struct SimulationManager(Movable):
             fill_zero(self.c[q0 + k])
 
     def Calc_Coeff_MU(mut self):
-        """Muon sources from pion decay and (am3_mojo) kaon decay. Without
-        pion decay the pion part is zero (AM3 kept the last sources)."""
+        """Without pion decay, the pion part of the muon sources is zero (AM3
+        kept the last sources)."""
         if self.verbose:
             print(" Calculate muon coefficient")
         comptime assert (
@@ -2755,22 +2850,12 @@ struct SimulationManager(Movable):
             and P_pion_minus_pg == P_pion_plus_pg + 1
             and P_pion_minus_pp == P_pion_plus_pp + 1
         )
-        # the pion sets, each with its muon sources: all pions, the pg and pp
-        # components, and the pions of the kaon and charm decay chains
         var pions: List[Int] = [P_pion_plus]
         var blocks: List[Int] = [C_qmupl_tot_dec]
-        if (
-            self.process_parse_sed
-            and self.process_photopion
-            and self.process_photopion_emission
-        ):
+        if self.pchain[0]:
             pions.append(P_pion_plus_pg)
             blocks.append(C_qmupl_pg)
-        if (
-            self.process_parse_sed
-            and self.process_pp
-            and self.process_pp_emission
-        ):
+        if self.pchain[1]:
             pions.append(P_pion_plus_pp)
             blocks.append(C_qmupl_pp)
         for o in range(2):
@@ -2786,16 +2871,26 @@ struct SimulationManager(Movable):
         else:
             for q0 in blocks:
                 self._zero_block(q0)
-        # the muons of the kaon decays, and of the charm decays and their
-        # kaons' decays (zero without them)
-        self._add_kaon_muons(C_qmupl_tot_dec, C_qmupl_K)
-        self._add_kaon_muons(C_qmupl_tot_dec, C_qmupl_Kpp)
-        self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_C + 3)
-        self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_Cpp + 3)
-        self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_KC + 3)
-        self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_KCpp + 3)
-        # the kaon decay chains: the kaons' muons; the charm decay chains: the
-        # muons of the charm and kaon decays
+        # The muons of the kaon decays, and of the charm decays and their
+        # kaons' decays (zero without them). They are those of the products'
+        # blocks from mu+ left (cmu, kmu) on, in the order of _add_kaon_muons.
+        comptime assert (
+            PR_MUPR == PR_MUPL + 1
+            and PR_MUML == PR_MUPL + 2
+            and PR_MUMR == PR_MUPL + 3
+            and CP_MUPR == CP_MUPL + 1
+            and CP_MUML == CP_MUPL + 2
+            and CP_MUMR == CP_MUPL + 3
+        )
+        comptime cmu = CP_MUPL - CP_PIP
+        comptime kmu = PR_MUPL - PR_PIP
+        if not self.kc_idle:
+            self._add_kaon_muons(C_qmupl_tot_dec, C_qmupl_K)
+            self._add_kaon_muons(C_qmupl_tot_dec, C_qmupl_Kpp)
+            self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_C + cmu)
+            self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_Cpp + cmu)
+            self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_KC + kmu)
+            self._add_kaon_muons(C_qmupl_tot_dec, C_qpip_KCpp + kmu)
         for o in range(2):
             if self.kaon_chain_on(o):
                 self._add_kaon_muons(
@@ -2806,10 +2901,10 @@ struct SimulationManager(Movable):
             if self.charm_chain_on(o):
                 var q0 = C_qmu_Cpg if o == 0 else C_qmu_Cpp
                 self._add_kaon_muons(
-                    q0, (C_qpip_C if o == 0 else C_qpip_Cpp) + 3
+                    q0, (C_qpip_C if o == 0 else C_qpip_Cpp) + cmu
                 )
                 self._add_kaon_muons(
-                    q0, (C_qpip_KC if o == 0 else C_qpip_KCpp) + 3
+                    q0, (C_qpip_KC if o == 0 else C_qpip_KCpp) + kmu
                 )
 
     def Pass_Coeff_MU(mut self):
@@ -2850,56 +2945,36 @@ struct SimulationManager(Movable):
         self._block_rows(
             rows, 0, SA_MpL, P_muon_plus_left, C_qmupl, C_amu, C_Amu
         )
-        if (
-            self.process_parse_sed
-            and self.process_photopion
-            and self.process_photopion_emission
-        ):
+        if self.pchain[0]:
             self._block_rows(
                 rows, 1, SA_MpL, P_muon_plus_left, C_qmupl, C_amu, C_Amu
             )
-        if (
-            self.process_parse_sed
-            and self.process_pp
-            and self.process_pp_emission
-        ):
+        if self.pchain[1]:
             self._block_rows(
                 rows, 2, SA_MpL, P_muon_plus_left, C_qmupl, C_amu, C_Amu
             )
         for o in range(2):
             if self.kaon_chain_on(o):
-                for k in range(4):
-                    rows.append(
-                        Evolution(
-                            (SA_MpL_Kpg if o == 0 else SA_MpL_Kpp) + k,
-                            (
-                                P_muon_plus_left_Kpg if o
-                                == 0 else P_muon_plus_left_Kpp
-                            )
-                            + k,
-                            C_amu,
-                            C_Amu,
-                            (C_qmu_Kpg if o == 0 else C_qmu_Kpp) + k,
-                            P_photons_on_had_grid,
-                        )
-                    )
+                self._block_rows(
+                    rows,
+                    0,
+                    SA_MpL_Kpg if o == 0 else SA_MpL_Kpp,
+                    P_muon_plus_left_Kpg if o == 0 else P_muon_plus_left_Kpp,
+                    C_qmu_Kpg if o == 0 else C_qmu_Kpp,
+                    C_amu,
+                    C_Amu,
+                )
         for o in range(2):
             if self.charm_chain_on(o):
-                for k in range(4):
-                    rows.append(
-                        Evolution(
-                            (SA_MpL_Cpg if o == 0 else SA_MpL_Cpp) + k,
-                            (
-                                P_muon_plus_left_Cpg if o
-                                == 0 else P_muon_plus_left_Cpp
-                            )
-                            + k,
-                            C_amu,
-                            C_Amu,
-                            (C_qmu_Cpg if o == 0 else C_qmu_Cpp) + k,
-                            P_photons_on_had_grid,
-                        )
-                    )
+                self._block_rows(
+                    rows,
+                    0,
+                    SA_MpL_Cpg if o == 0 else SA_MpL_Cpp,
+                    P_muon_plus_left_Cpg if o == 0 else P_muon_plus_left_Cpp,
+                    C_qmu_Cpg if o == 0 else C_qmu_Cpp,
+                    C_amu,
+                    C_Amu,
+                )
         self.evolve_group(rows)
 
     def _decay_neutrino_sources(
@@ -2909,13 +2984,8 @@ struct SimulationManager(Movable):
         blocks: List[Int],
         pblocks: List[Int],
     ):
-        """Neutrino sources from the decay of the sets k of pions n[pions[k]],
-        n[pions[k] + 1] and muons n[muons[k] .. + 3] into c[blocks[k] .. + 3] =
-        (nu_e, anti-nu_e, nu_mu, anti-nu_mu), recomputed every step (AM3 never
-        resets the total nu_mu sources with pion decay off and muon decay on);
-        the sets in parallel. With pblocks[k] >= 0, the pions' nu_mu and
-        anti-nu_mu go to c[pblocks[k]], c[pblocks[k] + 1] instead, and the
-        block takes the muons' alone. A decay that is off adds zeros."""
+        """The neutrino sources are recomputed every step (AM3 never resets the
+        total nu_mu sources with pion decay off and muon decay on)."""
         var on_p = self.process_pion_decay
         var on_m = self.process_muon_decay
         var pid = fbool(on_p)
@@ -2956,8 +3026,6 @@ struct SimulationManager(Movable):
                 )
 
     def _add_kaon_neutrinos(mut self, q0: Int, src: Int):
-        """Add the neutrinos from kaon decay c[src .. src + 3] to the block
-        c[q0 .. q0 + 3] = (nu_e, anti-nu_e, nu_mu, anti-nu_mu)."""
         for k in range(4):
             for i in range(self.dat.nbins_nu):
                 self.c[q0 + k][i] += self.c[src + k][i]
@@ -2973,26 +3041,16 @@ struct SimulationManager(Movable):
             P_muon_minus_left == P_muon_plus_left + 2
             and P_muon_minus_right == P_muon_plus_left + 3
         )
-        # the pion and muon sets: all, the pg and pp components (their pions'
-        # nu_mu apart), and the kaon and charm decay chains
         var pions: List[Int] = [P_pion_plus]
         var muons: List[Int] = [P_muon_plus_left]
         var blocks: List[Int] = [C_qnue_tot_dec]
         var pblocks: List[Int] = [-1]
-        if (
-            self.process_parse_sed
-            and self.process_photopion
-            and self.process_photopion_emission
-        ):
+        if self.pchain[0]:
             pions.append(P_pion_plus_pg)
             muons.append(P_muon_plus_left_pg)
             blocks.append(C_qnue_pg)
             pblocks.append(C_qnum_pidec_pg)
-        if (
-            self.process_parse_sed
-            and self.process_pp
-            and self.process_pp_emission
-        ):
+        if self.pchain[1]:
             pions.append(P_pion_plus_pp)
             muons.append(P_muon_plus_left_pp)
             blocks.append(C_qnue_pp)
@@ -3017,15 +3075,25 @@ struct SimulationManager(Movable):
         if self.neutron_decay_on():
             for i in range(self.dat.nbins_nu):
                 self.c[C_qnuea_tot_dec][i] += self.c[C_qnuea_ndec][i]
-        self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_K)
-        self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_Kpp)
-        # (and of the charm decays and their kaons' decays: zero without them)
-        self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_C)
-        self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_Cpp)
-        self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_KC)
-        self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_KCpp)
-        # the kaon decay chains: the kaons' neutrinos; the charm decay chains:
-        # those of the charm decays and of their kaons' decays
+        if not self.kc_idle:
+            self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_K)
+            self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_Kpp)
+        # (and of the charm decays and their kaons' decays, zero without them.
+        #  They are those of the products' blocks from nu_e on, in the order of
+        #  _add_kaon_neutrinos.)
+        comptime assert (
+            PR_NUEB == PR_NUE + 1
+            and PR_NUM == PR_NUE + 2
+            and PR_NUMB == PR_NUE + 3
+            and CP_NUEB == CP_NUE + 1
+            and CP_NUM == CP_NUE + 2
+            and CP_NUMB == CP_NUE + 3
+        )
+        if not self.kc_idle:
+            self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_C)
+            self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_Cpp)
+            self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_KC)
+            self._add_kaon_neutrinos(C_qnue_tot_dec, C_qnue_KCpp)
         for o in range(2):
             if self.kaon_chain_on(o):
                 self._add_kaon_neutrinos(
@@ -3048,7 +3116,7 @@ struct SimulationManager(Movable):
         for i in range(self.dat.nbins_nu):
             self.c[C_Anu][i] = self.oExtraCool.AExtraCoolNU[i]
             self.c[C_anu][i] = esc * self.oEscape.afescNU[i] + exh
-            # each flavour takes its own external injection (AM3 added that of
+            # each flavor takes its own external injection (AM3 added that of
             # nu_e to all four and ignored the other three: AM3 bug)
             self.c[C_qnue][i] = self.c[C_qnue_tot_dec][i] + self.oInj.inj_nue[i]
             self.c[C_qnuea][i] = (
@@ -3070,22 +3138,14 @@ struct SimulationManager(Movable):
         )
         var rows = List[Evolution]()
         self._block_rows(rows, 0, SA_nue, P_neutrino_el, C_qnue, C_anu, C_Anu)
-        if (
-            self.process_parse_sed
-            and self.process_photopion
-            and self.process_photopion_emission
-        ):
+        if self.pchain[0]:
             self._block_rows(
                 rows, 1, SA_nue, P_neutrino_el, C_qnue, C_anu, C_Anu
             )
             self._pion_decay_rows(
                 rows, SA_num_pidec_pg, P_neutrino_mu_pidec_pg, C_qnum_pidec_pg
             )
-        if (
-            self.process_parse_sed
-            and self.process_pp
-            and self.process_pp_emission
-        ):
+        if self.pchain[1]:
             self._block_rows(
                 rows, 2, SA_nue, P_neutrino_el, C_qnue, C_anu, C_Anu
             )
@@ -3107,37 +3167,32 @@ struct SimulationManager(Movable):
                     P_photons_on_had_grid,
                 )
             )
-        # the neutrinos of the kaon decays, per kaon origin
         for o in range(2):
             if self.kaon_chain_on(o):
-                for k in range(4):
-                    rows.append(
-                        Evolution(
-                            (SA_nue_Kpg if o == 0 else SA_nue_Kpp) + k,
-                            (P_neutrino_el_Kpg if o == 0 else P_neutrino_el_Kpp)
-                            + k,
-                            C_anu,
-                            C_Anu,
-                            (C_qnu_Kpg if o == 0 else C_qnu_Kpp) + k,
-                            P_photons_on_had_grid,
-                        )
-                    )
-        # the neutrinos of the charm decay chains, and their nu_tau and
-        # anti-nu_tau (with or without the components: AM3 has no nu_tau)
+                self._block_rows(
+                    rows,
+                    0,
+                    SA_nue_Kpg if o == 0 else SA_nue_Kpp,
+                    P_neutrino_el_Kpg if o == 0 else P_neutrino_el_Kpp,
+                    C_qnu_Kpg if o == 0 else C_qnu_Kpp,
+                    C_anu,
+                    C_Anu,
+                )
+        # The nu_tau and anti-nu_tau of the charm decay chains are evolved with
+        # or without the components: AM3 has no nu_tau.
+        comptime assert CP_NUTB == CP_NUT + 1
+        comptime nut = CP_NUT - CP_NUE
         for o in range(2):
             if self.charm_chain_on(o):
-                for k in range(4):
-                    rows.append(
-                        Evolution(
-                            (SA_nue_Cpg if o == 0 else SA_nue_Cpp) + k,
-                            (P_neutrino_el_Cpg if o == 0 else P_neutrino_el_Cpp)
-                            + k,
-                            C_anu,
-                            C_Anu,
-                            (C_qnu_Cpg if o == 0 else C_qnu_Cpp) + k,
-                            P_photons_on_had_grid,
-                        )
-                    )
+                self._block_rows(
+                    rows,
+                    0,
+                    SA_nue_Cpg if o == 0 else SA_nue_Cpp,
+                    P_neutrino_el_Cpg if o == 0 else P_neutrino_el_Cpp,
+                    C_qnu_Cpg if o == 0 else C_qnu_Cpp,
+                    C_anu,
+                    C_Anu,
+                )
             if self.charm_kaons_on(o) or self._charm_tau_nonzero(o):
                 for k in range(2):
                     rows.append(
@@ -3150,7 +3205,7 @@ struct SimulationManager(Movable):
                             + k,
                             C_anu,
                             C_Anu,
-                            (C_qnue_C if o == 0 else C_qnue_Cpp) + 4 + k,
+                            (C_qnue_C if o == 0 else C_qnue_Cpp) + nut + k,
                             P_photons_on_had_grid,
                         )
                     )
@@ -3161,15 +3216,13 @@ struct SimulationManager(Movable):
         return self._nonzero(b) or self._nonzero(b + 1)
 
     def pair_annihilation_active(self) -> Bool:
-        """e+ e- annihilation needs electrons and positrons tracked apart."""
         return (
             self.process_pair_annihilation
             and not self.process_merge_positrons_into_electrons
+            and self.oPairAnn.ready(self.dat)
         )
 
     def triplet_active(self) -> Bool:
-        """Triplet pair production acts: switched on and its kernels built at
-        init_kernels."""
         return self.process_triplet_pair_production and self.oTPP.ready(
             self.dat
         )
@@ -3187,8 +3240,6 @@ struct SimulationManager(Movable):
         self._toc(T_PAIR_ANN, t0)
         t0 = self._tic()
         if self.triplet_active():
-            # e+- energy-loss rates and photon-convolved product rows for the
-            # photons and the e+- at the start of the step
             if self.process_merge_positrons_into_electrons:
                 self.oTPP.Calc_Triplet(
                     self.dat, self.dat.n[P_photons], self.dat.n[P_pairs], Vec()
@@ -3208,52 +3259,31 @@ struct SimulationManager(Movable):
                 self.oPair.Calc_Pair_Lep_OPT(self.dat)
             else:
                 self.oPair.Calc_Pair_Lep(
-                    self.dat, self.annihilation_pair_emission_max_com_energy
+                    self.dat, ANNIHILATION_PAIR_EMISSION_MAX_COM_ENERGY
                 )
         if self.process_hadronic:
             if (
                 self.process_bethe_heitler
                 and self.process_bethe_heitler_emission
             ):
-                self.oBH.Calc_BH_Rad(
-                    self.dat,
-                    Int(self.optimize_bethe_heitler_outgoing_pairs_grid),
-                    self.optimize_bethe_heitler_incoming_protons_min,
-                    self.optimize_bethe_heitler_target_photon_max,
-                )
-            # (muons come from pion decay and, with kaons and charm hadrons,
-            #  from their decays)
-            var both_decays = self.process_muon_decay and (
-                self.process_pion_decay
-                or self.kaon_decay_on()
-                or self.charm_decay_on()
-            )
-            # the muon sets: all muons, for the totals (also with the
-            # components on: AM3 summed the components, which miss injected and
-            # set particles: AM3 bug), and those of the pg and pp pair
-            # components: the muons made in the interactions and those of the
-            # kaon and charm decay chains
+                self.oBH.Calc_BH_Rad(self.dat)
+            # The totals take all muons, also with the components on (AM3 summed
+            # the components, which miss injected and set particles: AM3 bug).
+            # All muon sets decay with the muon decay switch. (AM3 gave the
+            # components the e+- of muon decay only with pion decay on too. So
+            # after pion decay was switched off, they missed those of the muons
+            # left.)
             var muons: List[Int] = [P_muon_plus_left]
             var qe: List[Int] = [C_qe_tot_dec]
             var qp: List[Int] = [C_qp_tot_dec]
-            var factor: List[Float64] = [fbool(self.process_muon_decay)]
-            var accumulate: List[Bool] = [False]
-            var pg_on = (
-                self.process_photopion and self.process_photopion_emission
-            )
-            var pp_on = self.process_pp and self.process_pp_emission
             for o in range(2):
-                if not (
-                    self.process_parse_sed
-                    and both_decays
-                    and (pg_on if o == 0 else pp_on)
-                ):
+                if not (self.process_muon_decay and self._pair_muons(o)):
                     continue
-                # (the first set of a component is stored, the others added)
                 var first = len(muons)
-                muons.append(
-                    P_muon_plus_left_pg if o == 0 else P_muon_plus_left_pp
-                )
+                if self.pchain[o]:
+                    muons.append(
+                        P_muon_plus_left_pg if o == 0 else P_muon_plus_left_pp
+                    )
                 if self.kaon_chain_on(o):
                     muons.append(
                         P_muon_plus_left_Kpg if o == 0 else P_muon_plus_left_Kpp
@@ -3262,36 +3292,42 @@ struct SimulationManager(Movable):
                     muons.append(
                         P_muon_plus_left_Cpg if o == 0 else P_muon_plus_left_Cpp
                     )
-                for k in range(first, len(muons)):
+                for _ in range(first, len(muons)):
                     qe.append(C_qepg if o == 0 else C_qepp)
                     qp.append(C_qppg if o == 0 else C_qppp)
-                    factor.append(1.0)
-                    accumulate.append(k > first)
             if self.verbose:
                 print("computing muon decay to pairs terms")
-            self._muon_to_pair_sources(muons, qe, qp, factor, accumulate)
+            self._muon_to_pair_sources(
+                muons, qe, qp, fbool(self.process_muon_decay)
+            )
+        else:
+            # no muons decay: the totals are zero, not the last step's (AM3
+            # with parse_sed on summed them from the zeroed components)
+            fill_zero(self.c[C_qe_tot_dec])
+            fill_zero(self.c[C_qp_tot_dec])
 
+    def _pair_muons(self, origin: Int) -> Bool:
+        return (
+            self.pchain[origin]
+            or self.kaon_chain_on(origin)
+            or self.charm_chain_on(origin)
+        )
+
+    # (not inlined: with f known to the compiler, it fuses the additions of the
+    # later sets otherwise, which moves their sums at the rounding level)
+    @inline(.never)
     def _muon_to_pair_sources(
-        mut self,
-        muons: List[Int],
-        qe: List[Int],
-        qp: List[Int],
-        factor: List[Float64],
-        accumulate: List[Bool],
+        mut self, muons: List[Int], qe: List[Int], qp: List[Int], f: Float64
     ):
-        """e-/e+ sources on the lepton grid from the decay of the muon sets k,
-        n[muons[k] .. + 3], times factor[k], stored in c[qe[k]], c[qp[k]] or
-        (accumulate[k]) added to them, in the order of the sets. The decays
-        run in parallel. If muon decay is off, they are skipped and the last
-        result of set 0 is used."""
+        """If muon decay is off, the decays are skipped: only set 0 is there,
+        with f = 0."""
         if self.process_muon_decay:
             self.oMuonDec.Calc_MUtoE(self.dat, muons)
         var nl = self.dat.nbins_lep
         for k in range(len(muons)):
             var e = pd(self.oMuonDec.QMU2EGen_mu[k])
             var p = pd(self.oMuonDec.QMU2PGen_mu[k])
-            var f = factor[k]
-            var a = accumulate[k]
+            var a = k > 0 and qe[k] == qe[k - 1]
             ref ce = self.c[qe[k]]
             ref cp = self.c[qp[k]]
             for i in range(nl):
@@ -3309,22 +3345,16 @@ struct SimulationManager(Movable):
             and self.process_bethe_heitler
             and self.process_bethe_heitler_emission
         )
-        var mu_dec = self.process_muon_decay and (
-            self.process_pion_decay
-            or self.kaon_decay_on()
-            or self.charm_decay_on()
-        )
+        # (the muon e+- of the pg and pp components: as Calc_Coeff_Lep)
         var pg_on = (
             self.process_hadronic
-            and self.process_photopion
-            and self.process_photopion_emission
-            and mu_dec
+            and self.process_muon_decay
+            and self._pair_muons(0)
         )
         var pp_on = (
             self.process_hadronic
-            and self.process_pp
-            and self.process_pp_emission
-            and mu_dec
+            and self.process_muon_decay
+            and self._pair_muons(1)
         )
         var qbh = pd(self.oBH.QBH_LGen)
         for i in range(nl):
@@ -3344,7 +3374,9 @@ struct SimulationManager(Movable):
             if not pp_on:
                 self.c[C_qepp][i] = 0.0
                 self.c[C_qppp][i] = 0.0
-            # e+- from kaon decay (photo-hadronic and pp origin)
+            # (the kaon and charm parts below are zero)
+            if self.process_hadronic and self.kc_idle:
+                continue
             var kon = fbool(self.kaon_decay_on())
             var r = kon / RATE_SSC
             var ke_g = r * self.dat.grid_had2lep(i, pd(self.c[C_qe_K]), nl)
@@ -3361,8 +3393,9 @@ struct SimulationManager(Movable):
             self.c[C_qe_tot_dec][i] += ke
             self.c[C_qp_tot_dec][i] += kp
             # e+- from the charm decays and their kaons' decays (zero without
-            # them)
-            var r_c = 1.0 / RATE_SSC
+            # them). Calc_C, which resets them, runs only with the hadronic
+            # processes.
+            var r_c = fbool(self.process_hadronic) / RATE_SSC
             var ce_g = r_c * self.dat.grid_had2lep(i, pd(self.c[C_qe_C]), nl)
             var cp_g = r_c * self.dat.grid_had2lep(i, pd(self.c[C_qp_C]), nl)
             var ce_p = r_c * self.dat.grid_had2lep(i, pd(self.c[C_qe_Cpp]), nl)
@@ -3390,8 +3423,11 @@ struct SimulationManager(Movable):
         # the pairs take as a continuous loss (cooling switch)
         var tpp = self.triplet_active()
         var tco = fbool(tpp and self.process_triplet_pair_production_cooling)
-        # neutron decay (am3_mojo addition): its electrons
+        # neutron decay (am3_mojo addition): its electrons (none after a
+        # switch-off, while those left evolve)
         var ndec = self.neutron_decay_on()
+        if not ndec:
+            fill_zero(self.c[C_qe_ndec])
         for i in range(nl):
             self.c[C_Ae][i] = adi + self.oExtraCool.AExtraCoolE[i]
             if tpp:
@@ -3425,6 +3461,14 @@ struct SimulationManager(Movable):
             )
             if self.process_merge_positrons_into_electrons:
                 self.c[C_qep][i] = self.c[C_qele][i] + self.c[C_qpos][i]
+        # The loss rates with their cooling off are zero, as they do not act
+        # (for the getters and the next step's estimate). The emission does
+        # not take them.
+        if pac == 0.0:
+            fill_zero(self.oPairAnn.Gamma_ele)
+            fill_zero(self.oPairAnn.Gamma_pos)
+        if tco == 0.0:
+            fill_zero(self.oTPP.eloss)
         if self.process_parse_sed:
             for i in range(nl):
                 self.c[C_qepin][i] = self.c[C_qein][i] + self.c[C_qpin][i]
@@ -3437,9 +3481,6 @@ struct SimulationManager(Movable):
         self._toc_add(T_TRIPLET, t0)
 
     def _triplet_sources(mut self, tpp: Bool):
-        """The pairs that triplet pair production makes, from the leptons at
-        the start of the step: sources of the e- and e+ (or merged e+-) totals
-        and of the triplet pair component."""
         var nl = self.dat.nbins_lep
         fill_zero(self.c[C_qetpp])
         fill_zero(self.c[C_qptpp])
@@ -3479,7 +3520,7 @@ struct SimulationManager(Movable):
         var ann = self.pair_annihilation_active()
         var rows_e = List[Evolution]()
         var rows_p = List[Evolution]()
-        var comps = List[Int]()  # pair components evolved in halves
+        var comps = List[Int]()
 
         def lep(solver: Int, target: Int, q: Int) capturing:
             rows.append(Evolution(solver, target, C_ae, C_Ae, q, P_photons))
@@ -3504,6 +3545,7 @@ struct SimulationManager(Movable):
                 )
             )
 
+        self.last_step_merged = self.process_merge_positrons_into_electrons
         if self.process_merge_positrons_into_electrons:
             lep(SA_ep, P_pairs, C_qep)
         else:
@@ -3528,24 +3570,16 @@ struct SimulationManager(Movable):
                 )
             )
         if self.process_parse_sed:
-            # (the photo-hadronic and pp pairs come from muon decay and, with
-            #  kaons and charm hadrons, also directly from their decays)
-            var dec = (
-                self.process_muon_decay
-                or self.kaon_decay_on()
-                or self.charm_decay_on()
-            )
+            # The components of AM3's processes while they hold or get pairs
+            # (also after their process is switched off: _live).
             comp(SA_epin, 0, P_pairs_in, C_qepin, C_qein, C_qpin)
-            if self.process_annihilation and self.process_annihilation_emission:
+            if self._live(P_pairs_pair, C_qeppair):
                 comp(SA_eppair, 2, P_pairs_pair, C_qeppair, C_qepair, C_qppair)
-            if (
-                self.process_bethe_heitler
-                and self.process_bethe_heitler_emission
-            ):
+            if self._live(P_pairs_bh, C_qepbh):
                 comp(SA_epbh, 1, P_pairs_bh, C_qepbh, C_qebh, C_qpbh)
-            if dec:
+            if self._live(P_pairs_pg, C_qeppg):
                 comp(SA_eppg, 3, P_pairs_pg, C_qeppg, C_qepg, C_qppg)
-            if self.process_pp and self.process_pp_emission and dec:
+            if self._live(P_pairs_pp, C_qeppp):
                 comp(SA_eppp, 4, P_pairs_pp, C_qeppp, C_qepp, C_qppp)
             # (also after the process is switched off, so that the component
             #  escapes and cools like the pairs it is part of)
@@ -3553,8 +3587,8 @@ struct SimulationManager(Movable):
                 tpp and self.process_triplet_pair_production_emission
             ) or self._nonzero(P_pairs_tpp):
                 comp(SA_eptpp, 5, P_pairs_tpp, C_qeptpp, C_qetpp, C_qptpp)
-            # the electrons from neutron decay: electrons only, so evolved
-            # whole, with the electrons' sink
+            # the electrons from neutron decay: electrons only, so they are
+            # evolved whole, with the electrons' sink
             if self.neutron_decay_on() or self._nonzero(P_pairs_ndec):
                 rows.append(
                     Evolution(
@@ -3580,13 +3614,31 @@ struct SimulationManager(Movable):
                         self.dat.n[P_pairs_in_ele + k][i]
                         + self.dat.n[P_pairs_in_pos + k][i]
                     )
-        # the halves follow the components only while they evolve apart
-        self.pair_halves_valid = ann
-        if not self.process_merge_positrons_into_electrons:
+        # The halves follow the components only while they evolve apart. In a
+        # step without the components, neither changes.
+        if self.process_parse_sed:
+            self.pair_halves_valid = ann
+        if self.process_merge_positrons_into_electrons:
+            self._split_merged_pairs()
+        else:
             for i in range(self.dat.nbins_lep):
                 self.dat.n[P_pairs][i] = (
                     self.dat.n[P_electrons][i] + self.dat.n[P_positrons][i]
                 )
+
+    def _split_merged_pairs(mut self):
+        """In a bin without e- and e+ before the step, all pairs become e-
+        (merged, the pairs count as electrons, as AM3's switch puts it). The e-
+        and e+ getters follow the merged pairs, and the steps after the merge is
+        switched off go on from them. (AM3 kept the e- and e+ of the last step
+        before the merge, and the first step after it summed them into the
+        pairs. So the pairs lost what the merged steps changed.)"""
+        for i in range(self.dat.nbins_lep):
+            var ne = self.dat.n[P_electrons][i]
+            var npo = self.dat.n[P_positrons][i]
+            var fe = ne / (ne + npo) if ne + npo > 0.0 else 1.0
+            self.dat.n[P_electrons][i] = fe * self.dat.n[P_pairs][i]
+            self.dat.n[P_positrons][i] = (1.0 - fe) * self.dat.n[P_pairs][i]
 
     @staticmethod
     def _pair_component(k: Int) -> Int:
@@ -3606,8 +3658,6 @@ struct SimulationManager(Movable):
                 return P_pairs_pp
 
     def _split_pair_components(mut self):
-        """Split the pair components into e- and e+ parts with the charge
-        fractions of all pairs in each bin (when annihilation starts acting)."""
         for k in range(N_PAIR_COMP):
             var t = Self._pair_component(k)
             for i in range(self.dat.nbins_lep):
@@ -3634,17 +3684,15 @@ struct SimulationManager(Movable):
         return _r^
 
     def Calc_Coeff_Phot(mut self):
-        """The photon coefficients. The inverse-Compton emission and the
-        charm-hadron emission run in parallel themselves; the other parts are
-        independent of each other (each writes its own arrays) and run as the
-        tasks of one parallel section, the larger first (_phot_part). Their
-        profiler slots time each part, so with several threads the parts can
-        add up to more than the stage."""
+        """The inverse-Compton emission and the charm-hadron emission run in
+        parallel themselves. The other parts are independent of each other (each
+        writes its own arrays). They run as the tasks of one parallel section,
+        the larger first (_phot_part). Their profiler slots time each part, so
+        with several threads the parts can add up to more than the stage."""
         if self.verbose:
             print(" Calculate photon coefficient")
         var t0 = self._tic()
-        for i in range(self.dat.nbins_pho):
-            self.c[C_qgma_inj][i] = self.oInj.inj_photon[i]
+        copy_into(self.c[C_qgma_inj], self.oInj.inj_photon)
         self._toc(21, t0)
         t0 = self._tic()
         if (
@@ -3662,13 +3710,21 @@ struct SimulationManager(Movable):
                 pd(self.c[C_qgma_ndecic]),
             ]
             self.oComp.Calc_IC_Phot_Rad(
-                self.dat,
-                outs,
-                self._lep_ins(),
-                not self.process_parse_sed,
-                self.optimize_compton_emission_emin,
-                self.optimize_compton_target_emax,
+                self.dat, outs, self._lep_ins(), not self.process_parse_sed
             )
+        else:
+            # (not the last step's, after a switch-off: AM3 bug)
+            for id in [
+                C_qgma_ic,
+                C_qgma_inic,
+                C_qgma_bhic,
+                C_qgma_pairic,
+                C_qgma_pgic,
+                C_qgma_ppic,
+                C_qgma_tppic,
+                C_qgma_ndecic,
+            ]:
+                fill_zero(self.c[id])
         self._toc(24, t0)
         self.phot_parts.clear()
         self.phot_parts.append(22)
@@ -3706,16 +3762,14 @@ struct SimulationManager(Movable):
             else:
                 fill_zero(self.oHadIC.epsilonCIC)
             self._toc(T_CHARM_IC, t0)
-        t0 = self._tic()
-        self._toc(35, t0)
+        # (slot 35, "photon coeff: escape", stays 0: AM3 times there its
+        #  commented-out photon escape, which only the escape setters change)
 
     def _phot_part(mut self, part: Int):
-        """Part `part` of Calc_Coeff_Phot (its profiler slot): 22 e+- synchrotron
-        emission, 23 synchrotron self-absorption, 25 inverse-Compton photon
-        loss, 26 gamma-gamma absorption, 27 photo-hadronic photon loss, 28 the
-        synchrotron emission of protons, pions, muons and kaons and 29 their
-        inverse-Compton emission (each in turn, sharing a work array), 34 the
-        photons of pi0 and charm-hadron decays."""
+        """Part `part` of Calc_Coeff_Phot (its profiler slot). Parts 28 and 29
+        compute the synchrotron and inverse-Compton emission of protons, pions,
+        muons and kaons. They compute each species in turn, with a shared work
+        array."""
         var t0 = self._tic()
         if part == 22:
             if self.process_electron_syn and self.process_electron_syn_emission:
@@ -3732,10 +3786,28 @@ struct SimulationManager(Movable):
                 self.oSyn.Calc_SY_Phot_Emit(
                     self.dat, outs, self._lep_ins(), not self.process_parse_sed
                 )
+            else:
+                # (not the last step's, after a switch-off: AM3 bug)
+                for id in [
+                    C_qgma_sy,
+                    C_qgma_insy,
+                    C_qgma_bhsy,
+                    C_qgma_pairsy,
+                    C_qgma_pgsy,
+                    C_qgma_ppsy,
+                    C_qgma_tppsy,
+                    C_qgma_ndecsy,
+                ]:
+                    fill_zero(self.c[id])
             self._toc(22, t0)
         elif part == 23:
-            if self.process_ssa:
+            # (with the gate of Pass_Coeff_Phot, and zero while off, as the
+            #  getter reads the rates. AM3 computed them with the e+-
+            #  synchrotron off, and kept those of its last step with SSA.)
+            if self.process_electron_syn and self.process_ssa:
                 self.oSyn.Calc_SY_Phot_Sink(self.dat)
+            else:
+                fill_zero(self.oSyn.afsyG)
             self._toc(23, t0)
         elif part == 25:
             if (
@@ -3743,14 +3815,28 @@ struct SimulationManager(Movable):
                 and self.process_compton_photon_energy_loss
             ):
                 self.oComp.Calc_IC_Phot_Loss(self.dat)
+            else:
+                fill_zero(self.oComp.aficG)
             self._toc(25, t0)
         elif part == 26:
-            if self.process_annihilation and self.process_annihilation_cooling:
+            # (The pair emission takes its number from these rates, also with
+            #  the photon loss off. AM3 refreshed them only with it on, so
+            #  pairs came from the rates of its last step, or none at all. The
+            #  rates are zero while the process is off. So the step after it is
+            #  switched on again makes no pairs of rates before the switch-off.)
+            if self.process_annihilation and (
+                self.process_annihilation_cooling
+                or self.process_annihilation_emission
+            ):
                 self.oPair.Calc_Pair_Phot(self.dat)
+            else:
+                fill_zero(self.oPair.afpairG)
             self._toc(26, t0)
         elif part == 27:
             if self.process_photopion and self.process_photopion_photon_loss:
                 self.oPhotoHadron.Calc_PhotoHadron_PhotonLoss(self.dat)
+            else:
+                fill_zero(self.oPhotoHadron.afPG_Rad)
             self._toc(27, t0)
         elif part == 28:
             if self.process_proton_syn and self.process_proton_syn_emission:
@@ -3817,16 +3903,20 @@ struct SimulationManager(Movable):
                         self.c[C_qgma_pi0_pp][i] = (
                             1.0 / RATE_SSC * self.dat.grid_had2lep(i, eg, ng)
                         )
-                else:
-                    for i in range(ng):
-                        self.c[C_qgma_pi0_pp][i] = 0.0
-                # the direct pp photons (non-zero only when the pp pi0 do not
-                # go into the cascade), for the total
-                var direct_pp = self.c[C_qgma_pi0_pp].copy()
+                # the direct pp photons, for the total
+                copy_into(self.pi0_pp_direct, self.c[C_qgma_pi0_pp])
                 if self.process_parse_sed:
+                    # C_qpi0_pg holds the pi0 of the photo-hadronic
+                    # interactions and of the decays of their kaons and charm
+                    # hadrons (also those left after their production stops)
                     if (
-                        self.process_photopion
-                        and self.process_photopion_emission
+                        (
+                            self.process_photopion
+                            and self.process_photopion_emission
+                        )
+                        or self.kaons_ev[0]
+                        or self.charm_ev[0]
+                        or self.charm_kaons_on(0)
                     ):
                         self.oPionDec.Calc_PItoG(self.dat, self.c[C_qpi0_pg])
                         var qg = pd(self.oPionDec.QPI2GGen)
@@ -3836,36 +3926,39 @@ struct SimulationManager(Movable):
                                 / RATE_SSC
                                 * self.dat.grid_had2lep(i, qg, ng)
                             )
-                    if self.process_pp and self.process_pp_emission:
-                        # C_qpi0_pp holds the pp pi0 (into the cascade) and
-                        # the pi0 from the decay of kaons and charm hadrons
-                        # from pp collisions
-                        if (
-                            self.process_pp_emission_pi0_into_cascade
-                            or self.kaons_pp_on()
-                            or self.charm_pp_on()
-                        ):
-                            self.oPionDec.Calc_PItoG(
-                                self.dat, self.c[C_qpi0_pp]
+                    # C_qpi0_pp holds the pp pi0 (into the cascade) and the pi0
+                    # from the decays of pp kaons and charm hadrons (as for the
+                    # photo-hadronic ones)
+                    if (
+                        (
+                            self.process_pp
+                            and self.process_pp_emission
+                            and self.process_pp_emission_pi0_into_cascade
+                        )
+                        or self.kaons_ev[1]
+                        or self.charm_ev[1]
+                        or self.charm_kaons_on(1)
+                    ):
+                        self.oPionDec.Calc_PItoG(self.dat, self.c[C_qpi0_pp])
+                        var qg = pd(self.oPionDec.QPI2GGen)
+                        for i in range(ng):
+                            self.c[C_qgma_pi0_pp][i] += (
+                                1.0
+                                / RATE_SSC
+                                * self.dat.grid_had2lep(i, qg, ng)
                             )
-                            var qg = pd(self.oPionDec.QPI2GGen)
-                            for i in range(ng):
-                                self.c[C_qgma_pi0_pp][i] += (
-                                    1.0
-                                    / RATE_SSC
-                                    * self.dat.grid_had2lep(i, qg, ng)
-                                )
-                # all pi0 (pg, pp and injected) plus the direct pp photons, with
-                # or without the components (AM3 summed the components, missing
-                # injected pi0, and dropped the direct pp photons without them)
+                # All pi0 (pg, pp and injected) plus the direct pp photons, with
+                # or without the components. (AM3 summed the components, which
+                # miss injected pi0, and dropped the direct pp photons without
+                # them.)
                 self.oPionDec.Calc_PItoG(self.dat, self.c[C_qpi0])
                 var qg = pd(self.oPionDec.QPI2GGen)
                 for i in range(ng):
                     self.c[C_qgma_pi0][i] = (
                         1.0 / RATE_SSC * self.dat.grid_had2lep(i, qg, ng)
-                    ) + direct_pp[i]
-            # the photons of the charm decays (eta -> gamma gamma, ...): to the
-            # pi0-decay photons of their origin (am3_mojo addition)
+                    ) + self.pi0_pp_direct[i]
+            # the photons of the charm decays (for example eta -> gamma gamma):
+            # to the pi0-decay photons of their origin (am3_mojo addition)
             if self.charm_decay_on():
                 var r = 1.0 / RATE_SSC
                 var qgc = pd(self.c[C_qgma_C])
@@ -3957,10 +4050,24 @@ struct SimulationManager(Movable):
                 self.c[C_qgma_muic][i] = muic * self.dat.grid_had2lep(
                     i, e_muic, ng
                 )
-                self.c[C_qgma_ksy][i] = r * self.dat.grid_had2lep(i, e_ksy, ng)
-                self.c[C_qgma_kic][i] = r * self.dat.grid_had2lep(i, e_kic, ng)
-                self.c[C_qgma_csy][i] = r * self.dat.grid_had2lep(i, e_csy, ng)
-                self.c[C_qgma_cic][i] = r * self.dat.grid_had2lep(i, e_cic, ng)
+                if self.kc_idle:  # (their emission is zero)
+                    self.c[C_qgma_ksy][i] = 0.0
+                    self.c[C_qgma_kic][i] = 0.0
+                    self.c[C_qgma_csy][i] = 0.0
+                    self.c[C_qgma_cic][i] = 0.0
+                else:
+                    self.c[C_qgma_ksy][i] = r * self.dat.grid_had2lep(
+                        i, e_ksy, ng
+                    )
+                    self.c[C_qgma_kic][i] = r * self.dat.grid_had2lep(
+                        i, e_kic, ng
+                    )
+                    self.c[C_qgma_csy][i] = r * self.dat.grid_had2lep(
+                        i, e_csy, ng
+                    )
+                    self.c[C_qgma_cic][i] = r * self.dat.grid_had2lep(
+                        i, e_cic, ng
+                    )
                 self.c[C_qgma_had][i] = (
                     self.c[C_qgma_pi0][i]
                     + self.c[C_qgma_psy][i]
@@ -3976,13 +4083,26 @@ struct SimulationManager(Movable):
                 )
                 self.c[C_agma_pg][i] = pgl * self.dat.grid_had2lep(i, e_pg, ng)
         else:
-            for i in range(ng):
-                self.c[C_qgma_had][i] = 0.0
-                self.c[C_agma_pg][i] = 0.0
-                self.c[C_qgma_ksy][i] = 0.0
-                self.c[C_qgma_kic][i] = 0.0
-                self.c[C_qgma_csy][i] = 0.0
-                self.c[C_qgma_cic][i] = 0.0
+            # (the photon components of hadronic origin too: AM3 evolved them
+            #  with the sources of the last step with the hadronic processes)
+            for id in [
+                C_qgma_had,
+                C_agma_pg,
+                C_qgma_pi0,
+                C_qgma_pi0_pg,
+                C_qgma_pi0_pp,
+                C_qgma_psy,
+                C_qgma_pic,
+                C_qgma_pisy,
+                C_qgma_piic,
+                C_qgma_musy,
+                C_qgma_muic,
+                C_qgma_ksy,
+                C_qgma_kic,
+                C_qgma_csy,
+                C_qgma_cic,
+            ]:
+                fill_zero(self.c[id])
         var ann = fbool(
             self.process_annihilation and self.process_annihilation_cooling
         )
@@ -4078,19 +4198,16 @@ struct SimulationManager(Movable):
                 P_photons_pair_ann
             ):
                 comp(SA_gpann, P_photons_pair_ann, C_qgma_pann)
-            if (
-                self.triplet_active()
-                or self._nonzero(P_photons_tppsy)
-                or self._nonzero(P_photons_tppic)
-            ):
+            # The photons of the triplet pairs and of the neutron-decay
+            # electrons: their e+- are evolved also after the process is
+            # switched off, and radiate.
+            if self._live(P_photons_tppsy, C_qgma_tppsy):
                 comp(SA_gtppsy, P_photons_tppsy, C_qgma_tppsy)
+            if self._live(P_photons_tppic, C_qgma_tppic):
                 comp(SA_gtppic, P_photons_tppic, C_qgma_tppic)
-            if (
-                self.neutron_decay_on()
-                or self._nonzero(P_photons_ndecsy)
-                or self._nonzero(P_photons_ndecic)
-            ):
+            if self._live(P_photons_ndecsy, C_qgma_ndecsy):
                 comp(SA_gndecsy, P_photons_ndecsy, C_qgma_ndecsy)
+            if self._live(P_photons_ndecic, C_qgma_ndecic):
                 comp(SA_gndecic, P_photons_ndecic, C_qgma_ndecic)
             if self.any_kaons_on() or self._nonzero(P_photons_kasy):
                 comp(SA_gksy, P_photons_kasy, C_qgma_ksy)
@@ -4104,32 +4221,60 @@ struct SimulationManager(Movable):
         self.evolve_group(rows)
 
     def Update_Mag_Field(mut self, b_Gauss: Float64):
+        """The synchrotron kernels of the field are built before their first use
+        (_build_syn_kernels)."""
         if self.verbose:
             print("Magnetic field strength updated to ", b_Gauss)
         self.rp.mag_field = b_Gauss
-        self.oSyn.b_gauss = b_Gauss
-        self.oSynP.b_gauss = b_Gauss
-        self.oSyn.reinitialize_empty_kernels(self.dat)
-        if (
-            self.process_electron_syn and self.process_electron_syn_emission
-        ) or (self.process_electron_syn and self.process_ssa):
+
+    def _build_syn_kernels(mut self):
+        """The synchrotron kernels of the field in effect, built before a step
+        unless they are built for it. (AM3 builds them at every set_mag_field
+        and at init_kernels, for the field then. So it builds them twice for an
+        init_kernels and a set_mag_field.) Every kernel of the field is built,
+        whatever the emission and SSA switches, so that one switched on later
+        finds it. (AM3 built only those of the switches on. The e+- one, emptied
+        otherwise, then gave no emission and no SSA, and the hadrons' kept an
+        earlier field.)"""
+        var b = self.rp.mag_field
+        if not (
+            self.syn_built
+            and self.syn_field == b
+            and self.syn_qsyn == self.process_quantum_syn
+        ):
+            if self.verbose:
+                print("synchrotron kernels for e+/- in ", b, " G")
+            self.oSyn.b_gauss = b
+            self.oSyn.reinitialize_empty_kernels(self.dat)
             self.oSyn.initialize_kernels(self.dat, self.process_quantum_syn)
-        if self.verbose:
-            print("for e+/-")
-        if self.process_hadronic:
-            self.oSynP.reinitialize_empty_kernels(self.dat)
-            self.oSynP.initialize_kernels(
-                self.dat,
-                self.process_proton_syn and self.process_proton_syn_emission,
-                self.process_pion_syn and self.process_pion_syn_emission,
-                self.process_muon_syn and self.process_muon_syn_emission,
-                (self.process_kaons or self.process_charm)
-                and self.process_kaon_syn
-                and self.process_kaon_syn_emission,
-                self.process_charm
-                and self.process_charm_syn
-                and self.process_charm_syn_emission,
+            self.syn_built = True
+            self.syn_field = b
+            self.syn_qsyn = self.process_quantum_syn
+        if self.process_hadronic and not (
+            self.synp_built and self.synp_field == b
+        ):
+            # (Those of the kaons and charm hadrons where they can be made:
+            #  their kernels are built at init_kernels. Charm decays make
+            #  kaons.)
+            var charm = (
+                self.oPhotoHadron.charm_built or self.oProtonProton.charm_built
             )
+            var kaons = (
+                charm
+                or self.oPhotoHadron.kaons_built
+                or self.oProtonProton.kaons_built
+            )
+            if self.verbose:
+                print("synchrotron kernels for hadrons in ", b, " G")
+            self.oSynP.b_gauss = b
+            self.oSynP.initialize_kernels(self.dat, kaons, charm)
+            self.synp_built = True
+            self.synp_field = b
+
+    def pair_solver(self) -> Int:
+        """The solver that evolved the e+- in the last step: SA_ep if it merged
+        the positrons, whatever the merge switch is now."""
+        return SA_ep if self.last_step_merged else SA_e
 
     def estimate_maximum_lepton_energy(mut self):
         if self.verbose:
@@ -4146,11 +4291,24 @@ struct SimulationManager(Movable):
         var adi = fbool(self.process_adiabatic_cooling) * Expansion.AAdiLep(
             self.rp
         )
-        # the solver that evolves the e+-: SA_ep when the positrons are merged
-        # (AM3 used SA_e, which is then never evolved: no cooling, AM3 bug)
-        var k = SA_ep if self.process_merge_positrons_into_electrons else SA_e
+        # the triplet pair-production loss (am3_mojo addition), which the e+-
+        # cooling of Pass_Coeff_Lep has too
+        var tpp = self.triplet_active()
+        var tco = fbool(tpp and self.process_triplet_pair_production_cooling)
+        # (AM3 used SA_e, which is not evolved with the positrons merged: no
+        # cooling, AM3 bug)
+        var k = self.pair_solver()
+        # (with the extra cooling, which the e+- cooling has too: AM3 left it
+        #  out)
         for i in range(nl):
-            total_loss[i] = -sy * self.S[k].Asy[i] - ic * self.S[k].Aic[i] - adi
+            total_loss[i] = (
+                -sy * self.S[k].Asy[i]
+                - ic * self.S[k].Aic[i]
+                - adi
+                - self.oExtraCool.AExtraCoolE[i]
+            )
+            if tpp:
+                total_loss[i] += tco * self.oTPP.eloss[i]
         var imax = 0
         while (
             imax < nl
@@ -4158,8 +4316,9 @@ struct SimulationManager(Movable):
             >= total_loss[imax]
         ):
             imax += 1
-        # if acceleration wins on the whole grid, the C++ code reads one element
-        # past the end of egrid_lep; use the next grid point exp(n*dlnE) instead
+        # If acceleration wins on the whole grid, the C++ code reads one element
+        # past the end of egrid_lep. Use the next grid point exp(n*dlnE)
+        # instead.
         var e = self.dat.egrid_lep[imax] if imax < nl else c_exp(
             Float64(imax) * self.dat.dlnE
         )
@@ -4186,6 +4345,8 @@ struct SimulationManager(Movable):
         var bh = fbool(
             self.process_bethe_heitler and self.process_bethe_heitler_cooling
         )
+        # (with the extra cooling, which the proton cooling has too: AM3 left
+        #  it out)
         for i in range(nh):
             total_loss[i] = (
                 -sy * self.S[SA_proton].Asy[i]
@@ -4194,6 +4355,7 @@ struct SimulationManager(Movable):
                 + pg * self.oPhotoHadron.afPG_PRO[i]
                 - pp * self.oProtonProton.APP_PRO[i]
                 - bh * self.oBH.ABHHadP[i]
+                - self.oExtraCool.AExtraCoolPRO[i]
             )
         var imax = 0
         while (

@@ -1,5 +1,5 @@
-"""Port of the GSL pieces AM3 uses from `gsl_spline` (linear interpolation
-with an acceleration cache) and `gsl_linalg_solve_tridiag`."""
+"""Port of the GSL pieces AM3 uses from `gsl_spline` and
+`gsl_linalg_solve_tridiag`."""
 
 from std.utils.numerics import nan
 from am3_mojo.utils.buffers import *
@@ -9,8 +9,8 @@ struct LinearSpline(Copyable, Movable):
     """`gsl_spline` with `gsl_interp_linear` + `gsl_interp_accel`.
 
     Unlike GSL, which copies the arrays on `gsl_spline_init`, the spline keeps
-    raw pointers to them: the caller guarantees that they outlive it and do
-    not change while it is used, as in AM3.
+    raw pointers to them. The caller guarantees that the arrays outlive the
+    spline and do not change while it is used, as in AM3.
     """
 
     var xa: FPtr
@@ -44,11 +44,9 @@ struct LinearSpline(Copyable, Movable):
 
     @inline(.always)
     def _find(mut self, x: Float64) -> Int:
-        """The cell [xa[i], xa[i + 1]) that holds x (the last cell for
-        x = xmax), as GSL's accelerator finds it. GSL bisects the whole range
-        above or below the cached cell; here the search starts next to it,
-        with steps that double, as the callers' x mostly move by a few cells
-        (the cell found is the same)."""
+        """GSL bisects the whole range above or below the cached cell. Here the
+        search starts next to it, with steps that double, because the callers' x
+        mostly move by a few cells. The cell found is the same."""
         var c = self.cache
         if x < self.xa[unsafe_offset=c]:
             # xa[lo] <= x < xa[hi] (x >= xa[0] = xmin)
@@ -61,8 +59,8 @@ struct LinearSpline(Copyable, Movable):
                 lo = max(hi - step, 0)
             self.cache = self._bsearch(x, lo, hi)
         elif x >= self.xa[unsafe_offset=c + 1]:
-            # xa[lo] <= x < xa[hi], or hi = size - 1 (x <= xmax); x = xmax in
-            # the last cell stays there
+            # xa[lo] <= x < xa[hi], or hi = size - 1 (x <= xmax). x = xmax in
+            # the last cell stays there.
             var lo = min(c + 1, self.size - 2)
             var step = 1
             var hi = min(lo + step, self.size - 1)
@@ -75,14 +73,15 @@ struct LinearSpline(Copyable, Movable):
 
     @inline(.always)
     def hint(mut self, i: Int):
-        """Start the next search at cell i (any cell gives the same result)."""
+        """Any cell gives the same result."""
         self.cache = min(max(i, 0), self.size - 2)
 
     @inline(.always)
     def eval(mut self, x: Float64) -> Float64:
         """gsl_spline_eval. Out-of-range input is a GSL domain error (which
-        aborts the C++ program); here it sets `error` and returns NaN."""
-        if x < self.xmin or x > self.xmax:
+        aborts the C++ program). Here, eval sets `error` and returns NaN for
+        it, as for a NaN input (which GSL lets through)."""
+        if not (x >= self.xmin and x <= self.xmax):
             self.error = True
             return nan[DType.float64]()
         var index = self._find(x)
@@ -106,9 +105,8 @@ def solve_tridiag(
     alpha: FPtr,
     z: FPtr,
 ) -> Bool:
-    """gsl_linalg_solve_tridiag (non-symmetric Thomas algorithm).
+    """gsl_linalg_solve_tridiag.
 
-    `alpha` and `z` are caller-provided work arrays of length N.
     Returns False when a zero pivot was encountered (GSL_EZERODIV).
     """
     var ok = True

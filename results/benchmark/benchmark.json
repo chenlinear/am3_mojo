@@ -1,106 +1,106 @@
 {
  "blazar_simple": {
   "C++ AM3 (serial)": {
-   "init_s": 6.911910124999849,
-   "ms_per_step": 11.537078404999193,
-   "steps": 800,
-   "max_rss_gb": 2.920251392
+   "init_s": 17.54178770800081,
+   "ms_per_step": 11.36244858573152,
+   "steps": 799,
+   "max_rss_gb": 2.877587456
   },
   "am3_mojo, 4 threads": {
-   "init_s": 1.7930529589975777,
-   "ms_per_step": 0.8520296537062677,
-   "steps": 800,
-   "max_rss_gb": 0.297058304
+   "init_s": 0.13775341600012325,
+   "ms_per_step": 0.7114258961156339,
+   "steps": 799,
+   "max_rss_gb": 0.12132352
   },
   "am3_mojo, 1 thread": {
-   "init_s": 6.680437875002099,
-   "ms_per_step": 1.889411607544389,
-   "steps": 800,
-   "max_rss_gb": 0.297156608
+   "init_s": 0.36001020800085826,
+   "ms_per_step": 1.5829820901190568,
+   "steps": 799,
+   "max_rss_gb": 0.119832576
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 2.1730848330007575,
-   "ms_per_step": 2.015165567445365,
-   "steps": 800,
-   "max_rss_gb": 0.341671936
+   "init_s": 0.49585066600047867,
+   "ms_per_step": 1.8323640613092815,
+   "steps": 799,
+   "max_rss_gb": 0.16121856
   }
  },
  "leptohadronic_all": {
   "C++ AM3 (serial)": {
-   "init_s": 11.045565041000373,
-   "ms_per_step": 17.008575546618278,
-   "steps": 300,
-   "max_rss_gb": 2.920316928
+   "init_s": 18.178782167000463,
+   "ms_per_step": 15.89293578260206,
+   "steps": 299,
+   "max_rss_gb": 2.877571072
   },
   "am3_mojo, 4 threads": {
-   "init_s": 2.849777333998645,
-   "ms_per_step": 1.2959734433631336,
-   "steps": 300,
-   "max_rss_gb": 0.300662784
+   "init_s": 0.1899124589999701,
+   "ms_per_step": 1.0413832475285403,
+   "steps": 299,
+   "max_rss_gb": 0.128057344
   },
   "am3_mojo, 1 thread": {
-   "init_s": 10.692788750002364,
-   "ms_per_step": 2.90343628662716,
-   "steps": 300,
-   "max_rss_gb": 0.300498944
+   "init_s": 0.49423524999838264,
+   "ms_per_step": 2.3139692107163934,
+   "steps": 299,
+   "max_rss_gb": 0.126222336
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 3.358616334000544,
-   "ms_per_step": 3.0541625166855133,
-   "steps": 300,
-   "max_rss_gb": 0.351666176
+   "init_s": 0.6052145010007735,
+   "ms_per_step": 2.6805817993335097,
+   "steps": 299,
+   "max_rss_gb": 0.174260224
   }
  },
  "ssc_external": {
   "C++ AM3 (serial)": {
-   "init_s": 0.1446835419992567,
-   "ms_per_step": 3.030196764993889,
-   "steps": 400,
-   "max_rss_gb": 2.111111168
+   "init_s": 0.1558775000012247,
+   "ms_per_step": 3.002598363412091,
+   "steps": 399,
+   "max_rss_gb": 2.068856832
   },
   "am3_mojo, 4 threads": {
-   "init_s": 0.08625312499862048,
-   "ms_per_step": 0.23062236239638878,
-   "steps": 400,
-   "max_rss_gb": 0.149356544
+   "init_s": 0.08199987600164604,
+   "ms_per_step": 0.21931187716986106,
+   "steps": 399,
+   "max_rss_gb": 0.097452032
   },
   "am3_mojo, 1 thread": {
-   "init_s": 0.21043562500199187,
-   "ms_per_step": 0.5832049400669348,
-   "steps": 400,
-   "max_rss_gb": 0.146374656
+   "init_s": 0.2136600420008108,
+   "ms_per_step": 0.5446020651678802,
+   "steps": 399,
+   "max_rss_gb": 0.096649216
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 0.09873383300146088,
-   "ms_per_step": 0.3079347123821208,
-   "steps": 400,
-   "max_rss_gb": 0.149798912
+   "init_s": 0.1923811669994393,
+   "ms_per_step": 0.3052715814657202,
+   "steps": 399,
+   "max_rss_gb": 0.110542848
   }
  },
  "exotic": {
   "C++ AM3 (serial)": {
-   "init_s": 1.4819481249978708,
-   "ms_per_step": 11.666630844974861,
-   "steps": 200,
-   "max_rss_gb": 1.042808832
+   "init_s": 2.3877315009995073,
+   "ms_per_step": 11.151374135678722,
+   "steps": 199,
+   "max_rss_gb": 1.003978752
   },
   "am3_mojo, 4 threads": {
-   "init_s": 0.41186929200193845,
-   "ms_per_step": 1.2272464500529168,
-   "steps": 200,
-   "max_rss_gb": 0.24723456
+   "init_s": 0.12024962400118966,
+   "ms_per_step": 1.1538396281856826,
+   "steps": 199,
+   "max_rss_gb": 0.179027968
   },
   "am3_mojo, 1 thread": {
-   "init_s": 1.4317089590003889,
-   "ms_per_step": 1.8738739598848042,
-   "steps": 200,
-   "max_rss_gb": 0.260210688
+   "init_s": 0.38453062500047963,
+   "ms_per_step": 1.7604841105506481,
+   "steps": 199,
+   "max_rss_gb": 0.170934272
   },
   "am3_mojo + added processes, 4 threads": {
-   "init_s": 0.6622949999982666,
-   "ms_per_step": 1.9600366898157517,
-   "steps": 200,
-   "max_rss_gb": 0.25952256
+   "init_s": 0.3696414169999116,
+   "ms_per_step": 1.8375276281106714,
+   "steps": 199,
+   "max_rss_gb": 0.192069632
   }
  }
 }

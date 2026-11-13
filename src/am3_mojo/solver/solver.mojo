@@ -1,21 +1,22 @@
-"""Port of SolverAlgorithm (Solver.cc): time-step solver for one species.
+"""Port of SolverAlgorithm (Solver.cc).
 
 Differences from the C++ code that do not change results:
-  * work arrays are allocated once per solver;
-  * GSL splines and tridiagonal solves are ported in interp.mojo;
-  * the IC cooling kernel is photon-major, for SIMD over particles;
-  * photon bins beyond the photon array (read out of bounds by the C++ code
+  * Work arrays are allocated once per solver.
+  * GSL splines and tridiagonal solves are ported in interp.mojo.
+  * The IC cooling kernel is photon-major, for SIMD over particles.
+  * Photon bins beyond the photon array (read out of bounds by the C++ code
     for hadrons) count as empty.
 """
 
 from std.builtin.globals import global_constant
 from std.math import ceil, fma, sqrt
-from std.utils.numerics import nextafter
+from std.utils.numerics import isnan, isfinite, nextafter
 from am3_mojo.utils.buffers import *
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.interp import LinearSpline, solve_tridiag
 from am3_mojo.utils.libm import *
 from am3_mojo.utils.parallel import parallel_run
+from am3_mojo.utils.specfun import polylog
 
 # Taylor coefficients of the inverse-Compton cooling functions (Jones 1965,
 # Table I, as exact fractions): f1 from z^3, f2 from z^2, both to z^10
@@ -59,8 +60,17 @@ comptime _GL4_W: Array[Float64, 4] = [
 
 @inline(.always)
 def _phi1(u: Float64) -> Float64:
-    """(e^u - 1) / u, 1 at u = 0."""
-    return 1.0 if abs(u) < 1e-12 else c_expm1(u) / u
+    return 1.0 + 0.5 * u if abs(u) <= 1e-8 else c_expm1(u) / u
+
+
+@inline(.always)
+def _theta(pd: Float64) -> Float64:
+    """The weight of the implicit half of a Chang & Cooper step for a cell
+    whose right-hand side has the diagonal 1 - 2 (1 - theta) pd. The weight is
+    1/2 (Crank-Nicolson) where pd <= 1, else the least theta that keeps the
+    diagonal >= 0.
+    """
+    return 0.5 if pd <= 1.0 else 1.0 - 0.5 / pd
 
 
 @inline(.never)
@@ -72,13 +82,12 @@ def _zero(p: FPtr, n: Int):
 # regime 3's source integral (simple_integral_q): moments of e^(-D v) on [0, 1]
 @inline(.always)
 def _expmom0(D: Float64) -> Float64:
-    """int_0^1 e^(-D v) dv = (1 - e^-D) / D."""
     return 1.0 if D < 1e-300 else -c_expm1(-D) / D
 
 
 @inline(.always)
 def _expmom(D: Float64, k: Int) -> Float64:
-    """int_0^1 v^(k - 1) e^(-D v) dv for k = 2, 3 (series below D = 0.5)."""
+    """int_0^1 v^(k - 1) e^(-D v) dv for k = 2, 3."""
     if D < 0.5:
         var s = 0.0
         var f = 1.0
@@ -103,9 +112,9 @@ def _source_piece(
     mut D: Float64,
 ) -> Float64:
     """e^-K int_0^h q e^(-int_0^x' k) dx' over a piece of width h on which ln k
-    goes linearly from l0 to l1 and q from q0 to q1 (k = alpha / |A|); sets
-    D = int_0^h k. In t = int k, the integrand is g(t) e^-t, with g = q / k
-    approximated by the quadratic through the ends and the middle (exact for
+    goes linearly from l0 to l1 and q from q0 to q1 (k = alpha / |A|). Sets
+    D = int_0^h k. In t = int k, the integrand is g(t) e^-t. The quadratic
+    through the ends and the middle approximates g = q / k (exact for
     constant k and linear q).
     """
     var dd = l1 - l0
@@ -141,11 +150,10 @@ def _source_cell(
     qb: Float64,
     mut D: Float64,
 ) -> Float64:
-    """_source_piece over a whole cell of width h (ln k from lka to lkb, q from
-    qa to qb), summed over equal pieces (at most 400) in which ln k changes by
-    at most 0.25 and the attenuation exponent by at most 2 on average."""
+    """In each piece, ln k changes by at most 0.25 and the attenuation exponent
+    by at most 2 on average."""
     var d = lkb - lka
-    var dc = h * c_exp(lka) * (1.0 if d == 0.0 else c_expm1(d) / d)
+    var dc = h * c_exp(lka) * _phi1(d)
     var mm = ceil(max(abs(d) / 0.25, dc / 2.0))
     var m = 1 if not (mm >= 1.0) else (400 if mm > 400.0 else Int(mm))
     var K = 0.0
@@ -170,17 +178,25 @@ def _source_cell(
     return integral
 
 
+@inline(.always)
+def _cell_of(x_ln: FPtr, N: Int, i: Int, y: Float64, DX: Float64) -> Int:
+    var m = min(N - 2, i + max(0, Int((y - x_ln[unsafe_offset=i]) / DX)))
+    while m > i and x_ln[unsafe_offset=m] > y:
+        m -= 1
+    while m < N - 2 and x_ln[unsafe_offset=m + 1] <= y:
+        m += 1
+    return m
+
+
 struct ICKerJob(Movable):
     var S: Pointer[SolverAlgorithm, MutUntrackedOrigin]
     var eph: FPtr  # photon energies [GeV]
-    var failed: Bool
 
     def __init__(
         out self, S: Pointer[SolverAlgorithm, MutUntrackedOrigin], eph: FPtr
     ):
         self.S = S
         self.eph = eph
-        self.failed = False
 
 
 def ic_ker_work(job: Pointer[ICKerJob, MutUntrackedOrigin], t: Int, nt: Int):
@@ -196,12 +212,9 @@ def ic_ker_work(job: Pointer[ICKerJob, MutUntrackedOrigin], t: Int, nt: Int):
         var gm = c_exp(S.DELTA_X * Float64(i)) * S.X_UNIT_GEV / mass
         for j in range(S.N_PHOT):
             var eph = job[].eph[unsafe_offset=j]
-            try:
-                kp[unsafe_offset=j * NB + i] = (
-                    coeff * S.Fic(gm, eph) / eph / eph / gm / gm / gm
-                )
-            except:
-                job[].failed = True
+            kp[unsafe_offset=j * NB + i] = (
+                coeff * S.Fic(gm, eph) / eph / eph / gm / gm / gm
+            )
         i += nt
 
 
@@ -226,20 +239,21 @@ struct SolverAlgorithm(Copyable, Movable):
     var verbose: Bool
 
     var alpha_decay: Vec
-    var gam: Vec  # Lorentz factor of every bin
+    var gam: Vec
     var Asy: Vec
     var Aic: Vec
     var cooling_on: Bool
     var ker_status: Int
-    # IC cooling kernel [photon j][particle i] (particle index contiguous)
     var ker_ic_t: Vec
     var N_PHOT: Int
+    var qsc_factor: Vec
+    var qsc_b: Float64
 
-    # work buffers (sized N_BINS + 40)
     var w_a: Vec
     var w_A: Vec
     var w_q: Vec
     var w_n: Vec
+    var w_nc: Vec
     var w_out: Vec
     var w_x: Vec
     var w_mivA: Vec
@@ -315,6 +329,8 @@ struct SolverAlgorithm(Copyable, Movable):
         self.ker_status = 0
         self.N_PHOT = NB - PGO
         self.ker_ic_t = Vec()
+        self.qsc_factor = Vec()
+        self.qsc_b = -1.0  # (no field is negative)
         var mass = MR * MASS_E
         for i in range(NB):
             var gamma = c_exp(DX * Float64(i)) * XUG / mass
@@ -325,6 +341,7 @@ struct SolverAlgorithm(Copyable, Movable):
         self.w_A = zeros(nw)
         self.w_q = zeros(nw)
         self.w_n = zeros(nw)
+        self.w_nc = zeros(nw)
         self.w_out = zeros(nw)
         self.w_x = zeros(nw)
         self.w_mivA = zeros(nw)
@@ -368,8 +385,8 @@ struct SolverAlgorithm(Copyable, Movable):
         )
 
     def same_cooling(self, other: SolverAlgorithm) -> Bool:
-        """True if `other` computes bit-identical synchrotron + IC cooling rates.
-        """
+        """True if `other` computes bit-identical synchrotron + IC cooling
+        rates."""
         return (
             self.same_ic_kernel(other)
             and self.process_sy == other.process_sy
@@ -378,17 +395,15 @@ struct SolverAlgorithm(Copyable, Movable):
             == other.process_quantum_syn_cooling
         )
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # cooling rates (synchrotron + inverse Compton)
-    # ------------------------------------------------------------------
-    def start_cooling(
-        mut self, b_gauss: Float64, n_phot: Vec, nthreads: Int
-    ) raises -> Bool:
-        """Whether this step has cooling (`cooling_on`), and the IC cooling
-        kernel if it is still missing: what compute_syn_ic needs before it
-        computes Asy and Aic (run_cooling). The rates depend only on the
-        field, the target photons and the species, so solvers of one species
-        share them (`share_cooling`)."""
+    # --------------------------------------------------------------------------
+    def start_cooling(mut self, b_gauss: Float64, n_phot: Vec) -> Bool:
+        """compute_syn_ic needs `cooling_on`, the quantum suppression and the IC
+        cooling kernel (SimulationManager._ensure_ic_kernel) before it computes
+        Asy and Aic (run_cooling). The rates depend only on the field, the
+        target photons and the species, so solvers of one species share them
+        (`share_cooling`)."""
         var sum_nphot = 0.0
         var npp = pd(n_phot)
         for i in range(len(n_phot)):
@@ -396,29 +411,56 @@ struct SolverAlgorithm(Copyable, Movable):
         self.cooling_on = (self.process_sy and b_gauss > 1.0e-12) or (
             self.process_ic and sum_nphot > 1e-100
         )
-        if self.cooling_on and self.process_ic and self.ker_status == 0:
-            self.compute_ic_ker(nthreads)
+        if (
+            self.cooling_on
+            and self.process_quantum_syn_cooling
+            and b_gauss != self.qsc_b
+        ):
+            self._quantum_factor(b_gauss)
+        if not self.cooling_on:
+            # No cooling in this step: zero rates, because the timescale
+            # getters and the maximum-energy estimates read them. AM3 kept
+            # the rates of the last step with cooling (an AM3 bug).
+            for i in range(self.N_BINS):
+                self.Asy[i] = 0.0
+                self.Aic[i] = 0.0
         return self.cooling_on
 
-    def share_cooling(mut self, Asy: Vec, Aic: Vec, cooling_on: Bool):
-        """Take the cooling rates computed by a solver of the same species
-        (AM3 recomputes them in each of its 6 pion and 12 muon solver calls).
-        """
-        self.cooling_on = cooling_on
-        if cooling_on:
-            for i in range(self.N_BINS):
-                self.Asy[i] = Asy[i]
-                self.Aic[i] = Aic[i]
+    def _quantum_factor(mut self, b_gauss: Float64):
+        """The quantum parameter is x = chi = gamma B / B_cr(m), B_cr ∝ m^2:
+        AM3's value / MASS_R. (AM3 divides by m only. This overstates chi by
+        m / m_e for the hadrons and muons: an AM3 bug.)"""
+        if len(self.qsc_factor) != self.N_BINS:
+            self.qsc_factor = zeros(self.N_BINS)
+        var mass = self.MASS_R * MASS_E
+        var chi_g = 1.2 * c_pow(10.0, -8.0) * b_gauss / mass / c_pow(10.0, 9.0)
+        for i in range(self.N_BINS):
+            var x = (chi_g * self.gam[i]) / self.MASS_R
+            self.qsc_factor[i] = 1.0 / c_pow(
+                1.0 + sqrt(2.0) * c_pow(x, 2.0 / 3.0), 2.0
+            )
+        self.qsc_b = b_gauss
 
-    # ------------------------------------------------------------------
+    def share_cooling(mut self, Asy: FPtr, Aic: FPtr, cooling_on: Bool):
+        """AM3 recomputes the cooling rates in each of its 6 pion and 12 muon
+        solver calls. The rates are zero when the other solver has no cooling in
+        this step, as start_cooling sets its own. The rates are read through
+        pointers to the other solver's arrays (N_BINS values each, as
+        same_cooling requires). A call on a solver of the same list can take
+        these arrays only as copies."""
+        self.cooling_on = cooling_on
+        for i in range(self.N_BINS):
+            self.Asy[i] = Asy[unsafe_offset=i] if cooling_on else 0.0
+            self.Aic[i] = Aic[unsafe_offset=i] if cooling_on else 0.0
+
+    # --------------------------------------------------------------------------
     # evolve
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def evolve(
         mut self, a_esc_in: Vec, A_cool_in: Vec, q_inj: Vec, mut n: Vec
     ) raises:
-        """Advance density `n` by one time step in place, using the escape
-        rates `a_esc_in`, cooling rates `A_cool_in` (plus the rates of the last
-        `compute_syn_ic`/`share_cooling`) and the source `q_inj`."""
+        """The step uses the cooling rates `A_cool_in` plus the rates of the
+        last `compute_syn_ic`/`share_cooling`."""
         var NB = self.N_BINS
         var a_esc = pd(self.e_a)
         var A_cool = pd(self.e_A)
@@ -441,29 +483,49 @@ struct SolverAlgorithm(Copyable, Movable):
             for i in range(NB):
                 a_esc[unsafe_offset=i] += self.alpha_decay[i]
 
-        # bin 0 loses its rates, as in AM3. The top bin keeps them, though the
+        # Bin 0 loses its rates, as in AM3. The top bin keeps them, though the
         # solver leaves it out: they decide where the particles of the highest
-        # evolved bin come from (AM3 zeroed them too, so its semi-analytic
-        # regimes evolved that bin without cooling: an AM3 bug, hidden while
-        # the top bins were emptied)
+        # evolved bin come from. (AM3 zeroed them too, so its semi-analytic
+        # regimes evolved that bin without cooling. This AM3 bug was hidden
+        # while the top bins were emptied.)
         a_esc[unsafe_offset=0] = 0.0
         A_cool[unsafe_offset=0] = 0.0
 
         var qp = pd(q_inj)
         var n0p = pd(n)
-        var Lm3 = c_pow(self.L_UNIT_CM, -3.0)
         var sum_qinj = 0.0
-        for i in range(NB):
-            sum_qinj += qp[unsafe_offset=i] * Lm3 / self.T_UNIT_S
         var sum_esc = 0.0
-        for i in range(NB):
-            sum_esc += a_esc[unsafe_offset=i] / self.T_UNIT_S
         var sum_A = 0.0
-        for i in range(NB):
-            sum_A += abs(A_cool[unsafe_offset=i]) / self.T_UNIT_S
         var sum_n = 0.0
         for i in range(NB):
-            sum_n += n0p[unsafe_offset=i] * Lm3
+            sum_qinj += qp[unsafe_offset=i]
+            sum_esc += a_esc[unsafe_offset=i]
+            sum_A += abs(A_cool[unsafe_offset=i])
+            sum_n += n0p[unsafe_offset=i]
+        var Lm3 = c_pow(self.L_UNIT_CM, -3.0)
+        sum_qinj *= Lm3 / self.T_UNIT_S
+        sum_esc /= self.T_UNIT_S
+        sum_A /= self.T_UNIT_S
+        sum_n *= Lm3
+        # A source that is not finite fails the test below. Without this stop,
+        # the species stays unchanged without a word (as in AM3).
+        if not isfinite(sum_qinj):
+            raise Error(
+                String("the source of ", self.particle_name, " is not finite")
+            )
+        # Rates that are not finite also stop the step, for example those of a
+        # field whose square overflows. (The setters reject timescales whose
+        # rates are not finite.) Without the stop, an infinite escape rate
+        # empties its bin without a word, and an infinite cooling rate makes
+        # NaN densities.
+        if not (isfinite(sum_esc) and isfinite(sum_A)):
+            raise Error(
+                String(
+                    "the escape or cooling rates of ",
+                    self.particle_name,
+                    " are not finite",
+                )
+            )
 
         var nothing = 1e-100
         if (sum_qinj > nothing) or (
@@ -482,6 +544,15 @@ struct SolverAlgorithm(Copyable, Movable):
                 )
                 print(e)
                 _zero(res, NB)
+            # negative densities are set to zero, as in AM3, but not NaN ones
+            # (AM3 zeroed them too): they mean that the solution failed
+            for i in range(NB):
+                if isnan(res[unsafe_offset=i]):
+                    raise Error(
+                        String(
+                            "the solution for ", self.particle_name, " is NaN"
+                        )
+                    )
             for i in range(NB):
                 var v = res[unsafe_offset=i]
                 n0p[unsafe_offset=i] = v if v > 0.0 else 0.0
@@ -506,9 +577,9 @@ struct SolverAlgorithm(Copyable, Movable):
     def compute_syn_ic(
         mut self, b_gauss: Float64, n_phot: Vec, i0: Int, i1: Int
     ):
-        """Asy and Aic of the bins [i0, i1), after start_cooling. Ranges that
-        start at a multiple of WD (and end at one, or at N_BINS) give every
-        bin the code path of the whole range, so they may be computed apart.
+        """Ranges that start at a multiple of WD (and end at one, or at N_BINS)
+        give every bin the code path of the whole range. So these ranges can be
+        computed apart.
         """
         if self.verbose:
             print("add syn and ic")
@@ -516,7 +587,6 @@ struct SolverAlgorithm(Copyable, Movable):
         var L = self.L_UNIT_CM
         var c_light = C_LIGHT * T / L
         var sigma_t = SIGMA_T / L / L
-        var mass = self.MASS_R * MASS_E
         var NB = self.N_BINS
         var ub_Edimless = (
             b_gauss * b_gauss / (8.0 * PI * MASS_E / GEV_PER_ERG) * L * L * L
@@ -533,21 +603,14 @@ struct SolverAlgorithm(Copyable, Movable):
         var sy = fbool(self.process_sy)
         var Asy = pd(self.Asy)
         var Aic = pd(self.Aic)
-        # quantum parameter chi = gamma B / B_cr(m), B_cr ∝ m^2: AM3's value /
-        # MASS_R (AM3 divides by m only, overstating chi by m / m_e for the
-        # hadrons and muons: an AM3 bug)
-        var chi_g = 1.2 * c_pow(10.0, -8.0) * b_gauss / mass / c_pow(10.0, 9.0)
+        var qsc = pd(self.qsc_factor)
         for i in range(i0, i1):
             var gamma = self.gam[i]
             Asy[unsafe_offset=i] = -sy * k_synch * gamma
             if self.process_quantum_syn_cooling:
-                var x = (chi_g * gamma) / self.MASS_R
-                Asy[unsafe_offset=i] *= 1.0 / c_pow(
-                    1.0 + sqrt(2.0) * c_pow(x, 2.0 / 3.0), 2.0
-                )
+                Asy[unsafe_offset=i] *= qsc[unsafe_offset=i]
             Aic[unsafe_offset=i] = 0.0
         if self.process_ic:
-            # Aic[i] = -DX * sum_j ker[i][j] * n_phot[j], SIMD over i
             var nj = min(self.N_PHOT, len(n_phot))
             var kp = pd(self.ker_ic_t)
             var npp = pd(n_phot)
@@ -567,9 +630,7 @@ struct SolverAlgorithm(Copyable, Movable):
                 Aic[unsafe_offset=i] = -DX * acc
                 i += 1
 
-    def compute_ic_ker(mut self, nthreads: Int) raises:
-        """The IC cooling kernel, on up to nthreads threads (the particle bins
-        i = t, t + nt, ...)."""
+    def compute_ic_ker(mut self, nthreads: Int):
         if self.verbose:
             print("calc ic kernel")
         self.ker_ic_t = zeros(self.N_BINS * self.N_PHOT)
@@ -584,14 +645,9 @@ struct SolverAlgorithm(Copyable, Movable):
         )
         parallel_run[ic_ker_work](job, max(1, min(nthreads, self.N_BINS)))
         _ = eph^  # (read by the workers through a pointer)
-        if job.failed:
-            raise Error("error in SolverAlgorithm.compute_ic_ker")
         self.ker_status = 1
 
-    def Fic(self, gamma: Float64, Eph_GeV: Float64) raises -> Float64:
-        """Inverse-Compton cooling kernel of a particle with Lorentz factor
-        gamma on photons of energy Eph_GeV, F(z+) - F(z-) with
-        z+- = (Eph / m) * (gamma + sqrt(gamma^2 - 1))^(+-1)."""
+    def Fic(self, gamma: Float64, Eph_GeV: Float64) -> Float64:
         var w = Eph_GeV / (self.MASS_R * MASS_E)
         var gamma_bar = gamma + sqrt(gamma * gamma - 1.0 + 1.0e-10)
         var za = w * gamma_bar
@@ -601,10 +657,10 @@ struct SolverAlgorithm(Copyable, Movable):
         var y = gamma * d1 - w * d2
         return y if y > 0.0 else 0.0
 
-    def Fic_1(self, z: Float64) raises -> Float64:
+    def Fic_1(self, z: Float64) -> Float64:
         if z < 0.1:
             # Jones' series to z^10, 2e-5 at z = 0.1 (AM3 keeps three terms,
-            # 2.4 % off there - an AM3 bug)
+            # 2.4 % off there: an AM3 bug)
             var s = 0.0
             var k = 7
             while k >= 0:
@@ -613,17 +669,20 @@ struct SolverAlgorithm(Copyable, Movable):
             return z * z * z * s
         var p = 1.0 + 2.0 * z
         var num = 22.0 / 3.0 * z * z * z + 24.0 * z * z + 18.0 * z + 4.0
+        # With the dilogarithm to rounding. (AM3 takes 20 RK4 steps from
+        # Li_2(-0.1) for -20 < -2z < -0.1. These steps put f1 up to 4.6e-5 off
+        # below z = 10, where f1 jumps to an asymptotic form: an AM3 bug.)
         return (
             (z + 6.0 + 3.0 / z) * c_log(p)
             - num / (p * p)
             - 2.0
-            + 2.0 * self.polylog(-2.0 * z)
+            + 2.0 * polylog(-2.0 * z)
         )
 
-    def Fic_2(self, z: Float64) raises -> Float64:
+    def Fic_2(self, z: Float64) -> Float64:
         if z < 0.1:
             # Jones' series to z^10, 2e-6 at z = 0.1 (AM3 keeps three terms,
-            # 1.2 % off there - an AM3 bug)
+            # 1.2 % off there: an AM3 bug)
             var s = 0.0
             var k = 8
             while k >= 0:
@@ -638,86 +697,31 @@ struct SolverAlgorithm(Copyable, Movable):
             + 17.0
             + 3.0 / z
         )
+        # (AM3's dilogarithm, as in Fic_1: f2 up to 1.9e-5 off below z = 10)
         return (
             (z + 31.0 / 6.0 + 5.0 / z + 1.5 / (z * z)) * c_log(p)
             - num / (p * p)
             - 2.0
-            + self.polylog(-2.0 * z)
+            + polylog(-2.0 * z)
         )
 
-    def polylog(self, z: Float64) raises -> Float64:
-        if z >= 0.99:
-            raise Error(
-                "in function SolverAlgorithm::polylog_2, z>0.9 out of range\n"
-            )
-        elif z >= -0.1 and z < 0.9:
-            return self.polylog_smallz(z)
-        elif z < -0.1 and z > -20.0:
-            return self.polylog_rk4(z)
-        else:
-            return self.polylog_largez(z)
-
-    def polylog_smallz(self, z: Float64) -> Float64:
-        """Li_2(z) = sum_k z^k / k^2, first six terms."""
-        return z * (
-            1.0
-            + z
-            * (
-                1.0 / 4.0
-                + z
-                * (1.0 / 9.0 + z * (1.0 / 16.0 + z * (1.0 / 25.0 + z / 36.0)))
-            )
-        )
-
-    def polylog_rk4(self, z: Float64) -> Float64:
-        var x = 0.1
-        var y = 0.0
-        comptime N_INTG = 20
-        var diff_x = (-z - 0.1) / Float64(N_INTG)
-        # RK4 for dLi_2/dx = -ln(1 + x) / x (k2 = k3, the slope does not
-        # depend on y)
-        for _ in range(N_INTG):
-            var xm = x + 0.5 * diff_x
-            var k1 = -diff_x * c_log(1.0 + x) / x
-            var k2 = -diff_x * c_log(1.0 + xm) / xm
-            var k4 = -diff_x * c_log(1.0 + x + diff_x) / (x + diff_x)
-            y += (k1 + 4.0 * k2 + k4) / 6.0
-            x += diff_x
-        return -0.097605235 + y
-
-    def polylog_largez(self, z: Float64) -> Float64:
-        """Asymptotic expansion of Li_2(z) for z -> -infinity."""
-        var x = -z
-        var lx = c_log(x)
-        return (
-            -0.5 * lx * lx
-            - PI * PI / 6.0
-            + 1.0 / x
-            - 1.0 / (4.0 * x * x)
-            + 1.0 / (9.0 * x * x * x)
-        )
-
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # regime selection
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def solve_next_step(
         mut self, a_esc: FPtr, A_cool: FPtr, q_inj: FPtr, n0: FPtr, n1: FPtr
     ) raises:
         if self.verbose:
             print("solving next step for ", self.particle_name)
         var NB = self.N_BINS
-        var n_min_regime = 5
         var imax = NB - 2
         var nqint = 0.0
         var threshold_inj_n0 = 1e-100 * c_pow(self.L_UNIT_CM, 3.0)
         var regime = 0
         var new_regime: Int
-        # regime of the window above, solved before this one (0: none, or no
-        # particles)
         var regime_above = 0
         # the highest bin with particles: the cells above it (regime 0) stay
-        # empty, so the padding of semi-analytic windows and the inflow count
-        # stop just above it
+        # empty, so the inflow count stops right above it
         var itop = -1
         var dt = self.delta_t
         for t in range(NB):
@@ -727,6 +731,11 @@ struct SolverAlgorithm(Copyable, Movable):
         var wq = pd(self.w_q)
         var wn = pd(self.w_n)
         var wo = pd(self.w_out)
+        # The densities at the bin centers, as the windows below read them.
+        # They are n0, except in the cells of a Chang & Cooper window above
+        # (regime 2 below).
+        var nc = n0
+        var centred = False
         var i = imax
         while i > 0:
             nqint += n0[unsafe_offset=i] + q_inj[unsafe_offset=i] * dt
@@ -769,13 +778,20 @@ struct SolverAlgorithm(Copyable, Movable):
                     nqint,
                     sep="",
                 )
-            # the regime-0 window (empty bins at the top) ends at the first bin
-            # with particles (AM3 held it to the minimum window length, at
-            # least the top 6 bins, and dropped their particles: AM3 bug)
-            if (
-                regime != new_regime
-                and (imax - i > n_min_regime or i < n_min_regime or regime == 0)
-            ) or i == 1:
+            # A window ends where the regime changes, however short it is. (AM3
+            # held every window to at least 6 bins: AM3 bugs. The regime-0
+            # window, the empty bins at the top, dropped the particles of the
+            # top 6 bins. A short escape-only (1) or cooling-only (4) window
+            # solved up to 5 bins below it without their cooling or their
+            # escape. One of regime 3 lost the particles that cool out of it
+            # into bins below that hardly cool. The cooling times of these bins
+            # swamped the window's own in its summed cooling time, so that the
+            # window did not cool. A Chang & Cooper window (2) solved
+            # semi-analytic bins below it with its matrix. The Courant numbers
+            # of these bins were above 10 (at 200: 0.38 of their particles
+            # after one step). As the top window starts at the highest bin with
+            # particles, a source too weak to matter changed the windows below.)
+            if regime != new_regime or i == 1:
                 var N = imax - i
                 if self.verbose:
                     print(
@@ -792,84 +808,107 @@ struct SolverAlgorithm(Copyable, Movable):
                         wa[unsafe_offset=k] = a_esc[unsafe_offset=i + 1 + k]
                         wq[unsafe_offset=k] = q_inj[unsafe_offset=i + 1 + k]
                         wn[unsafe_offset=k] = n0[unsafe_offset=i + 1 + k]
-                    # the inflow within the step from a window of regime 2, 3
-                    # or 4 above stays in the top cell, as regime 1 neglects
-                    # cooling (AM3 dropped it: AM3 bug)
-                    if regime_above >= 2:
+                    # The inflow within the step from a window of regime 2, 3
+                    # or 4 above stays in the top cell, because regime 1
+                    # neglects cooling. (AM3 dropped it: AM3 bug.) A step of
+                    # zero length has no inflow.
+                    if regime_above >= 2 and dt > 0.0:
                         wq[unsafe_offset=N - 1] += self.crossing_count(
-                            a_esc, A_cool, q_inj, n0, imax, itop
+                            a_esc, A_cool, q_inj, n0, nc, imax, itop
                         ) / (self.DELTA_X * dt)
                     self.solve_steadystate_esc_inj(wa, wq, wn, wo, N)
                     for k in range(N):
                         n1[unsafe_offset=i + 1 + k] = wo[unsafe_offset=k]
                 elif regime == 2:
-                    # the window and Nb cells below it, with no flux through
-                    # its top; the inflow from a window of regime 3 or 4 above
-                    # goes to its top cell (regime 1 neglects cooling). (AM3
-                    # padded the window with 10 cells of old densities and no
-                    # inflow at their top, dropping the particles that cool
-                    # in from further up: AM3 bug)
+                    # The window and Nb cells below it, with no flux through
+                    # its top. The inflow from the window above goes to its top
+                    # cell, also from an escape-dominated one. The particles of
+                    # that window cool out of it, though it neglects their
+                    # cooling. (AM3 padded the window with 10 cells of old
+                    # densities and no inflow at their top. This dropped the
+                    # particles that cool in from further up: AM3 bug.)
                     var Nb = 10
                     var M = N + Nb
-                    for k in range(M):
-                        wa[unsafe_offset=k] = 0.0
-                        wA[unsafe_offset=k] = 0.0
-                        wq[unsafe_offset=k] = 0.0
-                        wn[unsafe_offset=k] = 0.0
-                    for k in range(M):
-                        var g = i + 1 - Nb + k
-                        if g >= 0 and g < NB:
-                            wa[unsafe_offset=k] = (
-                                a_esc[unsafe_offset=g] + 1e-150
-                            )
-                            wA[unsafe_offset=k] = (
-                                A_cool[unsafe_offset=g] - 1e-150
-                            )
-                            wq[unsafe_offset=k] = (
-                                q_inj[unsafe_offset=g] + 1e-150
-                            )
-                            wn[unsafe_offset=k] = n0[unsafe_offset=g] + 1e-150
-                    if regime_above >= 2:
-                        wq[unsafe_offset=M - 1] += self.crossing_count(
-                            a_esc, A_cool, q_inj, n0, imax, itop
-                        ) / (self.DELTA_X * dt)
+                    self._window_cells(
+                        M, i + 1 - Nb, True, a_esc, A_cool, q_inj, n0
+                    )
+                    var flux_up = 0.0
+                    if regime_above >= 1 and dt > 0.0:
+                        var count = self.crossing_count(
+                            a_esc, A_cool, q_inj, n0, nc, imax, itop
+                        )
+                        flux_up = count / dt
+                        wq[unsafe_offset=M - 1] += count / (self.DELTA_X * dt)
                     self.solve_matrix(wa, wA, wq, wn, wo, M)
                     for k in range(N):
                         var g = i + 1 + k
                         if g >= 0 and g < NB:
                             n1[unsafe_offset=g] = wo[unsafe_offset=k + Nb]
+                    # The matrix takes the flux through a cell's lower face from
+                    # the cell itself, |A| n. In the steady state, n then holds
+                    # the injection up to that face. The windows below take n at
+                    # the bin center and add the injection from there on. So
+                    # they read the density of the mean of the fluxes through
+                    # the cell's two faces. (AM3 read n, which counted the
+                    # injection between the face and the center twice. So a
+                    # steady state below a band of injection that ends at the
+                    # window's top came out 17 % too high: an AM3 bug.)
+                    if not centred:
+                        centred = True
+                        nc = pd(self.w_nc)
+                        for k in range(NB):
+                            nc[unsafe_offset=k] = n0[unsafe_offset=k]
+                    var g = imax
+                    while g > i:
+                        var Ag = -A_cool[unsafe_offset=g]
+                        var flux = Ag * n0[unsafe_offset=g]
+                        if Ag > 1e-150:
+                            nc[unsafe_offset=g] = 0.5 * (flux + flux_up) / Ag
+                        flux_up = flux
+                        g -= 1
                 elif regime == 3 or regime == 4:
-                    # the padding above holds every cell from which particles
-                    # cool into the window within the step (AM3 always took
-                    # 10, dropping the particles from further up: AM3 bug)
+                    # The padding above holds every cell from which particles
+                    # cool into the window within the step. (AM3 always took 10
+                    # and so dropped the particles from further up: AM3 bug.)
                     var Nb = 10
-                    var Na = self.cells_reached(A_cool, imax, itop)
+                    var Na = self.cells_reached(A_cool, imax)
                     var M = N + Nb + Na
-                    for k in range(M):
-                        wa[unsafe_offset=k] = 0.0
-                        wA[unsafe_offset=k] = 0.0
-                        wq[unsafe_offset=k] = 0.0
-                        wn[unsafe_offset=k] = 0.0
-                    for k in range(M):
-                        var g = i + 1 - Nb + k
-                        if g >= 0 and g < NB:
-                            if regime == 3:
-                                wa[unsafe_offset=k] = (
-                                    a_esc[unsafe_offset=g] + 1e-150
-                                )
-                            wA[unsafe_offset=k] = (
-                                A_cool[unsafe_offset=g] - 1e-150
-                            )
-                            wq[unsafe_offset=k] = (
-                                q_inj[unsafe_offset=g] + 1e-150
-                            )
-                            wn[unsafe_offset=k] = n0[unsafe_offset=g] + 1e-150
-                    # the cells below the window (other regimes, below the
+                    # A cooling-only window whose padding holds bins where
+                    # escape is not negligible is solved as regime 3, with the
+                    # escape of every cell. So the particles that cool in from
+                    # there arrive attenuated. (AM3 left the escape out: 1.6
+                    # times the steady state below escape-dominated bins, an
+                    # AM3 bug.) The window's own escape counts too, because
+                    # ln(a/|A|) is linear between the bins. Without the escape
+                    # of the window, the cell up to the first bin of the
+                    # padding loses most of that bin's escape. The rates of
+                    # the padding's bins decide it, whether they hold particles
+                    # or not, so that the step stays linear in the sources.
+                    var esc_above = False
+                    if regime == 4:
+                        for g in range(imax + 1, min(imax + Na, NB - 1) + 1):
+                            if (
+                                a_esc[unsafe_offset=g]
+                                >= -self.threshold_cool_dom
+                                * A_cool[unsafe_offset=g]
+                            ):
+                                esc_above = True
+                                break
+                    self._window_cells(
+                        M,
+                        i + 1 - Nb,
+                        regime == 3 or esc_above,
+                        a_esc,
+                        A_cool,
+                        q_inj,
+                        nc,
+                    )
+                    # The cells below the window (other regimes, below the
                     # grid, bin 0) take the cooling rate of its first bin. A
                     # bin's solution needs only the bins above it, but the
-                    # cooling time is summed from the lowest cell: AM3's A = 0
+                    # cooling time is summed from the lowest cell. AM3's A = 0
                     # below the grid (or a much slower cooling) made the sum
-                    # swamp dt, and the window did not cool (AM3 bug)
+                    # swamp dt, and the window did not cool (AM3 bug).
                     var kfirst = -1
                     for k in range(Nb, M):
                         var g = i + 1 - Nb + k
@@ -879,9 +918,9 @@ struct SolverAlgorithm(Copyable, Movable):
                     if kfirst > 0:
                         for k in range(kfirst):
                             wA[unsafe_offset=k] = wA[unsafe_offset=kfirst]
-                    if regime == 3:
+                    if regime == 3 or esc_above:
                         self.solve_steadystate_esc_cool_inj(
-                            wa, wA, wq, wn, wo, M, i - Nb
+                            wa, wA, wq, wn, wo, M, i - Nb, Nb, Nb + N
                         )
                     else:
                         self.solve_steadystate_cool_inj(
@@ -900,15 +939,51 @@ struct SolverAlgorithm(Copyable, Movable):
         if self.verbose:
             print("finished evolving ", self.particle_name)
 
+    def _window_cells(
+        self,
+        M: Int,
+        g0: Int,
+        escape: Bool,
+        a_esc: FPtr,
+        A_cool: FPtr,
+        q_inj: FPtr,
+        n: FPtr,
+    ):
+        var NB = self.N_BINS
+        var wa = pd(self.w_a)
+        var wA = pd(self.w_A)
+        var wq = pd(self.w_q)
+        var wn = pd(self.w_n)
+        for k in range(M):
+            var g = g0 + k
+            if g >= 0 and g < NB:
+                if escape:
+                    wa[unsafe_offset=k] = a_esc[unsafe_offset=g] + 1e-150
+                wA[unsafe_offset=k] = A_cool[unsafe_offset=g] - 1e-150
+                wq[unsafe_offset=k] = q_inj[unsafe_offset=g] + 1e-150
+                wn[unsafe_offset=k] = n[unsafe_offset=g] + 1e-150
+            else:
+                wa[unsafe_offset=k] = 0.0
+                wA[unsafe_offset=k] = 0.0
+                wq[unsafe_offset=k] = 0.0
+                wn[unsafe_offset=k] = 0.0
+
     @inline(.never)
-    def cells_reached(self, A_cool: FPtr, imax: Int, itop: Int) -> Int:
-        """Number of cells above imax (at least 10) from which particles
-        cooling at A_cool reach imax within the step (one more as margin), up
-        to the cell above itop, the highest bin with particles."""
+    def cells_reached(self, A_cool: FPtr, imax: Int) -> Int:
+        """The number of cells is at least 10 and has one more cell as margin.
+        The cooling time is that of compute_y: from the center of bin imax, with
+        ln(1/|A|) linear between the bin centers. The rates alone decide the
+        number, whether the cells hold particles or not. So each bin takes its
+        particles from the same cells, whatever the cells above hold. A species
+        and its components, solved apart, then take the same points of the RK4
+        source integral."""
+        var Lj = c_log(1.0 / (-A_cool[unsafe_offset=imax] + 1e-200))
         var tc = 0.0
         var g = imax + 1
-        while g < self.N_BINS and g <= itop + 1 and tc <= self.delta_t:
-            tc += self.DELTA_X / (-A_cool[unsafe_offset=g] + 1e-300)
+        while g < self.N_BINS and tc <= self.delta_t:
+            var Lk = c_log(1.0 / (-A_cool[unsafe_offset=g] + 1e-200))
+            tc += self.DELTA_X * c_exp(Lj) * _phi1(Lk - Lj)
+            Lj = Lk
             g += 1
         return max(10, g - imax + 1)
 
@@ -919,6 +994,7 @@ struct SolverAlgorithm(Copyable, Movable):
         A_cool: FPtr,
         q_inj: FPtr,
         n0: FPtr,
+        nc: FPtr,
         ib: Int,
         itop: Int,
     ) -> Float64:
@@ -932,19 +1008,22 @@ struct SolverAlgorithm(Copyable, Movable):
         tau(y_b) = dt (exact along the characteristics for A, a and q constant
         in the step).
 
-        As in regimes 3 and 4, n0, q, ln(1/|A|) and ln(a/|A|) are linear
-        between the bin centres above the edge. From the edge to the centre of
-        bin ib + 1, they keep that bin's values, as the window above does there
-        (a regime-3/4 window gives the cells below it its first bin's cooling
-        rate; the Chang & Cooper flux through the edge is the upper cell's).
-        4-point Gauss-Legendre on pieces over which S grows by at most 1, up to
-        the cell above itop, the highest bin with particles."""
+        As in regimes 3 and 4, n, q, ln(1/|A|) and ln(a/|A|) are linear between
+        the bin centers above the edge. nc[k] is the density at the center of
+        bin k (solve_next_step). From the edge to the center of bin ib + 1, q
+        and the rates keep that bin's values, as the window above does there.
+        (A regime-3/4 window gives the cells below it its first bin's cooling
+        rate. The Chang & Cooper flux through the edge is the upper cell's.)
+        Between the edge and that center, n goes from n0[ib + 1], which holds
+        that flux in a Chang & Cooper window, to nc[ib + 1].
+        4-point Gauss-Legendre on equal pieces of each interval, over which S
+        grows by at most 1 on average. The integral goes up to where S
+        reaches 60 (beyond, all but e^-60 of the particles escape before they
+        cross)."""
         var NB = self.N_BINS
         var dt = self.delta_t
         if ib + 1 >= NB:
             return 0.0
-        # the interval [x_j, x_j + h]: from x_b to the centre of bin ib + 1,
-        # then between the bin centres
         var Lj = c_log(1.0 / (-A_cool[unsafe_offset=ib + 1] + 1e-200))
         var Mj = c_log(
             (a_esc[unsafe_offset=ib + 1] + 1e-200)
@@ -963,24 +1042,29 @@ struct SolverAlgorithm(Copyable, Movable):
                 (a_esc[unsafe_offset=k] + 1e-200)
                 / (-A_cool[unsafe_offset=k] + 1e-200)
             )
-            var nk = n0[unsafe_offset=k]
+            var nk = nc[unsafe_offset=k]
             var qk = q_inj[unsafe_offset=k]
             var dL = Lk - Lj
             var dM = Mk - Mj
-            var hL = h * c_exp(Lj)  # tau(s) = tau + hL phi1(dL s/h) s/h
-            var hM = h * c_exp(Mj)  # S(s) = S + hM phi1(dM s/h) s/h
+            var hL = h * c_exp(Lj)
+            var hM = h * c_exp(Mj)
             var dtau = hL * _phi1(dL)
             var send = h
             var last = False
             if tau + dtau >= dt:
-                # the part of the interval within reach: tau(send) = dt
                 var r = (dt - tau) / hL
-                send = h * (
-                    r if abs(dL * r) < 1e-12 else c_log1p(dL * r) / dL
-                )
+                send = h * (r if abs(dL * r) < 1e-12 else c_log1p(dL * r) / dL)
                 last = True
             var dS = hM * _phi1(dM * send / h) * send / h
-            var npiece = 1 if dS <= 1.0 else min(64, Int(ceil(dS)))
+            if S + dS > 60.0:
+                var rS = (60.0 - S) / hM
+                send = min(
+                    send,
+                    h * (rS if abs(dM * rS) < 1e-12 else c_log1p(dM * rS) / dM),
+                )
+                dS = 60.0 - S
+                last = True
+            var npiece = 1 if not (dS > 1.0) else Int(ceil(dS))
             var ds = send / Float64(npiece)
             for p in range(npiece):
                 var s0 = ds * Float64(p)
@@ -1011,9 +1095,9 @@ struct SolverAlgorithm(Copyable, Movable):
             k += 1
         return total
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # regime 1: escape + injection only
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     def solve_steadystate_esc_inj(
         self, a: FPtr, q: FPtr, n0: FPtr, res: FPtr, N: Int
     ):
@@ -1040,9 +1124,9 @@ struct SolverAlgorithm(Copyable, Movable):
             else:
                 res[unsafe_offset=i] = q[unsafe_offset=i] / ai
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # regime 2: Chang & Cooper tridiagonal matrix solver
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     @inline(.always)
     def chc_delta(self, k: Int, p: Float64, q: Float64) -> Float64:
         if k == 0:
@@ -1095,18 +1179,6 @@ struct SolverAlgorithm(Copyable, Movable):
         var TB = pd(self.m_TB)
         var TQ = pd(self.m_TQ)
         var TN = pd(self.m_TN)
-        _zero(out_, N)
-        _zero(DA, N)
-        _zero(DB, N)
-        _zero(DD, N)
-        _zero(TN, N)
-        _zero(PR, N)
-        _zero(PD, N)
-        _zero(PL, N)
-        _zero(TS, N)
-        _zero(TD, N)
-        _zero(TB, N)
-        _zero(TQ, N)
         # construct_trid_mat
         var DX = self.DELTA_X
         var r = 0.5 * self.delta_t / DX
@@ -1115,8 +1187,6 @@ struct SolverAlgorithm(Copyable, Movable):
         for i in range(size - 1):
             var rA = self.A_w(i, 0, 1.0, 1.0, A_cool)
             var rB = B
-            # two Chang & Cooper iterations of A (B stays constant), delta from
-            # the last
             for _ in range(2):
                 rA = self.A_w(i, 1, rA, rB, A_cool)
             DA[unsafe_offset=i] = rA
@@ -1155,6 +1225,7 @@ struct SolverAlgorithm(Copyable, Movable):
             TQ[unsafe_offset=i] = q_inj[unsafe_offset=i] * self.delta_t
         TS[unsafe_offset=0] = PR[unsafe_offset=0]
         TD[unsafe_offset=0] = 1.0 + PD[unsafe_offset=0]
+        TQ[unsafe_offset=0] = 0.0
         TS[unsafe_offset=size - 1] = 0.0
         TD[unsafe_offset=size - 1] = 1.0 + PD[unsafe_offset=size - 1]
         TB[unsafe_offset=size - 2] = PL[unsafe_offset=size - 1]
@@ -1179,66 +1250,99 @@ struct SolverAlgorithm(Copyable, Movable):
             PL[unsafe_offset=size - 1] * n0[unsafe_offset=size - 2]
             + PD[unsafe_offset=size - 1] * n0[unsafe_offset=size - 1]
         )
+        # The step is (1 + 2 theta P) n1 = (1 - 2 (1 - theta) P) n0 + q dt.
+        # Cell i has the weight theta_i (_theta of its PD_i) for its escape and
+        # for the flux through its lower face. That flux is its outflow (the
+        # solver treats losses only). The flux through its upper face has the
+        # weight of the cell above. Each flux then has one weight on both
+        # sides, so that the step conserves the particles. theta depends on
+        # the rates alone. theta_i is Crank-Nicolson's 1/2 where the diagonal
+        # 1 - PD_i of the right-hand side is >= 0. Elsewhere, theta_i is the
+        # least implicit theta that keeps 1 - 2 (1 - theta) PD_i >= 0
+        # (PD = (C + a dt) / 2, C the Courant number). (AM3 took 1/2 at
+        # any C. The densities rang from step to step, and setting their
+        # negative values to zero created particles: AM3 bug.)
         for i in range(size):
             TN[unsafe_offset=i] = (
                 -TN[unsafe_offset=i] + TQ[unsafe_offset=i] + n0[unsafe_offset=i]
             )
+        var th = _theta(PD[unsafe_offset=1]) if size > 1 else 0.5
+        for i in range(1, size):
+            var th_up = _theta(PD[unsafe_offset=i + 1]) if i + 1 < size else th
+            if th > 0.5 or th_up > 0.5:
+                TB[unsafe_offset=i - 1] = 2.0 * th * PL[unsafe_offset=i]
+                TS[unsafe_offset=i] = 2.0 * th_up * PR[unsafe_offset=i]
+                var rhs = (
+                    TQ[unsafe_offset=i]
+                    - 2.0
+                    * (1.0 - th)
+                    * PL[unsafe_offset=i]
+                    * n0[unsafe_offset=i - 1]
+                )
+                if i + 1 < size:
+                    rhs -= (
+                        2.0
+                        * (1.0 - th_up)
+                        * PR[unsafe_offset=i]
+                        * n0[unsafe_offset=i + 1]
+                    )
+                # The term of n_i on the right-hand side, without the
+                # cancellation in 1 - 2 (1 - theta_i) PD_i, which is zero where
+                # theta_i > 1/2. Computed as a difference, the term leaves
+                # 1e-16 n_i. The cell at the top of a falling spectrum then
+                # holds only that, with another value in a species and in each
+                # of its components.
+                if th_up == th:
+                    TD[unsafe_offset=i] = 1.0 + 2.0 * th * PD[unsafe_offset=i]
+                else:
+                    # PD_i = up + own: the parts of the fluxes through its
+                    # upper face (the term of n_i in the row of the cell above,
+                    # -PL_(i+1)) and through its lower one with its escape
+                    var up = -PL[unsafe_offset=i + 1]
+                    var own = PD[unsafe_offset=i] - up
+                    TD[unsafe_offset=i] = 1.0 + 2.0 * (th_up * up + th * own)
+                    if th > 0.5:
+                        rhs += (
+                            up
+                            * (1.0 / PD[unsafe_offset=i] - 2.0 * (1.0 - th_up))
+                            * n0[unsafe_offset=i]
+                        )
+                    else:
+                        rhs += (1.0 - own - 2.0 * (1.0 - th_up) * up) * n0[
+                            unsafe_offset=i
+                        ]
+                TN[unsafe_offset=i] = rhs
+            th = th_up
         var ok = solve_tridiag(
             TD, TS, TB, TN, out_, size, pd(self.m_alpha), pd(self.m_z)
         )
         if not ok:
             raise Error("matrix must be positive definite")
 
-    # ------------------------------------------------------------------
+    # --------------------------------------------------------------------------
     # regimes 3/4: semi-analytical steady state for dt
-    # ------------------------------------------------------------------
-    def rk4_gslspl_b(
-        self,
-        lower: Float64,
-        upper: Float64,
-        N_INTG: Int,
-        x_min: Float64,
-        x_max: Float64,
-        mut spl_lnmivA: LinearSpline,
-    ) -> Float64:
-        var x = lower
-        var y = 0.0
-        var diff_x = (upper - lower) / Float64(N_INTG)
-        # a step that leaves [x_min, x_max] ends the sum (x stops); the
-        # integrand at the end of a step is the one at the start of the next
-        # (the same x). The sum (k1 + k4) / 6 + 2 k2 / 3 is written with the
-        # fused multiply-adds the compiler makes of it.
-        if x < x_min or x + 1.0 * diff_x > x_max:
-            return y
-        var f1 = c_exp(spl_lnmivA.eval(x))
-        for _ in range(N_INTG):
-            if x < x_min or x + 1.0 * diff_x > x_max:
-                break
-            var k2 = diff_x * c_exp(spl_lnmivA.eval(x + 0.5 * diff_x))
-            var f4 = c_exp(spl_lnmivA.eval(x + 1.0 * diff_x))
-            var k14 = fma(diff_x, f4, diff_x * f1)
-            y += fma(k2, 2.0 / 3.0, (1.0 / 6.0) * k14)
-            x += diff_x
-            f1 = f4
-        return y
-
-    def compute_y(
-        mut self, N: Int, x_ln: FPtr, y_ln: FPtr, mut spl_lnmivA: LinearSpline
-    ) raises:
+    # --------------------------------------------------------------------------
+    def compute_y(self, N: Int, x_ln: FPtr, y_ln: FPtr, mivA_ln: FPtr) raises:
+        """y_ln[i], the ln E from which the particles of grid point x_ln[i]
+        cool down to it within the step, with 1/|A| = e^L, L = mivA_ln linear
+        between the grid points."""
         if self.verbose:
             print("computing y - filling b_lin")
         var b_lin = pd(self.w_b)
         b_lin[unsafe_offset=0] = 0.0
-        var x0 = x_ln[unsafe_offset=0]
-        var xN = x_ln[unsafe_offset=N - 1]
+        var L = mivA_ln
         for i in range(1, N):
-            var delta_b = self.rk4_gslspl_b(
-                x_ln[unsafe_offset=i - 1],
-                x_ln[unsafe_offset=i],
-                10,
-                x0,
-                xN,
-                spl_lnmivA,
+            # The cooling time across the cell, exact for 1/|A| = e^L with L
+            # linear in it. (AM3 summed 10 RK4 steps, which overestimate it
+            # where L is steep: by 1.2 % where L rises by 25. AM3 also left out
+            # the last step in a window's top cell where the summed steps round
+            # past the top: AM3 bug.)
+            var L0 = L[unsafe_offset=i - 1]
+            var sL = L[unsafe_offset=i] - L0
+            var delta_b = (
+                (x_ln[unsafe_offset=i] - x_ln[unsafe_offset=i - 1])
+                * c_exp(L0)
+                * _phi1(sL)
             )
             var set_delta_b_min = b_lin[unsafe_offset=i - 1] * 1.0e-15
             delta_b = set_delta_b_min if delta_b < set_delta_b_min else delta_b
@@ -1247,25 +1351,40 @@ struct SolverAlgorithm(Copyable, Movable):
                 var prev = b_lin[unsafe_offset=i - 1]
                 var dir = max(prev + 1.0, prev * 1.0)
                 b_lin[unsafe_offset=i] = nextafter(prev, dir)
-        if spl_lnmivA.error:
-            raise Error("interpolation error (gsl_spline_eval out of range)")
         for i in range(1, N):
             if not (b_lin[unsafe_offset=i - 1] < b_lin[unsafe_offset=i]):
                 raise Error("x values must be strictly increasing")
-        var spl_ivB = LinearSpline(b_lin, x_ln, N)
         var b_max = b_lin[unsafe_offset=N - 1]
-        var x_max = xN
+        var x_max = x_ln[unsafe_offset=N - 1]
         if self.verbose:
             print("computing y - filling y")
         var dt = self.delta_t
+        var k = 0
         for i in range(N):
             y_ln[unsafe_offset=i] = x_max - 1.0e-3 * self.DELTA_X
-            if b_lin[unsafe_offset=i] + dt < b_max:
-                y_ln[unsafe_offset=i] = spl_ivB.eval(
-                    b_lin[unsafe_offset=i] + dt
+            var bt = b_lin[unsafe_offset=i] + dt
+            if bt < b_max:
+                # The code inverts the cooling time exactly for 1/|A| = e^L with
+                # L linear across the cell, as b_lin sums it. (AM3 interpolated
+                # x linearly in b. Where 1/|A| rises steeply within the cell,
+                # that put y next to x. The bin then kept its particles and
+                # injection with no cooling: AM3 bug.)
+                k = max(k, i)
+                while b_lin[unsafe_offset=k + 1] <= bt:
+                    k += 1
+                var b0 = b_lin[unsafe_offset=k]
+                var t = (bt - b0) / (b_lin[unsafe_offset=k + 1] - b0)
+                var s = L[unsafe_offset=k + 1] - L[unsafe_offset=k]
+                var u = t
+                if s > 30.0:
+                    u = 1.0 + c_log(t + (1.0 - t) * c_exp(-s)) / s
+                elif abs(s) > 1.0e-8:
+                    u = c_log1p(t * c_expm1(s)) / s
+                u = min(max(u, 0.0), 1.0)
+                var x0k = x_ln[unsafe_offset=k]
+                y_ln[unsafe_offset=i] = (
+                    x0k + (x_ln[unsafe_offset=k + 1] - x0k) * u
                 )
-        if spl_ivB.error:
-            raise Error("interpolation error (gsl_spline_eval out of range)")
 
     def rk4_gslspl_a(
         self,
@@ -1284,15 +1403,15 @@ struct SolverAlgorithm(Copyable, Movable):
         var diff_x = (upper - lower) / Float64(N_INTG)
         var x = lower
         var y = 0.0
-        # the integrand at the end of a step is the one at the start of the
-        # next (the same x). The sum (k1 + k4) / 6 + 2 k2 / 3, with
-        # k = -diff_x * loss, is written with the fused multiply-adds the
+        # No step ends past upper (the summed steps can round past it, and past
+        # the spline). The sum (k1 + k4) / 6 + 2 k2 / 3, with
+        # k = -diff_x * loss, is written with the fused multiply-adds that the
         # compiler makes of it.
         var k1_lnloss = spl_lna.eval(x)
         var k1_loss = 0.0 if k1_lnloss < -200.0 else c_exp(k1_lnloss)
         for _ in range(N_INTG):
             var k2_lnloss = spl_lna.eval(x + 0.5 * diff_x)
-            var k4_lnloss = spl_lna.eval(x + 1.0 * diff_x)
+            var k4_lnloss = spl_lna.eval(min(x + 1.0 * diff_x, upper))
             var k2_loss = 0.0 if k2_lnloss < -200.0 else c_exp(k2_lnloss)
             var k4_loss = 0.0 if k4_lnloss < -200.0 else c_exp(k4_lnloss)
             var k2 = -diff_x * k2_loss
@@ -1324,18 +1443,30 @@ struct SolverAlgorithm(Copyable, Movable):
                 " occurred \n"
             )
         var y = 0.0
-        var abs_alpha_ivA = c_exp(spl_lna.eval(lower))
-        var I_alpha_ivA = (upper - lower) * abs_alpha_ivA
+        # Without the sink where (upper - lower) a/|A| < 1e-3 for the largest
+        # a/|A| of the range, at an end or at a node of the spline between them.
+        # (AM3 took a/|A| at lower. This left out the sink where escape rises
+        # between lower and upper, for example below escape-dominated bins:
+        # AM3 bug.)
+        var lna_max = max(spl_lna.eval(lower), spl_lna.eval(upper))
+        for j in range(spl_lna.size):
+            var xj = spl_lna.xa[unsafe_offset=j]
+            if xj >= upper:
+                break
+            if xj > lower:
+                lna_max = max(lna_max, spl_lna.ya[unsafe_offset=j])
+        var I_alpha_ivA = (upper - lower) * c_exp(lna_max)
         if I_alpha_ivA < 1.0e-3:
             var N_min = 10
             var N_eff = Int((upper - lower) / 0.1)
             var N_pts = N_min if N_min > N_eff else N_eff
             var diff_x = (upper - lower) / Float64(N_pts)
             var x_prime = lower
+            # (no step ends past upper, as in rk4_gslspl_a)
             for _ in range(N_pts):
                 var k1 = diff_x * spl_q.eval(x_prime)
                 var k2 = diff_x * spl_q.eval(x_prime + 0.5 * diff_x)
-                var k4 = diff_x * spl_q.eval(x_prime + 1.0 * diff_x)
+                var k4 = diff_x * spl_q.eval(min(x_prime + 1.0 * diff_x, upper))
                 y += (1.0 / 6.0) * (k1 + k4) + (2.0 / 3.0) * k2
                 x_prime += diff_x
             y *= c_exp(spl_lnmivA.eval(lower))
@@ -1345,7 +1476,9 @@ struct SolverAlgorithm(Copyable, Movable):
             comptime N_OUTER_INIT = 10
             comptime N_INNER_INIT = 10
             var diff_x = range_ / Float64(N_OUTER_INIT)
-            if diff_x / lower < 1.0e-10:
+            # (relative to |lower|: AM3's diff_x / lower < 1e-10 holds for any
+            # range that starts below x = 0, as in the cells below the grid)
+            if diff_x < 1.0e-10 * abs(lower):
                 print("lower bound = ", lower)
                 print("upper bound = ", upper_eff)
                 raise Error(
@@ -1362,9 +1495,9 @@ struct SolverAlgorithm(Copyable, Movable):
                 range_ = upper_eff - lower
                 diff_x = range_ / Float64(N_OUTER_INIT)
                 stat_reduced_range = True
-            # (the injection comes from below y = upper only: AM3 extended the
-            #  range to 0.99 x_max, the top of the window, and did not update
-            #  diff_x here, so the loop never ended once entered - AM3 bugs)
+            # (The injection comes from below y = upper only. AM3 extended the
+            #  range to 0.99 x_max, the top of the window. AM3 did not update
+            #  diff_x here, so the loop never ended once entered: AM3 bugs.)
             if stat_reduced_range:
                 while (
                     self.rk4_gslspl_a(
@@ -1386,7 +1519,9 @@ struct SolverAlgorithm(Copyable, Movable):
             var N_pts = N_min if N_min > N_eff else N_eff
             diff_x = (upper_eff - lower) / Float64(N_pts)
             var x_prime = lower
+            # (no step ends past upper_eff, as in rk4_gslspl_a)
             for _ in range(N_pts):
+                var x_end = min(x_prime + 1.0 * diff_x, upper_eff)
                 var k1_lnloss = self.rk4_gslspl_a(
                     lower, x_prime, N_INNER_INIT, x_min, x_max, spl_lna
                 )
@@ -1400,7 +1535,7 @@ struct SolverAlgorithm(Copyable, Movable):
                 )
                 var k4_lnloss = self.rk4_gslspl_a(
                     lower,
-                    x_prime + 1.0 * diff_x,
+                    x_end,
                     N_INNER_INIT,
                     x_min,
                     x_max,
@@ -1411,7 +1546,7 @@ struct SolverAlgorithm(Copyable, Movable):
                 var k4_loss = 0.0 if k4_lnloss < -300.0 else c_exp(k4_lnloss)
                 var k1 = diff_x * spl_q.eval(x_prime) * k1_loss
                 var k2 = diff_x * spl_q.eval(x_prime + 0.5 * diff_x) * k2_loss
-                var k4 = diff_x * spl_q.eval(x_prime + 1.0 * diff_x) * k4_loss
+                var k4 = diff_x * spl_q.eval(x_end) * k4_loss
                 y += (1.0 / 6.0) * (k1 + k4) + (2.0 / 3.0) * k2
                 x_prime += diff_x
             y *= c_exp(spl_lnmivA.eval(lower))
@@ -1420,38 +1555,37 @@ struct SolverAlgorithm(Copyable, Movable):
     def simple_integral_q(
         self,
         N: Int,
+        first: Int,
+        last: Int,
         x_ln: FPtr,
         y_ln: FPtr,
         a_ln: FPtr,
         q: FPtr,
         mivA_ln: FPtr,
+        K: FPtr,
         mut spl_lna: LinearSpline,
         mut spl_q: LinearSpline,
         inj: FPtr,
     ):
         """inj[i] = int_x^y q(x') exp(-int_x^x' alpha / |A| dx'') dx' / |A(x)|
-        (x = x_ln[i], y = y_ln[i]) for the bins 1 .. N - 2 of the window.
+        (x = x_ln[i], y = y_ln[i]) for the bins first .. last - 1 of the
+        window, with K[k] = int alpha / |A| dx from x_ln[first] to x_ln[k].
 
         _source_cell integrates each cell of the splines (ln(alpha / |A|) and q
-        linear in x), exactly where the sink or the cooling dominates. Chained
-        from the top, J_k = P_k + e^-D_k J_(k+1) (P_k, D_k: integral and
-        exponent of cell k), the integral is J_i - e^-(K_m - K_i) (J_m - the
-        part of cell m below y), with K the cumulative exponent and m the cell
-        that holds y. Where that loses more than 4 digits (the injection above
-        y dominating), the cells from x to y are summed instead.
+        linear in x), exactly where the sink or the cooling dominates.
 
         (AM3 summed q(x') exp(-int_x^(x' + dx) alpha / |A|) dx over the grid
         points below y, with exp(+...), and dropped the injection where the
-        sink is negligible: AM3 bugs. Its densities were too low by
-        z / (e^z - 1), z = dx alpha / |A|, where the sink dominates, and off by
-        about dx / 2 times the logarithmic slope of q where cooling dominates.)
+        sink is negligible: AM3 bugs. Where the sink dominates, its densities
+        were too low by z / (e^z - 1), z = dx alpha / |A|. Where cooling
+        dominates, they were off by about dx / 2 times the logarithmic slope
+        of q.)
         """
         var DX = self.DELTA_X
         var P = inj  # P_k, overwritten by inj[k] once J is known
         var Dc = pd(self.w_q2)
         var J = pd(self.w_q3)
-        var K = pd(self.w_K)
-        for k in range(N - 1):
+        for k in range(first, N - 1):
             var Dk = 0.0
             P[unsafe_offset=k] = _source_cell(
                 DX,
@@ -1464,27 +1598,15 @@ struct SolverAlgorithm(Copyable, Movable):
             Dc[unsafe_offset=k] = Dk
         J[unsafe_offset=N - 1] = 0.0
         var k = N - 2
-        while k >= 0:
+        while k >= first:
             J[unsafe_offset=k] = (
                 P[unsafe_offset=k]
                 + c_exp(-Dc[unsafe_offset=k]) * J[unsafe_offset=k + 1]
             )
             k -= 1
-        K[unsafe_offset=0] = 0.0
-        for k2 in range(1, N):
-            K[unsafe_offset=k2] = (
-                K[unsafe_offset=k2 - 1] + Dc[unsafe_offset=k2 - 1]
-            )
-        inj[unsafe_offset=0] = 0.0
-        for i in range(1, N - 1):
-            var xi = x_ln[unsafe_offset=i]
+        for i in range(first, last):
             var yi = y_ln[unsafe_offset=i]
-            # the cell that holds y: x_ln[m] <= y < x_ln[m + 1]
-            var m = min(N - 2, i + max(0, Int((yi - xi) / DX)))
-            while m > i and x_ln[unsafe_offset=m] > yi:
-                m -= 1
-            while m < N - 2 and x_ln[unsafe_offset=m + 1] <= yi:
-                m += 1
+            var m = _cell_of(x_ln, N, i, yi, DX)
             var Dp = 0.0
             var part = _source_cell(
                 yi - x_ln[unsafe_offset=m],
@@ -1499,13 +1621,10 @@ struct SolverAlgorithm(Copyable, Movable):
                 I = J[unsafe_offset=i] - c_exp(
                     -(K[unsafe_offset=m] - K[unsafe_offset=i])
                 ) * (J[unsafe_offset=m] - part)
-                # over 4 digits lost: sum the cells from x to y instead (P_k,
-                # k >= i, are not overwritten yet)
+                # if over 4 digits are lost, sum the cells from x to y instead
+                # (P_k, k >= i, are not overwritten yet)
                 if I * 1e4 < J[unsafe_offset=i]:
-                    I = (
-                        c_exp(-(K[unsafe_offset=m] - K[unsafe_offset=i]))
-                        * part
-                    )
+                    I = c_exp(-(K[unsafe_offset=m] - K[unsafe_offset=i])) * part
                     for kk in range(i, m):
                         I += P[unsafe_offset=kk] * c_exp(
                             -(K[unsafe_offset=kk] - K[unsafe_offset=i])
@@ -1521,7 +1640,11 @@ struct SolverAlgorithm(Copyable, Movable):
         n1: FPtr,
         N: Int,
         i0: Int,
+        first: Int,
+        last: Int,
     ) raises:
+        """Regime 3: n1 of the window, the bins first .. last - 1 of the arrays
+        (grid points i0 .. i0 + N - 1). n1 is not set elsewhere."""
         if self.verbose:
             print(
                 self.particle_name,
@@ -1544,18 +1667,40 @@ struct SolverAlgorithm(Copyable, Movable):
                 (a_esc[unsafe_offset=i] + 1e-200)
                 / (-A_cool[unsafe_offset=i] + 1e-200)
             )
-            y_ln[unsafe_offset=i] = 0.0
-        # (the q-integral arrays of the C++ version are not used by this
-        # regime; w_q1 .. w_q3 hold simple_integral_q's cells instead)
+        # (This regime does not use the q-integral arrays of the C++ version.
+        # w_q1 .. w_q3 hold simple_integral_q's cells instead.)
         var spl_lna = LinearSpline(x_ln, a_ln, N)
         var spl_lnmivA = LinearSpline(x_ln, mivA_ln, N)
         var spl_q = LinearSpline(x_ln, q_inj, N)
         var spl_n = LinearSpline(x_ln, n0, N)
-        self.compute_y(N, x_ln, y_ln, spl_lnmivA)
+        self.compute_y(N, x_ln, y_ln, mivA_ln)
+        # The escape exponent int a/|A| dx from the window's first grid point
+        # to each one above, exact for ln(a/|A|) linear between them. The
+        # exponent starts at the window, because the cells below never feed the
+        # window. However fast these cells let particles escape, they take no
+        # digits from the exponent.
+        var K = pd(self.w_K)
+        K[unsafe_offset=first] = 0.0
+        for k in range(first + 1, N):
+            var l0 = a_ln[unsafe_offset=k - 1]
+            K[unsafe_offset=k] = K[unsafe_offset=k - 1] + DX * c_exp(
+                l0
+            ) * _phi1(a_ln[unsafe_offset=k] - l0)
         var inj = pd(self.w_q1)
         if not self.simpleqintegration:
             self.simple_integral_q(
-                N, x_ln, y_ln, a_ln, q_inj, mivA_ln, spl_lna, spl_q, inj
+                N,
+                first,
+                last,
+                x_ln,
+                y_ln,
+                a_ln,
+                q_inj,
+                mivA_ln,
+                K,
+                spl_lna,
+                spl_q,
+                inj,
             )
         # compute_n1_a_A
         if self.verbose:
@@ -1563,9 +1708,7 @@ struct SolverAlgorithm(Copyable, Movable):
         var dt = self.delta_t
         var x0 = x_ln[unsafe_offset=0]
         var xN = x_ln[unsafe_offset=N - 1]
-        for i in range(N):
-            n1[unsafe_offset=i] = 0.0
-        for i in range(1, N - 1):
+        for i in range(first, last):
             var yi = y_ln[unsafe_offset=i]
             var xi = x_ln[unsafe_offset=i]
             var ai = a_esc[unsafe_offset=i]
@@ -1581,18 +1724,28 @@ struct SolverAlgorithm(Copyable, Movable):
                 var ny = spl_n.eval(yi)
                 var ivAy = -c_exp(spl_lnmivA.eval(yi))
                 var Aratio = 1.0 / A_cool[unsafe_offset=i] / ivAy
-                spl_lna.hint(i)  # (x_i is grid point i)
-                var lnloss = self.rk4_gslspl_a(xi, yi, 5, x0, xN, spl_lna)
-                var loss = 0.0 if lnloss < -100.0 else c_exp(lnloss)
+                # The escape from y down to x, exp(-int_x^y a/|A| dx). (AM3 took
+                # 5 RK4 steps from x to y. Below a jump of the escape, the
+                # densities then had steps of -12 % to +3 %: an AM3 bug.)
+                var m = _cell_of(x_ln, N, i, yi, DX)
+                var lm = a_ln[unsafe_offset=m]
+                var S = (
+                    K[unsafe_offset=m]
+                    - K[unsafe_offset=i]
+                    + (yi - x_ln[unsafe_offset=m])
+                    * c_exp(lm)
+                    * _phi1(spl_lna.eval(yi) - lm)
+                )
+                var loss = 0.0 if S > 100.0 else c_exp(-S)
                 var injection: Float64
                 if self.simpleqintegration:
+                    spl_lna.hint(i)  # (x_i is grid point i)
                     injection = self.rk4_gslspl_q(
                         xi, yi, x0, xN, spl_lna, spl_q, spl_lnmivA
                     )
                 else:
                     injection = inj[unsafe_offset=i]
                 n1[unsafe_offset=i] = ny * Aratio * loss + injection
-        n1[unsafe_offset=N - 1] = 0.0
         if spl_lna.error or spl_lnmivA.error or spl_q.error or spl_n.error:
             raise Error("interpolation error (gsl_spline_eval out of range)")
 
@@ -1617,13 +1770,13 @@ struct SolverAlgorithm(Copyable, Movable):
             mivA_ln[unsafe_offset=i] = c_log(
                 1.0 / (-A_cool[unsafe_offset=i] + 1e-200)
             )
-            y_ln[unsafe_offset=i] = 0.0
-        # the injection integral -int_x^top q dx (trapezoids), summed from the
-        # top, keeps the digits of int_x^y q dx where q falls steeply to high
-        # energies: a bin's particles come from above it. (AM3 summed from the
-        # bottom, restarting twice where q dx / sum < 1e-15. The bins below
-        # each restart kept almost no significant digits of their injection,
-        # and those above a third such point (no restart left) none: AM3 bug)
+        # The injection integral -int_x^top q dx (trapezoids) is summed from
+        # the top. So it keeps the digits of int_x^y q dx where q falls steeply
+        # to high energies: a bin's particles come from above it. (AM3 summed
+        # from the bottom and restarted twice where q dx / sum < 1e-15. The
+        # bins below each restart kept almost no significant digits of their
+        # injection. Those above a third such point (no restart left) kept
+        # none: AM3 bug.)
         q_intg[unsafe_offset=N - 1] = 0.0
         var k = N - 2
         while k >= 0:
@@ -1640,12 +1793,10 @@ struct SolverAlgorithm(Copyable, Movable):
         # move up the grid)
         var spl_q_intg_x = LinearSpline(x_ln, q_intg, N)
         var spl_n = LinearSpline(x_ln, n0, N)
-        self.compute_y(N, x_ln, y_ln, spl_lnmivA)
+        self.compute_y(N, x_ln, y_ln, mivA_ln)
         if self.verbose:
             print("computing n1")
         var dt = self.delta_t
-        for i in range(N):
-            n1[unsafe_offset=i] = 0.0
         for i in range(1, N - 1):
             var yi = y_ln[unsafe_offset=i]
             var xi = x_ln[unsafe_offset=i]
@@ -1663,7 +1814,6 @@ struct SolverAlgorithm(Copyable, Movable):
                 # A(y)/A(x) n(y) = (1/A(x)) n(y) / (1/A(y)) (AM3 had the
                 # opposite sign of this term)
                 n1[unsafe_offset=i] = ny / Ai / mivAy - intgd_injection / Ai
-        n1[unsafe_offset=N - 1] = 0.0
         if (
             spl_lnmivA.error
             or spl_q_intg.error

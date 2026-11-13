@@ -1,4 +1,4 @@
-"""Expansion physics module (port of the AM3 C++ class)."""
+"""Port of the AM3 C++ class Expansion."""
 
 from am3_mojo.model.runparams import RunParams
 from am3_mojo.utils.constants import *

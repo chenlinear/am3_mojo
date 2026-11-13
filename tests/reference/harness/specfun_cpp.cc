@@ -1,4 +1,4 @@
-// Harness: GSL gsl_sf_bessel_Knu and AM3 int_bessel_k53 (original math.cc)
+// Harness: GSL gsl_sf_bessel_Knu and AM3 int_bessel_k53 (patched math.cc)
 #include <cmath>
 #include <cstdio>
 #include <gsl/gsl_sf_bessel.h>

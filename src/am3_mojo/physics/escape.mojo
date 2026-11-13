@@ -1,4 +1,4 @@
-"""Escape physics module (port of the AM3 C++ class)."""
+"""Port of the AM3 C++ class Escape."""
 
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.runparams import RunParams

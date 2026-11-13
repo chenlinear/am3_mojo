@@ -1,4 +1,4 @@
-"""ExtraCooling physics module (port of the AM3 C++ class)."""
+"""Port of the AM3 C++ class ExtraCooling."""
 
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.utils.buffers import *
@@ -12,8 +12,8 @@ struct ExtraCooling(Copyable, Movable):
     var AExtraCoolNU: Vec
     var AExtraCoolPipm: Vec
     var AExtraCoolMu: Vec
-    var AExtraCoolK: Vec  # kaons (am3_mojo addition)
-    var AExtraCoolC: Vec  # charm hadrons (am3_mojo addition)
+    var AExtraCoolK: Vec  # am3_mojo addition
+    var AExtraCoolC: Vec  # am3_mojo addition
 
     def __init__(out self, dat: AM3Arrays):
         self.AExtraCoolE = Vec()

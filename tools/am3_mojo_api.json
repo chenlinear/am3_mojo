@@ -5,7 +5,7 @@
  ],
  [
   "set_process_pair_annihilation",
-  "set_process_pair_annihilation(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for electron-positron annihilation, e+ e- -> gamma gamma (am3_mojo addition; not the\nphoton-photon annihilation into pairs of `set_process_annihilation`), with Svensson's (1982) exact rates and\nphoton spectra. Needs `set_process_merge_positrons_into_electrons(False)` (the default). A step's sinks and\nphotons come from the densities at its start: keep the time step below about 0.05 of the shortest\nannihilation time (`get_t_electron_annihilation()`, `get_t_positron_annihilation()`).\nSet to False (no e+e- annihilation, as in AM3) / True (photon emission and e+/- loss, each with its own switch). Default: True.\n"
+  "set_process_pair_annihilation(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for electron-positron annihilation, e+ e- -> gamma gamma (am3_mojo addition), with Svensson's (1982)\nexact rates and photon spectra. This process is not the photon-photon annihilation into pairs of\n`set_process_annihilation`. Needs `set_process_merge_positrons_into_electrons(False)` (the default). A step's sinks\nand photons come from the densities at its start. Keep the time step below about 0.05 of the shortest\nannihilation time (`get_t_electron_annihilation()`, `get_t_positron_annihilation()`).\nSet it before `init_kernels`: switched on after an `init_kernels` without it, it stays inactive.\nSet to False (no e+e- annihilation, as in AM3) / True (photon emission and e+/- loss, each with its own switch). Default: True.\n"
  ],
  [
   "get_process_pair_annihilation_emission",
@@ -41,7 +41,7 @@
  ],
  [
   "set_process_triplet_pair_production",
-  "set_process_triplet_pair_production(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for triplet pair production, e+- gamma -> e+- e+ e- (am3_mojo addition), from the lowest-order\nQED matrix element (all eight diagrams), for ultra-relativistic leptons on photons below m_e c^2. The leptons\nlose the energy the pairs take (a continuous loss), the pairs are injected and evolved as the component\n`get_pairs_triplet`, and the photons are absorbed.\nSet to False (no triplet pair production, as in AM3) / True (pair emission and e+/- loss, each with its own switch). Default: True.\n"
+  "set_process_triplet_pair_production(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for triplet pair production, e+- gamma -> e+- e+ e- (am3_mojo addition). The process uses the\nlowest-order QED matrix element (all eight diagrams), for ultra-relativistic leptons on photons below m_e c^2.\nThe leptons lose the energy that the pairs take (a continuous loss). The pairs are injected and evolved as the\ncomponent `get_pairs_triplet`, and the photons are absorbed.\nSet it before `init_kernels`: switched on after an `init_kernels` without it, it stays inactive.\nSet to False (no triplet pair production, as in AM3) / True (pair emission and e+/- loss, each with its own switch). Default: True.\n"
  ],
  [
   "get_process_triplet_pair_production_emission",
@@ -57,7 +57,7 @@
  ],
  [
   "set_process_triplet_pair_production_cooling",
-  "set_process_triplet_pair_production_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for the energy loss of electrons and positrons by triplet pair production (am3_mojo addition):\nthe energy the produced pairs take, as a continuous loss.\nSet to False / True. Default: True.\nThe master switch `set_process_triplet_pair_production` must be True for the loss to be on.\n"
+  "set_process_triplet_pair_production_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for the energy loss of electrons and positrons by triplet pair production (am3_mojo addition):\nthe energy of the produced pairs, as a continuous loss.\nSet to False / True. Default: True.\nThe master switch `set_process_triplet_pair_production` must be True for the loss to be on.\n"
  ],
  [
   "get_pairs_triplet",
@@ -89,7 +89,7 @@
  ],
  [
   "set_process_neutron_decay",
-  "set_process_neutron_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for neutron decay, n -> p e- anti-nu_e (am3_mojo addition), at the rate 1/(gamma tau_n) with the\nmean life of PDG 2026. The protons, electrons and electron anti-neutrinos are injected with the spectra of the\ndecay: the allowed beta spectrum with the Coulomb correction, boosted exactly to the neutron energy. The\nelectrons and anti-neutrinos are also components (`get_electrons_neutron_decay`,\n`get_electron_anti_neutrinos_neutron_decay`). Needs the hadronic processes; set it before `init_kernels`.\nSet to False (neutrons do not decay, as in AM3) / True. Default: True.\n"
+  "set_process_neutron_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for neutron decay, n -> p e- anti-nu_e (am3_mojo addition), at the rate 1/(gamma tau_n) with the\nmean life of PDG 2026. The protons, electrons and electron anti-neutrinos are injected with the spectra of the\ndecay. These spectra come from the allowed beta spectrum with the Coulomb correction, boosted exactly to the\nneutron energy. The electrons and anti-neutrinos are also components (`get_electrons_neutron_decay`,\n`get_electron_anti_neutrinos_neutron_decay`). Needs the hadronic processes. Set it before `init_kernels`.\nSet to False (neutrons do not decay, as in AM3) / True. Default: True.\n"
  ],
  [
   "get_electrons_neutron_decay",
@@ -113,71 +113,71 @@
  ],
  [
   "get_t_neutron_decay",
-  "get_t_neutron_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of neutron decay [s] (am3_mojo addition)\n"
+  "get_t_neutron_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of neutron decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_neutrinos_pion_decay_photopion",
-  "get_neutrinos_pion_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos and anti-neutrinos from the decays of the pions made in\nphotopion interactions (am3_mojo addition; pi -> mu nu makes no electron neutrinos).\nWith `get_neutrinos_muon_decay_photopion`, `get_neutrinos_kaon_decay_photopion` and\n`get_neutrinos_charm_decay_photopion` they make up the photopion component\n"
+  "get_neutrinos_pion_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos and anti-neutrinos from the decays of the pions made in\nphotopion interactions (am3_mojo addition). The decay pi -> mu nu makes no electron neutrinos.\nTogether with `get_neutrinos_muon_decay_photopion`, `get_neutrinos_kaon_decay_photopion` and\n`get_neutrinos_charm_decay_photopion`, this array makes up the photopion component.\n"
  ],
  [
   "get_muon_neutrinos_pion_decay_photopion",
-  "get_muon_neutrinos_pion_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe pions made in photopion interactions\n(am3_mojo addition; see `get_neutrinos_pion_decay_photopion`)\n"
+  "get_muon_neutrinos_pion_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe pions made in photopion interactions (am3_mojo addition).\nSee `get_neutrinos_pion_decay_photopion`.\n"
  ],
  [
   "get_muon_anti_neutrinos_pion_decay_photopion",
-  "get_muon_anti_neutrinos_pion_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe pions made in photopion interactions\n(am3_mojo addition; see `get_neutrinos_pion_decay_photopion`)\n"
+  "get_muon_anti_neutrinos_pion_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe pions made in photopion interactions (am3_mojo addition).\nSee `get_neutrinos_pion_decay_photopion`.\n"
  ],
  [
   "get_neutrinos_pion_decay_proton_proton",
-  "get_neutrinos_pion_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos and anti-neutrinos from the decays of the pions made in\nproton-proton collisions (am3_mojo addition; pi -> mu nu makes no electron neutrinos).\nWith `get_neutrinos_muon_decay_proton_proton`, `get_neutrinos_kaon_decay_proton_proton` and\n`get_neutrinos_charm_decay_proton_proton` they make up the proton-proton component\n"
+  "get_neutrinos_pion_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos and anti-neutrinos from the decays of the pions made in\nproton-proton collisions (am3_mojo addition). The decay pi -> mu nu makes no electron neutrinos.\nTogether with `get_neutrinos_muon_decay_proton_proton`, `get_neutrinos_kaon_decay_proton_proton` and\n`get_neutrinos_charm_decay_proton_proton`, this array makes up the proton-proton component.\n"
  ],
  [
   "get_muon_neutrinos_pion_decay_proton_proton",
-  "get_muon_neutrinos_pion_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe pions made in proton-proton collisions\n(am3_mojo addition; see `get_neutrinos_pion_decay_proton_proton`)\n"
+  "get_muon_neutrinos_pion_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe pions made in proton-proton collisions (am3_mojo addition).\nSee `get_neutrinos_pion_decay_proton_proton`.\n"
  ],
  [
   "get_muon_anti_neutrinos_pion_decay_proton_proton",
-  "get_muon_anti_neutrinos_pion_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe pions made in proton-proton collisions\n(am3_mojo addition; see `get_neutrinos_pion_decay_proton_proton`)\n"
+  "get_muon_anti_neutrinos_pion_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe pions made in proton-proton collisions (am3_mojo addition).\nSee `get_neutrinos_pion_decay_proton_proton`.\n"
  ],
  [
   "get_neutrinos_muon_decay_photopion",
-  "get_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\nmuons of the pions made in photopion interactions (am3_mojo addition).\nWith `get_neutrinos_pion_decay_photopion`, `get_neutrinos_kaon_decay_photopion` and\n`get_neutrinos_charm_decay_photopion` they make up the photopion component\n"
+  "get_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from muon decays (am3_mojo addition).\nThe muons come from the pions made in photopion interactions.\nTogether with `get_neutrinos_pion_decay_photopion`, `get_neutrinos_kaon_decay_photopion` and\n`get_neutrinos_charm_decay_photopion`, this array makes up the photopion component.\n"
  ],
  [
   "get_electron_neutrinos_muon_decay_photopion",
-  "get_electron_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of\nthe muons of the pions made in photopion interactions\n(am3_mojo addition; see `get_neutrinos_muon_decay_photopion`)\n"
+  "get_electron_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of\nthe muons of the pions made in photopion interactions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_photopion`.\n"
  ],
  [
   "get_electron_anti_neutrinos_muon_decay_photopion",
-  "get_electron_anti_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of\nthe muons of the pions made in photopion interactions\n(am3_mojo addition; see `get_neutrinos_muon_decay_photopion`)\n"
+  "get_electron_anti_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of\nthe muons of the pions made in photopion interactions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_photopion`.\n"
  ],
  [
   "get_muon_neutrinos_muon_decay_photopion",
-  "get_muon_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe muons of the pions made in photopion interactions\n(am3_mojo addition; see `get_neutrinos_muon_decay_photopion`)\n"
+  "get_muon_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe muons of the pions made in photopion interactions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_photopion`.\n"
  ],
  [
   "get_muon_anti_neutrinos_muon_decay_photopion",
-  "get_muon_anti_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe muons of the pions made in photopion interactions\n(am3_mojo addition; see `get_neutrinos_muon_decay_photopion`)\n"
+  "get_muon_anti_neutrinos_muon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe muons of the pions made in photopion interactions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_photopion`.\n"
  ],
  [
   "get_neutrinos_muon_decay_proton_proton",
-  "get_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\nmuons of the pions made in proton-proton collisions (am3_mojo addition).\nWith `get_neutrinos_pion_decay_proton_proton`, `get_neutrinos_kaon_decay_proton_proton` and\n`get_neutrinos_charm_decay_proton_proton` they make up the proton-proton component\n"
+  "get_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from muon decays (am3_mojo addition).\nThe muons come from the pions made in proton-proton collisions.\nTogether with `get_neutrinos_pion_decay_proton_proton`, `get_neutrinos_kaon_decay_proton_proton` and\n`get_neutrinos_charm_decay_proton_proton`, this array makes up the proton-proton component.\n"
  ],
  [
   "get_electron_neutrinos_muon_decay_proton_proton",
-  "get_electron_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions\n(am3_mojo addition; see `get_neutrinos_muon_decay_proton_proton`)\n"
+  "get_electron_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_proton_proton`.\n"
  ],
  [
   "get_electron_anti_neutrinos_muon_decay_proton_proton",
-  "get_electron_anti_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions\n(am3_mojo addition; see `get_neutrinos_muon_decay_proton_proton`)\n"
+  "get_electron_anti_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_proton_proton`.\n"
  ],
  [
   "get_muon_neutrinos_muon_decay_proton_proton",
-  "get_muon_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions\n(am3_mojo addition; see `get_neutrinos_muon_decay_proton_proton`)\n"
+  "get_muon_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_proton_proton`.\n"
  ],
  [
   "get_muon_anti_neutrinos_muon_decay_proton_proton",
-  "get_muon_anti_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions\n(am3_mojo addition; see `get_neutrinos_muon_decay_proton_proton`)\n"
+  "get_muon_anti_neutrinos_muon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of\nthe muons of the pions made in proton-proton collisions (am3_mojo addition).\nSee `get_neutrinos_muon_decay_proton_proton`.\n"
  ],
  [
   "get_process_kaons",
@@ -185,7 +185,7 @@
  ],
  [
   "set_process_kaons",
-  "set_process_kaons(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for kaons (am3_mojo addition): K+-, K0_S and K0_L from photo-hadronic interactions of\nprotons and neutrons and from pp collisions, their escape, cooling (synchrotron and inverse Compton for K+-)\nand decay, and the decay products (pions, muons, e+-, neutrinos). Needs the photo-pion or the pp process\nwith its emission. With kaons on, the pion yields of the photo-hadronic multi-pion types are reduced by the\nkaons' energy, and in pp collisions the protons also lose the kaons' energy. The kaons of charm decays come with the\ncharm hadrons (set_process_charm), whatever this switch.\nSet to False (no kaons, as in AM3) / True. Default: True.\n"
+  "set_process_kaons(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for kaons (am3_mojo addition): K+-, K0_S and K0_L from photo-hadronic interactions of\nprotons and neutrons and from pp collisions. The switch also controls the escape, the cooling (synchrotron and\ninverse Compton for K+-) and the decay of these kaons. It also controls their decay products (pions, muons, e+-,\nneutrinos). Needs the photo-pion or the pp process with its emission. With kaons on, the pion yields of the\nphoto-hadronic multi-pion types are reduced by the kaons' energy. In pp collisions, the protons also lose the\nkaons' energy. The kaons of charm decays come with the charm hadrons (set_process_charm), whatever the value of\nthis switch.\nSet it before `init_kernels`: switched on after an `init_kernels` without it, it stays inactive.\nSet to False (no kaons, as in AM3) / True. Default: True.\n"
  ],
  [
   "get_process_kaon_decay",
@@ -193,7 +193,7 @@
  ],
  [
   "set_process_kaon_decay",
-  "set_process_kaon_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for kaon decay (am3_mojo addition): every non-radiative mode of K+-, K0_S and K0_L with a\nbranching ratio above 0.1 % (PDG 2026) and the smaller K0_S semileptonic and K0_L -> pi0 pi0 modes.\nSet to False (kaons do not decay) / True. Default: True.\n"
+  "set_process_kaon_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for kaon decay (am3_mojo addition): every non-radiative mode of K+-, K0_S and K0_L with a\nbranching ratio above 0.1 % (PDG 2026). Kaon decay also includes the smaller K0_S semileptonic and\nK0_L -> pi0 pi0 modes.\nSet to False (kaons do not decay) / True. Default: True.\n"
  ],
  [
   "get_process_kaon_syn",
@@ -201,7 +201,7 @@
  ],
  [
   "set_process_kaon_syn",
-  "set_process_kaon_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the synchrotron radiation of charged kaons (am3_mojo addition).\nSet to False (turn off kaon synchrotron emission and cooling) / True (turn both on; each can be switched off separately). Default: True.\n"
+  "set_process_kaon_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the synchrotron radiation of charged kaons (am3_mojo addition).\nSet to False (turn off kaon synchrotron emission and cooling) / True (turn both on, but each can be switched off separately). Default: True.\n"
  ],
  [
   "get_process_kaon_syn_emission",
@@ -225,7 +225,7 @@
  ],
  [
   "set_process_kaon_compton",
-  "set_process_kaon_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the inverse Compton scattering of charged kaons (am3_mojo addition), treated as for charged pions.\nSet to False (turn off kaon inverse Compton emission and cooling) / True (turn both on; each can be switched off separately). Default: True.\n"
+  "set_process_kaon_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the inverse Compton scattering of charged kaons (am3_mojo addition), treated as for charged pions.\nSet to False (turn off kaon inverse Compton emission and cooling) / True (turn both on, but each can be switched off separately). Default: True.\n"
  ],
  [
   "get_process_kaon_compton_emission",
@@ -265,11 +265,11 @@
  ],
  [
   "get_t_kaon_0S_decay",
-  "get_t_kaon_0S_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_S decay [s] (am3_mojo addition)\n"
+  "get_t_kaon_0S_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_S decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_t_kaon_0L_decay",
-  "get_t_kaon_0L_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_L decay [s] (am3_mojo addition)\n"
+  "get_t_kaon_0L_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_L decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_photons_kaons_syn",
@@ -281,43 +281,43 @@
  ],
  [
   "get_neutrinos_kaon_decay_photopion",
-  "get_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\nkaons made in photopion interactions and of the pions and muons they decay into (am3_mojo addition).\nWith `get_neutrinos_pion_decay_photopion`, `get_neutrinos_muon_decay_photopion` and\n`get_neutrinos_charm_decay_photopion` they make up the photopion component\n"
+  "get_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\nkaons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nTogether with `get_neutrinos_pion_decay_photopion`, `get_neutrinos_muon_decay_photopion` and\n`get_neutrinos_charm_decay_photopion`, this array makes up the photopion component.\n"
  ],
  [
   "get_electron_neutrinos_kaon_decay_photopion",
-  "get_electron_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the kaons made in photopion interactions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_photopion`)\n"
+  "get_electron_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the kaons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_photopion`.\n"
  ],
  [
   "get_electron_anti_neutrinos_kaon_decay_photopion",
-  "get_electron_anti_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the kaons made in photopion interactions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_photopion`)\n"
+  "get_electron_anti_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the kaons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_photopion`.\n"
  ],
  [
   "get_muon_neutrinos_kaon_decay_photopion",
-  "get_muon_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the kaons made in photopion interactions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_photopion`)\n"
+  "get_muon_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the kaons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_photopion`.\n"
  ],
  [
   "get_muon_anti_neutrinos_kaon_decay_photopion",
-  "get_muon_anti_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the kaons made in photopion interactions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_photopion`)\n"
+  "get_muon_anti_neutrinos_kaon_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the kaons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_photopion`.\n"
  ],
  [
   "get_neutrinos_kaon_decay_proton_proton",
-  "get_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\nkaons made in proton-proton collisions and of the pions and muons they decay into (am3_mojo addition).\nWith `get_neutrinos_pion_decay_proton_proton`, `get_neutrinos_muon_decay_proton_proton` and\n`get_neutrinos_charm_decay_proton_proton` they make up the proton-proton component\n"
+  "get_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of the\nkaons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nTogether with `get_neutrinos_pion_decay_proton_proton`, `get_neutrinos_muon_decay_proton_proton` and\n`get_neutrinos_charm_decay_proton_proton`, this array makes up the proton-proton component.\n"
  ],
  [
   "get_electron_neutrinos_kaon_decay_proton_proton",
-  "get_electron_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the kaons made in proton-proton collisions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_proton_proton`)\n"
+  "get_electron_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the kaons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_proton_proton`.\n"
  ],
  [
   "get_electron_anti_neutrinos_kaon_decay_proton_proton",
-  "get_electron_anti_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the kaons made in proton-proton collisions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_proton_proton`)\n"
+  "get_electron_anti_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the kaons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_proton_proton`.\n"
  ],
  [
   "get_muon_neutrinos_kaon_decay_proton_proton",
-  "get_muon_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the kaons made in proton-proton collisions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_proton_proton`)\n"
+  "get_muon_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the kaons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_proton_proton`.\n"
  ],
  [
   "get_muon_anti_neutrinos_kaon_decay_proton_proton",
-  "get_muon_anti_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the kaons made in proton-proton collisions\nand of the pions and muons they decay into (am3_mojo addition; see `get_neutrinos_kaon_decay_proton_proton`)\n"
+  "get_muon_anti_neutrinos_kaon_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the kaons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the pions and muons that these kaons decay into.\nSee `get_neutrinos_kaon_decay_proton_proton`.\n"
  ],
  [
   "get_t_kaon_syn",
@@ -329,15 +329,15 @@
  ],
  [
   "get_t_kaon_decay",
-  "get_t_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon decay [s] (am3_mojo addition)\n"
+  "get_t_kaon_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_t_kaon_escape",
-  "get_t_kaon_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon escape [s] (am3_mojo addition; as for charged pions, see `set_escape_fraction_pions`)\n"
+  "get_t_kaon_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of charged kaon escape [s] (am3_mojo addition)\nCharged kaons escape as charged pions do (see `set_escape_fraction_pions`).\n"
  ],
  [
   "get_t_kaon_neutral_escape",
-  "get_t_kaon_neutral_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_S and K0_L escape [s] (am3_mojo addition; as for neutrons, see `set_escape_fraction_neutrons`)\n"
+  "get_t_kaon_neutral_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of K0_S and K0_L escape [s] (am3_mojo addition)\nThese kaons escape as neutrons do (see `set_escape_fraction_neutrons`).\n"
  ],
  [
   "set_t_kaon_extra_cooling",
@@ -353,7 +353,7 @@
  ],
  [
   "set_process_charm",
-  "set_process_charm(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for charm hadrons (am3_mojo addition): D+-, D0, anti-D0, Ds+-, Lambda_c+ and\nanti-Lambda_c- from photo-hadronic interactions of protons and neutrons and from pp collisions, their\nescape, cooling (synchrotron and inverse Compton for the charged ones) and decay, and the decay products\n(kaons, pions, muons, e+-, nucleons, photons, neutrinos and tau neutrinos). Needs the photo-pion or the pp\nprocess with its emission. With charm on, the pion yields of the photo-hadronic multi-pion types are\nreduced by the charm hadrons' energy, and in pp collisions the protons also lose it.\nSet to False (no charm hadrons, as in AM3) / True. Default: True.\n"
+  "set_process_charm(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for charm hadrons (am3_mojo addition): D+-, D0, anti-D0, Ds+-, Lambda_c+ and\nanti-Lambda_c- from photo-hadronic interactions of protons and neutrons and from pp collisions. The switch\nalso controls the escape, the cooling (synchrotron and inverse Compton for the charged ones) and the decay of\nthese hadrons. It also controls their decay products (kaons, pions, muons, e+-, nucleons, photons, neutrinos and tau\nneutrinos). Needs the photo-pion or the pp process with its emission. With charm on, the pion yields of the\nphoto-hadronic multi-pion types are reduced by the charm hadrons' energy. In pp collisions, the protons also\nlose this energy.\nSet it before `init_kernels`: switched on after an `init_kernels` without it, it stays inactive.\nSet to False (no charm hadrons, as in AM3) / True. Default: True.\n"
  ],
  [
   "get_process_charm_decay",
@@ -361,7 +361,7 @@
  ],
  [
   "set_process_charm_decay",
-  "set_process_charm_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for charm decay (am3_mojo addition): every mode of D+-, D0, anti-D0, Ds+-, Lambda_c+ and\nanti-Lambda_c- with a branching ratio above 0.5 % and every exclusive semileptonic mode above 0.1 %\n(PDG 2026); their short-lived products (tau, eta, eta', omega, phi, rho, K*, f0, a1, hyperons) decay at\nonce.\nSet to False (charm hadrons do not decay) / True. Default: True.\n"
+  "set_process_charm_decay(self: am3.AM3, arg0: bool) -> None\n\nSwitch for charm decay (am3_mojo addition): every mode of D+-, D0, anti-D0, Ds+-, Lambda_c+ and\nanti-Lambda_c- with a branching ratio above 0.5 % (PDG 2026). Charm decay also includes every exclusive\nsemileptonic mode above 0.1 %. The short-lived products of the charm decays (tau, eta, eta', omega, phi, rho,\nK*, f0, a1, hyperons) decay at once.\nSet to False (charm hadrons do not decay) / True. Default: True.\n"
  ],
  [
   "get_process_charm_syn",
@@ -369,7 +369,7 @@
  ],
  [
   "set_process_charm_syn",
-  "set_process_charm_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the synchrotron radiation of the charged charm hadrons (am3_mojo addition).\nSet to False (turn off charm-hadron synchrotron emission and cooling) / True (turn both on; each can be switched off separately). Default: True.\n"
+  "set_process_charm_syn(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the synchrotron radiation of the charged charm hadrons (am3_mojo addition).\nSet to False (turn off charm-hadron synchrotron emission and cooling) / True (turn both on, but each can be switched off separately). Default: True.\n"
  ],
  [
   "get_process_charm_syn_emission",
@@ -393,7 +393,7 @@
  ],
  [
   "set_process_charm_compton",
-  "set_process_charm_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the inverse-Compton radiation of the charged charm hadrons (am3_mojo addition).\nSet to False (turn off charm-hadron inverse-Compton emission and cooling) / True (turn both on; each can be switched off separately). Default: True.\n"
+  "set_process_charm_compton(self: am3.AM3, arg0: bool) -> None\n\nMaster switch for the inverse-Compton radiation of the charged charm hadrons (am3_mojo addition).\nSet to False (turn off charm-hadron inverse-Compton emission and cooling) / True (turn both on, but each can be switched off separately). Default: True.\n"
  ],
  [
   "get_process_charm_compton_emission",
@@ -401,7 +401,7 @@
  ],
  [
   "set_process_charm_compton_emission",
-  "set_process_charm_compton_emission(self: am3.AM3, arg0: bool) -> None\n\nSwitch for charm-hadron inverse-Compton emission (step approximation, as for pions; am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_charm_compton` must be True for emission to be on.\n"
+  "set_process_charm_compton_emission(self: am3.AM3, arg0: bool) -> None\n\nSwitch for charm-hadron inverse-Compton emission (am3_mojo addition).\nThe emission uses the step approximation, as for pions.\nSet to False / True. Default: True.\nThe master switch `set_process_charm_compton` must be True for emission to be on.\n"
  ],
  [
   "get_process_charm_compton_cooling",
@@ -409,7 +409,7 @@
  ],
  [
   "set_process_charm_compton_cooling",
-  "set_process_charm_compton_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for charm-hadron inverse-Compton cooling (continuous, as for pions; am3_mojo addition).\nSet to False / True. Default: True.\nThe master switch `set_process_charm_compton` must be True for cooling to be on.\n"
+  "set_process_charm_compton_cooling(self: am3.AM3, arg0: bool) -> None\n\nSwitch for charm-hadron inverse-Compton cooling (am3_mojo addition).\nThe cooling is continuous, as for pions.\nSet to False / True. Default: True.\nThe master switch `set_process_charm_compton` must be True for cooling to be on.\n"
  ],
  [
   "get_charm_hadrons",
@@ -449,23 +449,23 @@
  ],
  [
   "get_t_D_plus_decay",
-  "get_t_D_plus_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of D+ and D- decay [s] (am3_mojo addition)\n"
+  "get_t_D_plus_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of D+ and D- decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_t_D_zero_decay",
-  "get_t_D_zero_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of D0 and anti-D0 decay [s] (am3_mojo addition)\n"
+  "get_t_D_zero_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of D0 and anti-D0 decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_t_Ds_decay",
-  "get_t_Ds_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Ds+ and Ds- decay [s] (am3_mojo addition)\n"
+  "get_t_Ds_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Ds+ and Ds- decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_t_Lambda_c_decay",
-  "get_t_Lambda_c_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Lambda_c+ and anti-Lambda_c- decay [s] (am3_mojo addition)\n"
+  "get_t_Lambda_c_decay(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of Lambda_c+ and anti-Lambda_c- decay [s] (am3_mojo addition)\nInfinite (1e200 s) while the decay does not act: switched off, or switched on after an init_kernels() that built no decay tables.\n"
  ],
  [
   "get_t_charm_syn",
-  "get_t_charm_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of the synchrotron cooling of D+ and D- [s] (am3_mojo addition; for the other charged\ncharm hadrons it scales as the fourth power of the mass at a given energy)\n"
+  "get_t_charm_syn(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of the synchrotron cooling of D+ and D- [s] (am3_mojo addition)\nFor the other charged charm hadrons, the timescale scales as the fourth power of the mass at a given energy.\n"
  ],
  [
   "get_t_charm_compton",
@@ -473,11 +473,11 @@
  ],
  [
   "get_t_charm_escape",
-  "get_t_charm_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of the escape of the charged charm hadrons [s] (am3_mojo addition; as for charged pions, see `set_escape_fraction_pions`)\n"
+  "get_t_charm_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of the escape of the charged charm hadrons [s] (am3_mojo addition)\nThe charged charm hadrons escape as charged pions do (see `set_escape_fraction_pions`).\n"
  ],
  [
   "get_t_charm_neutral_escape",
-  "get_t_charm_neutral_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of D0 and anti-D0 escape [s] (am3_mojo addition; as for neutrons, see `set_escape_fraction_neutrons`)\n"
+  "get_t_charm_neutral_escape(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet timescale array of D0 and anti-D0 escape [s] (am3_mojo addition)\nThese mesons escape as neutrons do (see `set_escape_fraction_neutrons`).\n"
  ],
  [
   "set_t_charm_extra_cooling",
@@ -497,58 +497,66 @@
  ],
  [
   "get_neutrinos_charm_decay_photopion",
-  "get_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors except tau from the decays of\nthe charm hadrons made in photopion interactions and of the kaons, pions and muons they decay into (am3_mojo\naddition). With `get_neutrinos_pion_decay_photopion`, `get_neutrinos_muon_decay_photopion` and\n`get_neutrinos_kaon_decay_photopion` they make up the photopion component\n"
+  "get_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of\nthe charm hadrons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nTogether with `get_neutrinos_pion_decay_photopion`, `get_neutrinos_muon_decay_photopion` and\n`get_neutrinos_kaon_decay_photopion`, this array makes up the photopion component.\n"
  ],
  [
   "get_electron_neutrinos_charm_decay_photopion",
-  "get_electron_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the charm hadrons made in photopion interactions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_photopion`)\n"
+  "get_electron_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the charm hadrons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_photopion`.\n"
  ],
  [
   "get_electron_anti_neutrinos_charm_decay_photopion",
-  "get_electron_anti_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the charm hadrons made in photopion interactions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_photopion`)\n"
+  "get_electron_anti_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the charm hadrons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_photopion`.\n"
  ],
  [
   "get_muon_neutrinos_charm_decay_photopion",
-  "get_muon_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the charm hadrons made in photopion interactions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_photopion`)\n"
+  "get_muon_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the charm hadrons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_photopion`.\n"
  ],
  [
   "get_muon_anti_neutrinos_charm_decay_photopion",
-  "get_muon_anti_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the charm hadrons made in photopion interactions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_photopion`)\n"
+  "get_muon_anti_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the charm hadrons made in photopion interactions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_photopion`.\n"
  ],
  [
   "get_neutrinos_charm_decay_proton_proton",
-  "get_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors except tau from the decays of\nthe charm hadrons made in proton-proton collisions and of the kaons, pions and muons they decay into (am3_mojo\naddition). With `get_neutrinos_pion_decay_proton_proton`, `get_neutrinos_muon_decay_proton_proton` and\n`get_neutrinos_kaon_decay_proton_proton` they make up the proton-proton component\n"
+  "get_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of neutrinos and anti-neutrinos of all flavors from the decays of\nthe charm hadrons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nTogether with `get_neutrinos_pion_decay_proton_proton`, `get_neutrinos_muon_decay_proton_proton` and\n`get_neutrinos_kaon_decay_proton_proton`, this array makes up the proton-proton component.\n"
  ],
  [
   "get_electron_neutrinos_charm_decay_proton_proton",
-  "get_electron_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the charm hadrons made in proton-proton collisions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_proton_proton`)\n"
+  "get_electron_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron neutrinos from the decays of the charm hadrons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_proton_proton`.\n"
  ],
  [
   "get_electron_anti_neutrinos_charm_decay_proton_proton",
-  "get_electron_anti_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the charm hadrons made in proton-proton collisions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_proton_proton`)\n"
+  "get_electron_anti_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of electron anti-neutrinos from the decays of the charm hadrons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_proton_proton`.\n"
  ],
  [
   "get_muon_neutrinos_charm_decay_proton_proton",
-  "get_muon_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the charm hadrons made in proton-proton collisions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_proton_proton`)\n"
+  "get_muon_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon neutrinos from the decays of the charm hadrons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_proton_proton`.\n"
  ],
  [
   "get_muon_anti_neutrinos_charm_decay_proton_proton",
-  "get_muon_anti_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the charm hadrons made in proton-proton collisions\nand of the kaons, pions and muons they decay into (am3_mojo addition; see `get_neutrinos_charm_decay_proton_proton`)\n"
+  "get_muon_anti_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of muon anti-neutrinos from the decays of the charm hadrons made in proton-proton collisions (am3_mojo addition).\nThe array also includes the decays of the kaons, pions and muons that these charm hadrons decay into.\nSee `get_neutrinos_charm_decay_proton_proton`.\n"
+ ],
+ [
+  "get_tau_neutrinos",
+  "get_tau_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau neutrinos: the sum of `get_tau_neutrinos_charm_decay_photopion` and\n`get_tau_neutrinos_charm_decay_proton_proton`, their only sources (am3_mojo addition). AM3 has no tau neutrinos, but `get_neutrinos`,\n`get_neutrinos_photopion`, `get_neutrinos_proton_proton` and the two `get_neutrinos_charm_decay_` getters include them.\nOnly tau neutrinos: it does not include the tau anti-neutrinos (`get_tau_anti_neutrinos`).\n"
+ ],
+ [
+  "get_tau_anti_neutrinos",
+  "get_tau_anti_neutrinos(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau anti-neutrinos: the sum of `get_tau_anti_neutrinos_charm_decay_photopion` and\n`get_tau_anti_neutrinos_charm_decay_proton_proton`, their only sources (am3_mojo addition).\nSee `get_tau_neutrinos`.\n"
  ],
  [
   "get_tau_neutrinos_charm_decay_photopion",
-  "get_tau_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau neutrinos from the decays of the charm hadrons made in photopion interactions\n(D(s) -> tau nu and the tau decays; am3_mojo addition). AM3 has no tau neutrinos: they are not part of\nthe neutrino totals or components\n"
+  "get_tau_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau neutrinos from the decays of the charm hadrons made in photopion interactions (am3_mojo addition).\nThe tau neutrinos come from D(s) -> tau nu and from the tau decays. AM3 has no tau neutrinos, but `get_neutrinos`,\n`get_neutrinos_photopion` and `get_neutrinos_charm_decay_photopion` include them.\n"
  ],
  [
   "get_tau_anti_neutrinos_charm_decay_photopion",
-  "get_tau_anti_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau anti-neutrinos from the decays of the charm hadrons made in photopion interactions\n(am3_mojo addition; see `get_tau_neutrinos_charm_decay_photopion`)\n"
+  "get_tau_anti_neutrinos_charm_decay_photopion(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau anti-neutrinos from the decays of the charm hadrons made in photopion interactions (am3_mojo addition).\nSee `get_tau_neutrinos_charm_decay_photopion`.\n"
  ],
  [
   "get_tau_neutrinos_charm_decay_proton_proton",
-  "get_tau_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau neutrinos from the decays of the charm hadrons made in proton-proton collisions\n(D(s) -> tau nu and the tau decays; am3_mojo addition). AM3 has no tau neutrinos: they are not part of\nthe neutrino totals or components\n"
+  "get_tau_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau neutrinos from the decays of the charm hadrons made in proton-proton collisions (am3_mojo addition).\nThe tau neutrinos come from D(s) -> tau nu and from the tau decays. AM3 has no tau neutrinos, but `get_neutrinos`,\n`get_neutrinos_proton_proton` and `get_neutrinos_charm_decay_proton_proton` include them.\n"
  ],
  [
   "get_tau_anti_neutrinos_charm_decay_proton_proton",
-  "get_tau_anti_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau anti-neutrinos from the decays of the charm hadrons made in proton-proton collisions\n(am3_mojo addition; see `get_tau_neutrinos_charm_decay_proton_proton`)\n"
+  "get_tau_anti_neutrinos_charm_decay_proton_proton(self: am3.AM3) -> numpy.typing.NDArray[numpy.float64]\n\nGet array with EdN_dEdV [1/cm³] of tau anti-neutrinos from the decays of the charm hadrons made in proton-proton collisions (am3_mojo addition).\nSee `get_tau_neutrinos_charm_decay_proton_proton`.\n"
  ]
 ]

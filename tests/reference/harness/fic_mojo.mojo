@@ -6,8 +6,25 @@ from am3_mojo.utils.libm import c_exp
 
 def main() raises:
     var s = SolverAlgorithm(
-        "proton", 10, 0, 0.1, 1.0, 1.0, 1.0, 1e100, MASS_P / MASS_E, 1.0,
-        False, False, True, False, 1.0, 1.0, 1.0, False, False,
+        "proton",
+        10,
+        0,
+        0.1,
+        1.0,
+        1.0,
+        1.0,
+        1e100,
+        MASS_P / MASS_E,
+        1.0,
+        False,
+        False,
+        True,
+        False,
+        1.0,
+        1.0,
+        1.0,
+        False,
+        False,
     )
     var out = String()
     for i in range(200):

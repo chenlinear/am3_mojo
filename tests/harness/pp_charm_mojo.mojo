@@ -1,16 +1,16 @@
 """Prints am3_mojo's charm production in pp collisions
 (tests/unit/test_added_processes.py), by mode:
-  kernel           per proton energy E_j of the default hadron grid a line with
-                   E_j [GeV], the cross section times the fraction of E_j in
-                   all charm hadrons (sig_kappa_C) [cm^2], and per pair of a
-                   hadron and its antiparticle (D+-; D0 and anti-D0; Ds+-;
-                   Lambda_c+ and anti-Lambda_c-) the
+  kernel           per proton energy E_j of the default hadron grid, a line
+                   with E_j [GeV] and the cross section times the fraction of
+                   E_j in all charm hadrons (sig_kappa_C) [cm^2]. Then, per
+                   pair of a hadron and its antiparticle (D+-, D0 and anti-D0,
+                   Ds+-, Lambda_c+ and anti-Lambda_c-), the line holds the
                    cross section sigma_h [cm^2] of one of them and its mean
-                   fraction <x> of E_j: from the kernel from 1 TeV on, from the
-                   delta-functional term below;
-  sigma E...       pp_charm_sigma_cc [cm^2] at each proton energy E [GeV];
+                   fraction <x> of E_j. These values come from the kernel from
+                   1 TeV on, and from the delta-functional term below.
+  sigma E...       pp_charm_sigma_cc [cm^2] at each proton energy E [GeV].
   inel E...        AM3's inelastic cross section sigma_inel [cm^2] (Kafexhiu et
-                   al. 2014, eq. 1, with the pi+- threshold) at each E [GeV];
+                   al. 2014, eq. 1, with the pi+- threshold) at each E [GeV].
   shape d E        the closed form's g at x_m = exp(-m d), m = 0, 1, ...
                    (pp_charm_shape), one value per line, at E [GeV].
 """

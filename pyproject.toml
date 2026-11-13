@@ -1,7 +1,7 @@
 [build-system]
-# `pip install .` / `uv build`: tools/mojo_build_backend.py compiles the module
-# with the Mojo compiler from PyPI and builds a wheel (needs a C compiler for
-# linking; installing the resulting wheel does not).
+# `pip install .` / `uv build`: tools/mojo_build_backend.py compiles the
+# module with the Mojo compiler from PyPI. The build needs a C compiler for
+# linking, but installing the resulting wheel does not.
 requires = ["mojo-compiler==1.2.0"]
 build-backend = "mojo_build_backend"
 backend-path = ["tools"]
@@ -21,6 +21,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mojo==1.2.0",   # full Mojo toolchain for development (compiler, formatter, debugger)
+    "ruff==0.17.3",   # the Python formatter (`make format`; settings in [tool.ruff])
     "pytest>=8",
     "matplotlib>=3.8",
     # building the original C++ AM3 as the reference (tests/reference)
@@ -37,8 +38,8 @@ dev = [
 ]
 
 [tool.uv]
-package = false   # `uv sync` sets up the development environment; the module is built
-                  # with `make build` (or installed with `pip install .`)
+package = false   # `uv sync` sets up the development environment. `make build`
+                  # builds the module (or `pip install .` installs it).
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -46,3 +47,11 @@ pythonpath = ["tests"]   # `from support import ...`
 # pytest's defaults, and tests/reference/work (the downloaded and built C++ reference)
 norecursedirs = [".*", "*.egg", "_darcs", "build", "CVS", "dist", "node_modules", "venv", "{arch}", "work"]
 markers = ["reference: compares am3_mojo with the original C++ AM3 (needs `make reference`)"]
+
+[tool.ruff]
+# `ruff format` (make format) at the 80 characters of `mojo format`, for the
+# Python version of requires-python
+line-length = 80
+include = ["*.py"]   # not the Python blocks of the Markdown pages
+# the downloaded C++ AM3 and its dependencies (make reference)
+extend-exclude = ["tests/reference/work"]

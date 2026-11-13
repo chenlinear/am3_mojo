@@ -1,6 +1,6 @@
 # Triplet pair production tables
 
-These scripts compute the tables of triplet pair production, $\mathrm{e}^\pm\gamma$ $\to \mathrm{e}^\pm\mathrm{e}^+\mathrm{e}^-$, in `src/am3_mojo/physics/triplet_tables.mojo`, which `src/am3_mojo/physics/triplet.mojo` uses. The [triplet pair production page](../../tests/literature_checks/triplet/README.md) of the literature checks describes the method and derives the equations that use the tables. Each script's docstring says how it works:
+These scripts compute the tables of triplet pair production, $\mathrm{e}^\pm\gamma$ $\to \mathrm{e}^\pm\mathrm{e}^+\mathrm{e}^-$, in `src/am3_mojo/physics/triplet_tables.mojo`, which `src/am3_mojo/physics/triplet.mojo` uses. The [triplet pair production page](../../tests/literature_checks/triplet/README.md) of the literature checks describes the method and derives the equations that use the tables. The four scripts:
 - `qed_triplet.py`: the lowest-order QED matrix element, from all eight Feynman diagrams;
 - `kinematics.py`: the three-body phase space in the rest frame of the target electron;
 - `produce.py`: the cross section and the distributions of the products' energy fractions at 60 photon energies, integrated with VEGAS;

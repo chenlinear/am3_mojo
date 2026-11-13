@@ -1,8 +1,8 @@
 """Prints am3_mojo's kaon production channels (the two-body steps gamma N -> K Y
-and the multi-pion types' kaons), one line each: emin emax,
+and the multi-pion types' kaons). Each channel takes one line: emin emax,
 chi_p[K+, K-, K0_S, K0_L], chi_n[...], mp[...], mn[...], sigma, mtype (-1: a
-two-body step). Then AM3's 14 multi-pion entries, one line each: "pi", sigma,
-chi (tests/unit/test_added_processes.py)."""
+two-body step). Then it prints AM3's 14 multi-pion entries, one line each:
+"pi", sigma, chi (tests/unit/test_added_processes.py)."""
 
 from am3_mojo.physics.photohadron import kaon_production_channels
 from am3_mojo.physics.photopion_tables import IT3sig, IT3kai

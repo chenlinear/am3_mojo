@@ -1,7 +1,7 @@
 """Prints what am3_mojo's triplet pair production (physics/triplet.mojo)
 computes, for the unit tests and the triplet checks (tests/support/harness.py,
 Triplet). The first argument selects the output:
-  tables        TPP_LY0, TPP_DLY, the number of table nodes; per node: k,
+  tables        TPP_LY0, TPP_DLY, the number of table nodes, then per node: k,
                 sigma(k) / (alpha r_e^2), the number of ln y bins nb, then the
                 tabulated dN/dln y of the positron, the lower-energy electron
                 and the recoil (y = xi k), nb values each
@@ -9,9 +9,9 @@ Triplet). The first argument selects the output:
                 between the nodes, high-energy expansion)
   dist k ...    per k: nb, then distributions(k), the three products' dN/dln y
                 as the code takes them (interpolated between the nodes,
-                extrapolated above the last, normalised to one per interaction)
-  rows          the default grid's kernels: m0, dlnE, the number of rows; per
-                row q (P = gamma eps = exp((m0 + q) dlnE)): P, the rate
+                extrapolated above the last, normalized to one per interaction)
+  rows          the default grid's kernels: m0, dlnE, the number of rows, then
+                per row q (P = gamma eps = exp((m0 + q) dlnE)): P, the rate
                 R [sigma_T], the energy-loss rate Lxi and nd, then the
                 positron's and the lower-energy electron's deposits at the
                 offsets 0 .. nd - 1 below the target bin

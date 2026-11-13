@@ -1,4 +1,4 @@
-"""Port of RunParams: parameters describing the radiation zone."""
+"""Port of RunParams."""
 
 from am3_mojo.utils.constants import *
 from am3_mojo.utils.libm import *

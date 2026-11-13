@@ -1,17 +1,18 @@
 """Prints am3_mojo's kaon production in pp collisions
 (tests/unit/test_added_processes.py), by mode, for the K+, the K- and the
-neutral kaons (one column each):
+neutral kaons, in this order:
   fit E...       pp_kaon_mult_fit, the multiplicity fit below E_t, at each
-                 proton energy E [GeV];
+                 proton energy E [GeV] (one line per E, one column per kaon).
   ct             c_t, the fit over Koers et al.'s kaons per collision at
-                 E_t = KPW_E_MIN (pp_kaon_moments);
-  fade c E...    pp_kaon_fade(c, E) at each E [GeV] (one value per line);
-  kernel         per proton energy E_j of the default hadron grid a line with
-                 E_j [GeV], then per kaon the kaons per collision on the grid
-                 from the kernels (from E_t on the sum of dlnE K[i, j] over i,
-                 below it the delta-functional term; divided by c sigma_inel),
-                 and from E_t on the same sum of Koers et al.'s F_K without
-                 the factor (0 below E_t).
+                 E_t = KPW_E_MIN (pp_kaon_moments), one line per kaon.
+  fade c E...    pp_kaon_fade(c, E) at each E [GeV] (one value per line).
+  kernel         per proton energy E_j of the default hadron grid, a line
+                 with E_j [GeV], then two values per kaon. The first value is
+                 the kaons per collision on the grid from the kernels. From
+                 E_t on, this is the sum of dlnE K[i, j] over i, and below
+                 E_t, the delta-functional term, both divided by c sigma_inel.
+                 The second value is, from E_t on, the same sum of
+                 Koers et al.'s F_K without the factor (0 below E_t).
 """
 
 from std.sys import argv

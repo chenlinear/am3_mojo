@@ -1,5 +1,6 @@
-"""Injection physics module (port of the AM3 C++ class)."""
+"""Port of the AM3 C++ class Injection."""
 
+from std.utils.numerics import isinf
 from am3_mojo.model.arrays import AM3Arrays
 from am3_mojo.model.runparams import RunParams
 from am3_mojo.utils.buffers import *
@@ -67,69 +68,92 @@ struct Injection(Copyable, Movable):
     def Calc_IN_Electron_powerlaw(mut self, rp: RunParams, dat: AM3Arrays):
         if self.verbose:
             print("computing electron injection spectrum")
-        var volume = rp.powerlaw_injection_electrons_volume
-        var imin = dat.eV_to_lep_grid_index(
-            rp.powerlaw_injection_electrons_emin
+        _broken_powerlaw(
+            self.inj_electron,
+            dat.egrid_lep,
+            dat.nbins_lep,
+            dat.dlnE,
+            dat.eV_to_lep_grid_index(rp.powerlaw_injection_electrons_emin),
+            dat.eV_to_lep_grid_index(rp.powerlaw_injection_electrons_ebreak),
+            rp.powerlaw_injection_electrons_ebreak / MEC2_EV,
+            rp.powerlaw_injection_electrons_emax / MEC2_EV,
+            rp.powerlaw_injection_electrons_index,
+            rp.powerlaw_injection_electrons_index_above_break,
+            rp.powerlaw_injection_electrons_cutoff_steepness,
+            rp.powerlaw_injection_electrons_luminosity
+            / rp.powerlaw_injection_electrons_volume
+            * GEV_PER_ERG
+            / MASS_E
+            / RATE_SSC,
         )
-        var imid = dat.eV_to_lep_grid_index(
-            rp.powerlaw_injection_electrons_ebreak
-        )
-        var pl_idx = rp.powerlaw_injection_electrons_index
-        var ph_idx = rp.powerlaw_injection_electrons_index_above_break
-        var exp_steep = rp.powerlaw_injection_electrons_cutoff_steepness
-        var lum = rp.powerlaw_injection_electrons_luminosity
-        var pidxm1_low = pl_idx - 1.0
-        var pidxm1_high = ph_idx - 1.0
-        var integral = 0.0
-        var Gamma_mid = rp.powerlaw_injection_electrons_ebreak / MEC2_EV
-        var Gamma_max = rp.powerlaw_injection_electrons_emax / MEC2_EV
-        for i in range(dat.nbins_lep):
-            var log_cutoff = c_pow(dat.egrid_lep[i] / Gamma_max, exp_steep)
-            if i < max(imin, 1):
-                self.inj_electron[i] = 0.0
-            elif i <= imid:
-                self.inj_electron[i] = c_pow(
-                    dat.egrid_lep[i] / Gamma_mid, -pidxm1_low
-                ) * c_exp(-log_cutoff)
-            else:
-                self.inj_electron[i] = c_pow(
-                    dat.egrid_lep[i] / Gamma_mid, -pidxm1_high
-                ) * c_exp(-log_cutoff)
-            integral += dat.dlnE * dat.egrid_lep[i] * self.inj_electron[i]
-        var L_density = lum / volume * GEV_PER_ERG / MASS_E / RATE_SSC
-        for i in range(dat.nbins_lep):
-            self.inj_electron[i] *= L_density / integral
 
     def Calc_IN_Proton_powerlaw(mut self, rp: RunParams, dat: AM3Arrays):
         if self.verbose:
             print("computing proton injection spectrum")
-        var volume = rp.powerlaw_injection_protons_volume
-        var imin = dat.eV_to_had_grid_index(rp.powerlaw_injection_protons_emin)
-        var imid = dat.eV_to_had_grid_index(
-            rp.powerlaw_injection_protons_ebreak
+        _broken_powerlaw(
+            self.inj_proton,
+            dat.egrid_had,
+            dat.nbins_had,
+            dat.dlnE,
+            dat.eV_to_had_grid_index(rp.powerlaw_injection_protons_emin),
+            dat.eV_to_had_grid_index(rp.powerlaw_injection_protons_ebreak),
+            rp.powerlaw_injection_protons_ebreak / 1e9,
+            rp.powerlaw_injection_protons_emax / 1e9,
+            rp.powerlaw_injection_protons_index,
+            rp.powerlaw_injection_protons_index_above_break,
+            rp.powerlaw_injection_protons_cutoff_steepness,
+            rp.powerlaw_injection_protons_luminosity
+            / rp.powerlaw_injection_protons_volume
+            * GEV_PER_ERG,
         )
-        var pl_idx = rp.powerlaw_injection_protons_index
-        var ph_idx = rp.powerlaw_injection_protons_index_above_break
-        var exp_steep = rp.powerlaw_injection_protons_cutoff_steepness
-        var lum = rp.powerlaw_injection_protons_luminosity
-        var pidxm1_low = pl_idx - 1.0
-        var pidxm1_high = ph_idx - 1.0
-        var integral = 0.0
-        var Emid_GeV = rp.powerlaw_injection_protons_ebreak / 1e9
-        var Emax_GeV = rp.powerlaw_injection_protons_emax / 1e9
-        for i in range(dat.nbins_had):
-            var log_cutoff = c_pow(dat.egrid_had[i] / Emax_GeV, exp_steep)
-            if i < max(imin, 1):
-                self.inj_proton[i] = 0.0
-            elif i <= imid:
-                self.inj_proton[i] = c_pow(
-                    dat.egrid_had[i] / Emid_GeV, -pidxm1_low
-                ) * c_exp(-log_cutoff)
-            else:
-                self.inj_proton[i] = c_pow(
-                    dat.egrid_had[i] / Emid_GeV, -pidxm1_high
-                ) * c_exp(-log_cutoff)
-            integral += dat.dlnE * dat.egrid_had[i] * self.inj_proton[i]
-        var L_density = lum / volume * GEV_PER_ERG
-        for i in range(dat.nbins_had):
-            self.inj_proton[i] *= L_density / integral
+
+
+def _broken_powerlaw(
+    mut q: Vec,
+    egrid: Vec,
+    n: Int,
+    dlnE: Float64,
+    imin: Int,
+    imid: Int,
+    e_mid: Float64,
+    e_max: Float64,
+    index: Float64,
+    index_above_break: Float64,
+    cutoff_steepness: Float64,
+    L_density: Float64,
+):
+    """q per unit ln E on the energies of a grid (in its units). The shape is
+    taken from its logarithm, relative to its largest bin. So neither the shape
+    nor the scale factor leaves the range of the numbers. (If the spectrum
+    misses the grid, there is no injection. AM3 divided by the zero integral,
+    which made every bin NaN. AM3 took the shape as it is and scaled it by
+    L_density / integral. For a hard or steep spectrum, the shape overflowed
+    and made bins infinite or NaN (index -25 on the default lepton grid). Or
+    the factor underflowed to 0 and left no injection (index -20 without a
+    cutoff). AM3 bug.)"""
+    var i0 = max(imin, 1)
+    var lmax = 0.0
+    var found = False
+    for i in range(n):
+        if i < i0:
+            q[i] = 0.0
+            continue
+        var p = (index if i <= imid else index_above_break) - 1.0
+        q[i] = -p * c_log(egrid[i] / e_mid) - c_pow(
+            egrid[i] / e_max, cutoff_steepness
+        )
+        if not found or q[i] > lmax:
+            lmax = q[i]
+            found = True
+    var integral = 0.0
+    if found and not (isinf(lmax) and lmax < 0.0):
+        for i in range(i0, n):
+            # (1 in the largest bin, also where its logarithm is infinite)
+            q[i] = 1.0 if q[i] == lmax else c_exp(q[i] - lmax)
+            integral += dlnE * egrid[i] * q[i]
+    if integral > 0.0:
+        for i in range(n):
+            q[i] *= L_density / integral
+    else:
+        for i in range(n):
+            q[i] = 0.0
